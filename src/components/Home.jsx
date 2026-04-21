@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import main3 from "/src/images/main3.jpg";
+import main2 from "/src/images/main2.jpg";
 
 const WORDS = ["Smarter", "Faster", "Safer", "Simpler"];
 
@@ -402,7 +403,7 @@ export const Home = () => {
         <div
           className="absolute inset-0 bg-cover bg-center"
           style={{
-            backgroundImage: "url('/src/images/main2.jpg')",
+            backgroundImage: `url(${main2})`,
             filter: "brightness(0.35)",
             zIndex: 0,
           }}
