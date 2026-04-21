@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import main3 from "/src/images/main3.jpg";
 
 const WORDS = ["Smarter", "Faster", "Safer", "Simpler"];
 
@@ -535,7 +536,7 @@ export const Home = () => {
               style={{ boxShadow: "0 0 60px rgba(13,148,136,0.1)" }}
             >
               <img
-                src="/src/images/main3.jpg"
+                src={main3}
                 alt="Trading platform"
                 className="w-full object-cover"
                 style={{ minHeight: "280px", maxHeight: "480px" }}

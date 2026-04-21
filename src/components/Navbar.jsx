@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import logo from "/src/images/omnidev logo.png";
 
 const NAV_LINKS = ["How It Works", "About Us", "FAQ", "Contact"];
 
@@ -156,7 +157,7 @@ export const Navbar = () => {
         {/* Logo */}
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
           <img
-            src="/src/images/omnidev logo.png"
+            src={logo}
             alt="Omnidev logo"
             style={{
               width: "50px",
@@ -273,7 +274,7 @@ export const Navbar = () => {
         >
           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
             <img
-              src="/src/images/omnidev logo.png"
+              src={logo}
               alt="Omnidev logo"
               style={{
                 width: "32px",
