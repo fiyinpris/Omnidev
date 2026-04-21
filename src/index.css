@@ -1,0 +1,23 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-border: hsl(var(--border));
+  --color-card: hsl(var(--card));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+}
+@layer base {
+  :root {
+    --background: 0 0% 3%; /* #080808 */
+    --foreground: 0 0% 92%; /* near-white text */
+    --card: 0 0% 7%; /* #111 surface */
+    --border: 0 0% 10%; /* subtle dividers */
+    --primary: 168 100% 57%; /* teal dot accent */
+    --primary-foreground: 168 100% 10%;
+  }
+}
+* {
+  cursor: none !important;
+}
