@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import main3 from "/src/images/main3.jpg";
 import main2 from "/src/images/main2.jpg";
+import traderPhoto from "/src/images/main3.jpg";
 
 const WORDS = ["Smarter", "Faster", "Safer", "Simpler"];
 
@@ -144,6 +145,67 @@ const CYCLING_COINS = [
   },
 ];
 
+const ASSET_CARDS = [
+  {
+    name: "Gemini Dollar",
+    symbol: "GMNUSD",
+    price: "$9.15",
+    change: "+4.64%",
+    up: true,
+    logo: (
+      <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+        <circle cx="18" cy="18" r="18" fill="#1976D2" opacity="0.15" />
+        <circle
+          cx="18"
+          cy="18"
+          r="18"
+          stroke="#4FC3F7"
+          strokeWidth="1.5"
+          fill="none"
+        />
+        <path
+          d="M11 13h14M11 18h14M11 23h14"
+          stroke="#4FC3F7"
+          strokeWidth="2"
+          strokeLinecap="round"
+        />
+      </svg>
+    ),
+  },
+  {
+    name: "Invitae Corp.",
+    symbol: "NVTA",
+    price: "$7.68",
+    change: "+246.49%",
+    up: true,
+    logo: (
+      <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+        <circle cx="18" cy="18" r="18" fill="#0d9488" opacity="0.12" />
+        <circle
+          cx="18"
+          cy="18"
+          r="18"
+          stroke="#26C995"
+          strokeWidth="1.5"
+          fill="none"
+        />
+        <path
+          d="M18 10 C22 10 26 14 26 18 C26 22 22 26 18 26 C14 26 10 22 10 18 C10 14 14 10 18 10Z"
+          stroke="#26C995"
+          strokeWidth="1.5"
+          fill="none"
+        />
+        <path
+          d="M18 13 C20.5 13 23 15.5 23 18 C23 20.5 20.5 23 18 23 C15.5 23 13 20.5 13 18 C13 15.5 15.5 13 18 13Z"
+          stroke="#26C995"
+          strokeWidth="1"
+          fill="none"
+        />
+      </svg>
+    ),
+  },
+];
+
 const MARKET_DATA = {
   crypto: [
     {
@@ -261,6 +323,111 @@ const MARKET_DATA = {
   ],
 };
 
+const TRUST_FEATURES = [
+  {
+    icon: (
+      <svg
+        width="28"
+        height="28"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="#0d9488"
+        strokeWidth="1.8"
+      >
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+      </svg>
+    ),
+    title: "Bank-Grade Security",
+    desc: "Military-level encryption and multi-factor authentication protect every transaction.",
+  },
+  {
+    icon: (
+      <svg
+        width="28"
+        height="28"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="#0d9488"
+        strokeWidth="1.8"
+      >
+        <circle cx="12" cy="12" r="10" />
+        <polyline points="12 6 12 12 16 14" />
+      </svg>
+    ),
+    title: "24/7 Real-Time Data",
+    desc: "Live price feeds and instant execution with sub-millisecond latency.",
+  },
+  {
+    icon: (
+      <svg
+        width="28"
+        height="28"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="#0d9488"
+        strokeWidth="1.8"
+      >
+        <line x1="12" y1="1" x2="12" y2="23" />
+        <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+      </svg>
+    ),
+    title: "Zero Commission",
+    desc: "Keep 100% of your profits. No hidden fees, no surprises — ever.",
+  },
+  {
+    icon: (
+      <svg
+        width="28"
+        height="28"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="#0d9488"
+        strokeWidth="1.8"
+      >
+        <rect x="2" y="3" width="20" height="14" rx="2" />
+        <line x1="8" y1="21" x2="16" y2="21" />
+        <line x1="12" y1="17" x2="12" y2="21" />
+      </svg>
+    ),
+    title: "Cross-Platform Access",
+    desc: "Trade seamlessly on web, iOS, and Android from any device, anywhere.",
+  },
+  {
+    icon: (
+      <svg
+        width="28"
+        height="28"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="#0d9488"
+        strokeWidth="1.8"
+      >
+        <path d="M18 20V10M12 20V4M6 20v-6" />
+      </svg>
+    ),
+    title: "Advanced Analytics",
+    desc: "Professional-grade charting tools and AI-powered insights at your fingertips.",
+  },
+  {
+    icon: (
+      <svg
+        width="28"
+        height="28"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="#0d9488"
+        strokeWidth="1.8"
+      >
+        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+        <circle cx="9" cy="7" r="4" />
+        <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+      </svg>
+    ),
+    title: "Global Community",
+    desc: "Join millions of traders worldwide. Share strategies, signals, and success.",
+  },
+];
+
 const useCountUp = (target, duration = 1800, triggered = false) => {
   const [count, setCount] = useState(0);
   useEffect(() => {
@@ -315,19 +482,169 @@ const StatItem = ({ value, label, triggered }) => {
   );
 };
 
+const AssetSparkLine = ({ up }) => (
+  <svg
+    width="80"
+    height="36"
+    viewBox="0 0 110 36"
+    fill="none"
+    style={{ overflow: "visible" }}
+  >
+    <path
+      d="M0,30 C15,28 25,18 40,14 C55,10 65,16 80,10 C90,6 95,8 110,4"
+      stroke={up ? "#26C995" : "#EF4444"}
+      strokeWidth="2"
+      strokeLinecap="round"
+      fill="none"
+      style={{
+        strokeDasharray: 300,
+        strokeDashoffset: 0,
+        animation: "drawAssetLine 1.4s ease forwards",
+      }}
+    />
+  </svg>
+);
+
+/* ── Decorative corner bracket ── */
+const CornerBracket = ({ side, visible }) => {
+  const isLeft = side === "left";
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: "50%",
+        [isLeft ? "left" : "right"]: "24px",
+        transform: "translateY(-50%)",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: isLeft ? "flex-start" : "flex-end",
+        gap: "12px",
+        opacity: visible ? 1 : 0,
+        transition: "opacity 0.8s ease 0.6s",
+        pointerEvents: "none",
+        zIndex: 0,
+      }}
+    >
+      {/* Top bracket arm */}
+      <svg
+        width="60"
+        height="60"
+        viewBox="0 0 60 60"
+        fill="none"
+        style={{ transform: isLeft ? "none" : "scaleX(-1)" }}
+      >
+        <path
+          d="M50 10 L10 10 L10 50"
+          stroke="rgba(13,148,136,0.55)"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          style={{
+            strokeDasharray: 100,
+            strokeDashoffset: visible ? 0 : 100,
+            transition: "stroke-dashoffset 1s ease 0.8s",
+          }}
+        />
+        <circle
+          cx="10"
+          cy="10"
+          r="3"
+          fill="#0d9488"
+          opacity={visible ? 0.8 : 0}
+          style={{ transition: "opacity 0.4s ease 1.6s" }}
+        />
+      </svg>
+
+      {/* Floating pulse dot */}
+      <div
+        style={{
+          width: "6px",
+          height: "6px",
+          borderRadius: "50%",
+          background: "#0d9488",
+          boxShadow:
+            "0 0 10px rgba(13,148,136,0.8), 0 0 20px rgba(13,148,136,0.4)",
+          animation: visible ? "floatPulse 2.4s ease-in-out infinite" : "none",
+          marginLeft: isLeft ? "8px" : 0,
+          marginRight: isLeft ? 0 : "8px",
+        }}
+      />
+
+      {/* Vertical line with tick marks */}
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: "10px",
+          alignItems: isLeft ? "flex-start" : "flex-end",
+        }}
+      >
+        {[1, 0.6, 0.35].map((op, i) => (
+          <div
+            key={i}
+            style={{
+              height: "1.5px",
+              background: `rgba(13,148,136,${op * 0.5})`,
+              borderRadius: "2px",
+              width: `${28 - i * 8}px`,
+              opacity: visible ? 1 : 0,
+              transition: `opacity 0.4s ease ${1 + i * 0.15}s`,
+            }}
+          />
+        ))}
+      </div>
+
+      {/* Bottom bracket arm */}
+      <svg
+        width="60"
+        height="60"
+        viewBox="0 0 60 60"
+        fill="none"
+        style={{ transform: isLeft ? "scaleY(-1)" : "scale(-1,-1)" }}
+      >
+        <path
+          d="M50 10 L10 10 L10 50"
+          stroke="rgba(13,148,136,0.55)"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          style={{
+            strokeDasharray: 100,
+            strokeDashoffset: visible ? 0 : 100,
+            transition: "stroke-dashoffset 1s ease 1s",
+          }}
+        />
+        <circle
+          cx="10"
+          cy="50"
+          r="3"
+          fill="#0d9488"
+          opacity={visible ? 0.8 : 0}
+          style={{ transition: "opacity 0.4s ease 1.8s" }}
+        />
+      </svg>
+    </div>
+  );
+};
+
 export const Home = () => {
   const [wordIndex, setWordIndex] = useState(0);
   const [visible, setVisible] = useState(true);
   const [statsTriggered, setStatsTriggered] = useState(false);
   const [featureVisible, setFeatureVisible] = useState(false);
+  const [tradingVisible, setTradingVisible] = useState(false);
   const [marketVisible, setMarketVisible] = useState(false);
+  const [trustVisible, setTrustVisible] = useState(false);
   const [coinIndex, setCoinIndex] = useState(0);
   const [coinVisible, setCoinVisible] = useState(true);
   const [activeTab, setActiveTab] = useState("crypto");
+  const [btnHovered, setBtnHovered] = useState(false);
 
   const statsRef = useRef(null);
   const featureRef = useRef(null);
+  const tradingRef = useRef(null);
   const marketRef = useRef(null);
+  const trustRef = useRef(null);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -376,11 +693,33 @@ export const Home = () => {
   useEffect(() => {
     const obs = new IntersectionObserver(
       ([e]) => {
+        if (e.isIntersecting) setTradingVisible(true);
+      },
+      { threshold: 0.15 },
+    );
+    if (tradingRef.current) obs.observe(tradingRef.current);
+    return () => obs.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const obs = new IntersectionObserver(
+      ([e]) => {
         if (e.isIntersecting) setMarketVisible(true);
       },
       { threshold: 0.1 },
     );
     if (marketRef.current) obs.observe(marketRef.current);
+    return () => obs.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const obs = new IntersectionObserver(
+      ([e]) => {
+        if (e.isIntersecting) setTrustVisible(true);
+      },
+      { threshold: 0.1 },
+    );
+    if (trustRef.current) obs.observe(trustRef.current);
     return () => obs.disconnect();
   }, []);
 
@@ -410,10 +749,10 @@ export const Home = () => {
         />
         <div className="absolute inset-0 bg-black/45" style={{ zIndex: 1 }} />
         <div
-          className="relative w-full max-w-4xl px-4 sm:px-6"
+          className="relative w-full max-w-5xl px-4 sm:px-6 lg:px-8"
           style={{ zIndex: 2 }}
         >
-          <p className="text-[#2affd0] text-xs sm:text-sm font-semibold tracking-widest uppercase mb-4">
+          <p className="text-[#2affd0] text-xs sm:text-sm font-semibold tracking-widest uppercase mb-4 mt-10">
             Next-gen crypto platform
           </p>
           <h1 className="text-4xl sm:text-5xl md:text-7xl font-extrabold leading-tight text-white mb-6">
@@ -434,7 +773,7 @@ export const Home = () => {
             Buy, sell and withdraw instantly. Zero commission fees, real-time
             prices, and seamless withdrawals.
           </p>
-          <button className="bg-[#0d9488] hover:bg-[#0f766e] text-white font-bold text-sm sm:text-base px-10 sm:px-14 py-3.5 sm:py-4 rounded-xl transition-colors duration-200">
+          <button className="w-full sm:w-auto bg-[#0d9488] hover:bg-[#0f766e] text-white font-bold text-sm sm:text-base px-10 sm:px-14 py-3.5 sm:py-4 rounded-xl transition-colors duration-200 mb-6">
             Get Started
           </button>
         </div>
@@ -454,19 +793,21 @@ export const Home = () => {
           className="absolute inset-0 pointer-events-none"
           style={{
             backgroundImage:
-              "linear-gradient(rgba(13,148,136,0.2) 1px,transparent 1px),linear-gradient(90deg,rgba(13,148,136,0.2) 1px,transparent 1px)",
-            backgroundSize: "48px 48px",
+              "linear-gradient(rgba(13,148,136,0.24) 2px, transparent 2px), linear-gradient(90deg, rgba(13,148,136,0.24) 2px, transparent 2px)",
+            backgroundSize: "80px 80px",
+            filter: "blur(0.4px)",
+            opacity: 0.98,
             WebkitMaskImage:
-              "radial-gradient(ellipse 80% 80% at 50% 50%,transparent 40%,black 100%)",
+              "radial-gradient(ellipse 90% 85% at 50% 50%, transparent 35%, black 100%)",
             maskImage:
-              "radial-gradient(ellipse 80% 80% at 50% 50%,transparent 40%,black 100%)",
+              "radial-gradient(ellipse 90% 85% at 50% 50%, transparent 35%, black 100%)",
             zIndex: 0,
           }}
         />
         <div className="relative" style={{ zIndex: 2 }}>
           <div
             ref={statsRef}
-            className="grid grid-cols-3 divide-x divide-[#1a1a1a] max-w-2xl mx-auto mb-16"
+            className="grid grid-cols-1 sm:grid-cols-3 divide-y divide-[#1a1a1a] sm:divide-y-0 sm:divide-x rounded-[28px] overflow-hidden border border-[#121212] max-w-2xl mx-auto mb-16"
           >
             {STATS.map((s) => (
               <StatItem
@@ -613,14 +954,14 @@ export const Home = () => {
           className="absolute inset-0 pointer-events-none"
           style={{
             backgroundImage:
-              "linear-gradient(rgba(13, 148, 136, 0.1) 2px, transparent 2px), linear-gradient(90deg, rgba(13, 148, 136, 0.1) 2px, transparent 2px)",
+              "linear-gradient(rgba(13,148,136,0.24) 2px, transparent 2px), linear-gradient(90deg, rgba(13,148,136,0.24) 2px, transparent 2px)",
             backgroundSize: "80px 80px",
             WebkitMaskImage:
-              "radial-gradient(ellipse 100% 100% at 50% 50%, transparent 30%, black 100%)",
+              "radial-gradient(ellipse 90% 85% at 50% 50%, transparent 35%, black 100%)",
             maskImage:
-              "radial-gradient(ellipse 100% 100% at 50% 50%, transparent 30%, black 100%)",
-            filter:
-              "blur(0.5px) drop-shadow(0 0 30px rgba(13, 148, 136, 0.15))",
+              "radial-gradient(ellipse 90% 85% at 50% 50%, transparent 35%, black 100%)",
+            filter: "blur(0.4px) drop-shadow(0 0 30px rgba(13,148,136,0.15))",
+            opacity: 0.98,
             zIndex: 0,
           }}
         />
@@ -675,7 +1016,7 @@ export const Home = () => {
                       cursor: "pointer",
                       fontWeight: 700,
                       fontSize: "13px",
-                      background: activeTab === tab ? "#7c3aed" : "transparent",
+                      background: activeTab === tab ? "#0d9488" : "transparent",
                       color: activeTab === tab ? "#fff" : "#6b7280",
                       transition: "background 0.25s, color 0.25s",
                     }}
@@ -861,6 +1202,574 @@ export const Home = () => {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ════ TRADING SIMPLIFIED ════ */}
+      <section
+        ref={tradingRef}
+        style={{
+          background: "#0a0a0a" /* ← slightly darker */,
+          padding: "80px 24px 38px",
+          position: "relative",
+          overflow: "hidden",
+        }}
+      >
+       <div
+  style={{
+    position: "absolute",
+    inset: 0,
+
+    background: `
+      radial-gradient(circle at 50% 50%, rgba(13,148,136,0.18), transparent 65%),
+      radial-gradient(rgba(42,255,208,0.35) 1.2px, transparent 1.2px)
+    `,
+
+    backgroundSize: "100% 100%, 50px 50px",
+
+    WebkitMaskImage:
+      "radial-gradient(ellipse 70% 70% at 50% 50%, transparent 30%, black 100%)",
+    maskImage:
+      "radial-gradient(ellipse 70% 70% at 50% 50%, transparent 30%, black 100%)",
+
+    pointerEvents: "none",
+    zIndex: 0,
+  }}
+/>
+
+        <style>{`
+          @keyframes drawAssetLine  { from { stroke-dashoffset: 300; } to { stroke-dashoffset: 0; } }
+          @keyframes cardFloat      { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-6px)} }
+          @keyframes floatPulse     { 0%,100%{transform:translateY(0);opacity:1} 50%{transform:translateY(-8px);opacity:0.6} }
+          @keyframes shimmerBtn     { 0%{background-position:200% center} 100%{background-position:-200% center} }
+          @keyframes bracketDraw    { from{stroke-dashoffset:100} to{stroke-dashoffset:0} }
+          @keyframes orbitDot       { 0%{transform:translateY(0) scale(1);opacity:0.9} 50%{transform:translateY(-18px) scale(1.3);opacity:0.5} 100%{transform:translateY(0) scale(1);opacity:0.9} }
+        `}</style>
+
+        {/* ── Floating corner brackets ── */}
+        <CornerBracket side="left" visible={tradingVisible} />
+        <CornerBracket side="right" visible={tradingVisible} />
+
+        {/* extra ambient glow left/right */}
+        <div
+          style={{
+            position: "absolute",
+            left: "-80px",
+            top: "50%",
+            transform: "translateY(-50%)",
+            width: "220px",
+            height: "220px",
+            borderRadius: "50%",
+            background:
+              "radial-gradient(circle, rgba(13,148,136,0.08) 0%, transparent 70%)",
+            pointerEvents: "none",
+            zIndex: 0,
+          }}
+        />
+        <div
+          style={{
+            position: "absolute",
+            right: "-80px",
+            top: "50%",
+            transform: "translateY(-50%)",
+            width: "220px",
+            height: "220px",
+            borderRadius: "50%",
+            background:
+              "radial-gradient(circle, rgba(13,148,136,0.08) 0%, transparent 70%)",
+            pointerEvents: "none",
+            zIndex: 0,
+          }}
+        />
+
+        <div
+          style={{
+            position: "relative",
+            zIndex: 1,
+            maxWidth: "1100px",
+            margin: "0 auto",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: "60px",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "28px",
+              flexWrap: "wrap",
+              width: "100%",
+            }}
+          >
+            {/* person image + market overview card */}
+            <div
+              style={{
+                position: "relative",
+                flex: "0 0 auto",
+                opacity: tradingVisible ? 1 : 0,
+                transform: tradingVisible
+                  ? "translateY(0)"
+                  : "translateY(24px)",
+                transition: "opacity 0.7s ease 0.1s, transform 0.7s ease 0.1s",
+              }}
+            >
+              <div
+                style={{
+                  width: "300px",
+                  height: "360px",
+                  borderRadius: "20px",
+                  overflow: "hidden",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  background: "#111820",
+                  boxShadow: "0 0 50px rgba(13,148,136,0.12)",
+                }}
+              >
+                {traderPhoto ? (
+                  <img
+                    src={traderPhoto}
+                    alt="Trader"
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "cover",
+                    }}
+                  />
+                ) : (
+                  <div
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: "12px",
+                      color: "rgba(255,255,255,0.15)",
+                    }}
+                  >
+                    <svg
+                      width="48"
+                      height="48"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1"
+                    >
+                      <circle cx="12" cy="7" r="4" />
+                      <path d="M4 20 C4 16 8 13 12 13 C16 13 20 16 20 20" />
+                    </svg>
+                    <span style={{ fontSize: "12px", letterSpacing: "0.1em" }}>
+                      y
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* market overview overlay card */}
+              <div
+                style={{
+                  position: "absolute",
+                  bottom: "-40px",
+                  left: "-110px",
+                  animation: tradingVisible
+                    ? "cardFloat 4s ease-in-out 1s infinite"
+                    : "none",
+                  opacity: tradingVisible ? 1 : 0,
+                  transform: tradingVisible
+                    ? "translateY(0)"
+                    : "translateY(14px)",
+                  transition:
+                    "opacity 0.6s ease 0.5s, transform 0.6s ease 0.5s",
+                }}
+              >
+                <div
+                  style={{
+                    background: "rgba(10,14,20,0.88)",
+                    backdropFilter: "blur(12px)",
+                    WebkitBackdropFilter: "blur(12px)",
+                    border: "1px solid rgba(255,255,255,0.08)",
+                    borderRadius: "14px",
+                    padding: "14px 18px",
+                    width: "200px",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      marginBottom: "10px",
+                    }}
+                  >
+                    <span
+                      style={{
+                        color: "#9ca3af",
+                        fontSize: "11px",
+                        fontWeight: 600,
+                        letterSpacing: "0.04em",
+                      }}
+                    >
+                      Market Overview
+                    </span>
+                    <span style={{ color: "#6b7280", fontSize: "10px" }}>
+                      Last 30 days ▾
+                    </span>
+                  </div>
+                  <svg
+                    width="160"
+                    height="50"
+                    viewBox="0 0 160 50"
+                    fill="none"
+                    style={{ display: "block", marginBottom: "10px" }}
+                  >
+                    <defs>
+                      <linearGradient
+                        id="chartGrad"
+                        x1="0"
+                        y1="0"
+                        x2="0"
+                        y2="1"
+                      >
+                        <stop
+                          offset="0%"
+                          stopColor="#0d9488"
+                          stopOpacity="0.35"
+                        />
+                        <stop
+                          offset="100%"
+                          stopColor="#0d9488"
+                          stopOpacity="0"
+                        />
+                      </linearGradient>
+                    </defs>
+                    <path
+                      d="M0,42 C15,38 25,30 45,22 C65,14 75,28 95,20 C115,12 130,16 160,8 L160,50 L0,50Z"
+                      fill="url(#chartGrad)"
+                    />
+                    <path
+                      d="M0,42 C15,38 25,30 45,22 C65,14 75,28 95,20 C115,12 130,16 160,8"
+                      stroke="#0d9488"
+                      strokeWidth="1.8"
+                      fill="none"
+                      strokeLinecap="round"
+                    />
+                    <circle cx="160" cy="8" r="3.5" fill="#0d9488" />
+                  </svg>
+                  <div
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "5px",
+                      background: "rgba(13,148,136,0.18)",
+                      border: "1px solid rgba(13,148,136,0.3)",
+                      borderRadius: "8px",
+                      padding: "4px 10px",
+                    }}
+                  >
+                    <span
+                      style={{
+                        color: "#2affd0",
+                        fontSize: "12px",
+                        fontWeight: 700,
+                      }}
+                    >
+                      ▲ +32.6%
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* asset cards */}
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: "16px",
+                paddingLeft: "20px",
+              }}
+            >
+              {ASSET_CARDS.map((card, i) => (
+                <div
+                  key={card.symbol}
+                  style={{
+                    background: "rgba(10,14,20,0.75)",
+                    backdropFilter: "blur(14px)",
+                    WebkitBackdropFilter: "blur(14px)",
+                    border: "1px solid rgba(255,255,255,0.08)",
+                    borderRadius: "16px",
+                    padding: "16px 22px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "16px",
+                    minWidth: "340px",
+                    opacity: tradingVisible ? 1 : 0,
+                    transform: tradingVisible
+                      ? "translateX(0)"
+                      : "translateX(30px)",
+                    transition: `opacity 0.6s ease ${0.25 + i * 0.15}s, transform 0.6s ease ${0.25 + i * 0.15}s`,
+                    animation: tradingVisible
+                      ? `cardFloat ${4.5 + i * 0.7}s ease-in-out ${1.5 + i * 0.4}s infinite`
+                      : "none",
+                    boxShadow: "0 4px 30px rgba(0,0,0,0.4)",
+                  }}
+                >
+                  <div style={{ flexShrink: 0 }}>{card.logo}</div>
+                  <div style={{ flex: 1 }}>
+                    <p
+                      style={{
+                        color: "#f3f4f6",
+                        fontWeight: 700,
+                        fontSize: "15px",
+                        margin: "0 0 2px",
+                      }}
+                    >
+                      {card.name}
+                    </p>
+                    <p
+                      style={{ color: "#6b7280", fontSize: "12px", margin: 0 }}
+                    >
+                      {card.symbol}
+                    </p>
+                  </div>
+                  <div style={{ textAlign: "right", marginRight: "12px" }}>
+                    <p
+                      style={{
+                        color: "#f9fafb",
+                        fontWeight: 700,
+                        fontSize: "16px",
+                        margin: "0 0 2px",
+                      }}
+                    >
+                      {card.price}
+                    </p>
+                    <p
+                      style={{
+                        color: card.up ? "#2affd0" : "#f87171",
+                        fontSize: "12px",
+                        fontWeight: 700,
+                        margin: 0,
+                      }}
+                    >
+                      {card.up ? "▲" : "▼"} {card.change}
+                    </p>
+                  </div>
+                  <AssetSparkLine up={card.up} />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* heading + CTA */}
+          <div
+            style={{
+              textAlign: "center",
+              maxWidth: "620px",
+              opacity: tradingVisible ? 1 : 0,
+              transform: tradingVisible ? "translateY(0)" : "translateY(24px)",
+              transition: "opacity 0.7s ease 0.4s, transform 0.7s ease 0.4s",
+            }}
+          >
+            <h2
+              style={{
+                color: "#ffffff",
+                fontSize: "clamp(2rem, 5vw, 3.2rem)",
+                fontWeight: 800,
+                lineHeight: 1.15,
+                margin: "0 0 16px",
+                letterSpacing: "-0.02em",
+              }}
+            >
+              Trading simplified.
+              <br />A world of opportunity,{" "}
+              <span style={{ color: "#0d9488" }}>within reach.</span>
+            </h2>
+            <p
+              style={{
+                color: "#9ca3af",
+                fontSize: "15px",
+                lineHeight: 1.7,
+                margin: "0 0 36px",
+              }}
+            >
+              Whether you're just getting started or you're an expert, our
+              platform is designed for everyone.
+            </p>
+
+            {/* ── Animated shimmer Get Started button ── */}
+            <button
+              onMouseEnter={() => setBtnHovered(true)}
+              onMouseLeave={() => setBtnHovered(false)}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "10px",
+                position: "relative",
+                overflow: "hidden",
+                background: btnHovered
+                  ? "linear-gradient(270deg, #0f766e, #0d9488, #2affd0, #0d9488, #0f766e)"
+                  : "#0d9488",
+                backgroundSize: "400% 100%",
+                animation: btnHovered
+                  ? "shimmerBtn 2s linear infinite"
+                  : "none",
+                color: "#fff",
+                fontWeight: 700,
+                fontSize: "15px",
+                padding: "14px 36px",
+                borderRadius: "999px",
+                border: "none",
+                cursor: "pointer",
+                transition: "transform 0.15s, box-shadow 0.2s",
+                transform: btnHovered ? "scale(1.04)" : "scale(1)",
+                boxShadow: btnHovered
+                  ? "0 0 28px rgba(13,148,136,0.55), 0 0 60px rgba(42,255,208,0.2)"
+                  : "0 0 0 rgba(0,0,0,0)",
+              }}
+            >
+              {/* sweeping glint overlay */}
+              <span
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  background:
+                    "linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.18) 50%, transparent 60%)",
+                  backgroundSize: "200% 100%",
+                  animation: btnHovered
+                    ? "shimmerBtn 1.2s linear infinite"
+                    : "none",
+                  borderRadius: "inherit",
+                  pointerEvents: "none",
+                }}
+              />
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="white"
+                strokeWidth="2.5"
+              >
+                <line x1="5" y1="12" x2="19" y2="12" />
+                <polyline points="13 6 19 12 13 18" />
+              </svg>
+              <span style={{ position: "relative" }}>Get Started</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* ════ TRUSTED PLATFORM ════ */}
+      <section
+        ref={trustRef}
+        style={{
+          position: "relative",
+          background: "#060608",
+          padding: "100px 24px 110px",
+          overflow: "hidden",
+        }}
+      >
+        {/* ── blurred-edge grid (same treatment as market cap) ── */}
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            backgroundImage:
+              "linear-gradient(rgba(13,148,136,0.24) 2px, transparent 2px), linear-gradient(90deg, rgba(13,148,136,0.24) 2px, transparent 2px)",
+            backgroundSize: "80px 80px",
+            /* blur the grid itself, then mask edges to transparent */
+            filter: "blur(0.4px)",
+            WebkitMaskImage:
+              "radial-gradient(ellipse 90% 85% at 50% 50%, transparent 35%, black 100%)",
+            maskImage:
+              "radial-gradient(ellipse 90% 85% at 50% 50%, transparent 35%, black 100%)",
+            pointerEvents: "none",
+            zIndex: 0,
+            opacity: 0.98,
+          }}
+        />
+
+        {/* subtle teal glow behind heading */}
+        <div
+          style={{
+            position: "absolute",
+            top: "50%",
+            left: "50%",
+            transform: "translate(-50%, -50%)",
+            width: "600px",
+            height: "300px",
+            background:
+              "radial-gradient(ellipse, rgba(13,148,136,0.07) 0%, transparent 70%)",
+            pointerEvents: "none",
+            zIndex: 0,
+          }}
+        />
+
+        <style>{`
+          @keyframes trustFadeUp { from { opacity:0; transform:translateY(28px); } to { opacity:1; transform:translateY(0); } }
+          @keyframes cardGlow    { 0%,100%{ box-shadow:0 0 0 rgba(13,148,136,0) } 50%{ box-shadow:0 0 22px rgba(13,148,136,0.15) } }
+          .trust-card { opacity:0; }
+          .trust-card.in { animation: trustFadeUp 0.55s ease forwards; }
+        `}</style>
+
+        <div
+          style={{
+            position: "relative",
+            zIndex: 1,
+            maxWidth: "900px",
+            margin: "0 auto",
+            textAlign: "center",
+          }}
+        >
+          {/* heading */}
+          <div
+            style={{
+              opacity: trustVisible ? 1 : 0,
+              transform: trustVisible ? "translateY(0)" : "translateY(24px)",
+              transition: "opacity 0.7s ease, transform 0.7s ease",
+            }}
+          >
+            <p
+              style={{
+                color: "#0d9488",
+                fontSize: "12px",
+                fontWeight: 700,
+                letterSpacing: "0.18em",
+                textTransform: "uppercase",
+                marginBottom: "20px",
+              }}
+            >
+              Why traders choose us
+            </p>
+            <h2
+              style={{
+                color: "#ffffff",
+                fontSize: "clamp(2rem, 5vw, 3.6rem)",
+                fontWeight: 900,
+                lineHeight: 1.12,
+                letterSpacing: "-0.025em",
+                margin: "0 auto 20px",
+                maxWidth: "780px",
+              }}
+            >
+              The most trusted cryptocurrency trading and arbitrage platform
+            </h2>
+            <p
+              style={{
+                color: "#6b7280",
+                fontSize: "16px",
+                lineHeight: 1.75,
+                maxWidth: "560px",
+                margin: "0 auto 72px",
+              }}
+            >
+              Traders who rely on us for unlocking lucrative arbitrage
+              opportunities safely and securely.
+            </p>
           </div>
         </div>
       </section>
