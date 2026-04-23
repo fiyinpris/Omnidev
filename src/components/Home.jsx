@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import main3 from "/src/images/main3.jpg";
 import main2 from "/src/images/main2.jpg";
-import traderPhoto from "/src/images/main3.jpg";
+import traderPhoto from "/src/images/main5.jpg";
 
 const WORDS = ["Smarter", "Faster", "Safer", "Simpler"];
 
@@ -645,6 +645,182 @@ export const Home = () => {
   const tradingRef = useRef(null);
   const marketRef = useRef(null);
   const trustRef = useRef(null);
+  /* ── HIGH-FIDELITY 3D STACKED CIRCUIT CARDS ── */
+  const StackedCard3D = () => {
+    // Complex circuit pattern generator
+    const CircuitBoard = ({ color }) => (
+      <svg viewBox="0 0 200 150" className="w-full h-full p-4 opacity-80">
+        <defs>
+          <filter id="glow">
+            <feGaussianBlur stdDeviation="1.5" result="coloredBlur" />
+            <feMerge>
+              <feMergeNode in="coloredBlur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+        <g
+          stroke={color}
+          strokeWidth="0.8"
+          fill="none"
+          opacity="0.6"
+          filter="url(#glow)"
+        >
+          {/* Border detail */}
+          <rect x="5" y="5" width="190" height="140" rx="12" strokeWidth="2" />
+          {/* Intricate lines */}
+          <path d="M10 30h40l10-10h60l10 10h60M10 120h40l10 10h60l10-10h60" />
+          <path d="M30 10v30M170 10v30M30 140v-30M170 140v-30" />
+          <circle cx="30" cy="30" r="3" fill={color} />
+          <circle cx="170" cy="30" r="3" fill={color} />
+          <circle cx="30" cy="120" r="3" fill={color} />
+          <circle cx="170" cy="120" r="3" fill={color} />
+          {/* Busy circuit traces */}
+          <path d="M60 50h15v20h-15zM125 80h15v20h-15z" strokeWidth="0.5" />
+          <path d="M10 75h30M160 75h30M100 10v20M100 120v20" opacity="0.3" />
+          <path
+            d="M50 40l-10 10v50l10 10h100l10-10v-50l-10-10z"
+            strokeWidth="1"
+          />
+        </g>
+      </svg>
+    );
+
+    return (
+      <div
+        className="relative w-[340px] h-[400px] mx-auto"
+        style={{ perspective: "1400px" }}
+      >
+        <div
+          className="relative w-full h-full"
+          style={{
+            transformStyle: "preserve-3d",
+            transform: "rotateX(52deg) rotateZ(-32deg)",
+          }}
+        >
+          {/* 1. BOTTOM LAYER: BRONZE */}
+          <div
+            className="absolute inset-0 bg-[#1a0f0a] rounded-[24px] border-2 border-[#cd7f32]/30 overflow-hidden"
+            style={{
+              transform: "translateZ(0px)",
+              boxShadow: "0 15px 45px rgba(0,0,0,0.9)",
+            }}
+          >
+            <div className="absolute inset-0 bg-gradient-to-br from-[#4a2e19]/40 to-transparent" />
+            <CircuitBoard color="#cd7f32" />
+            <div className="absolute top-8 left-8 w-12 h-10 border border-[#cd7f32]/40 rounded opacity-40" />
+          </div>
+
+          {/* 2. MIDDLE LAYER: SILVER (With Arrow) */}
+          <div
+            className="absolute inset-0 bg-[#0f172a] rounded-[24px] border-2 border-slate-400/40 overflow-hidden"
+            style={{
+              transform: "translateZ(70px)",
+              animation: "floatMid 6s ease-in-out infinite",
+            }}
+          >
+            <div className="absolute inset-0 bg-gradient-to-br from-slate-400/20 to-transparent" />
+            <CircuitBoard color="#94a3b8" />
+            {/* Central Arrow Icon */}
+            <div className="absolute inset-0 flex items-center justify-center">
+              <svg
+                width="60"
+                height="60"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="#e2e8f0"
+                strokeWidth="2.5"
+                filter="url(#glow)"
+              >
+                <path
+                  d="M12 19V5M5 12l7-7 7 7"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </div>
+            <div className="absolute bottom-8 right-8 w-10 h-10 border-2 border-slate-400/30 rounded-full flex items-center justify-center opacity-50">
+              <div className="w-4 h-4 bg-slate-400/40 rounded-sm rotate-45" />
+            </div>
+          </div>
+
+          {/* 3. TOP LAYER: GOLD (With Microchip) */}
+          <div
+            className="absolute inset-0 bg-[#1a1405] rounded-[24px] border-2 border-yellow-500/50 overflow-hidden"
+            style={{
+              transform: "translateZ(140px)",
+              animation: "floatTop 6s ease-in-out infinite",
+            }}
+          >
+            <div className="absolute inset-0 bg-gradient-to-br from-yellow-500/20 to-transparent" />
+            <CircuitBoard color="#eab308" />
+
+            {/* Central Microchip */}
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="relative w-20 h-20 bg-[#0a0a0a] border border-yellow-500/60 rounded-lg shadow-[0_0_20px_rgba(234,179,8,0.3)] flex items-center justify-center">
+                {/* Chip Pins */}
+                <div className="absolute -top-2 left-1/2 -translate-x-1/2 flex gap-2">
+                  {" "}
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="w-1 h-3 bg-yellow-600/60" />
+                  ))}{" "}
+                </div>
+                <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 flex gap-2">
+                  {" "}
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="w-1 h-3 bg-yellow-600/60" />
+                  ))}{" "}
+                </div>
+                <div className="absolute -left-2 top-1/2 -translate-y-1/2 flex flex-col gap-2">
+                  {" "}
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="h-1 w-3 bg-yellow-600/60" />
+                  ))}{" "}
+                </div>
+                <div className="absolute -right-2 top-1/2 -translate-y-1/2 flex flex-col gap-2">
+                  {" "}
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="h-1 w-3 bg-yellow-600/60" />
+                  ))}{" "}
+                </div>
+                {/* Internal Chip Detail */}
+                <div className="w-12 h-12 border border-yellow-500/30 rounded flex items-center justify-center">
+                  <div className="w-6 h-6 bg-yellow-500/20 blur-sm animate-pulse rounded-full" />
+                </div>
+              </div>
+            </div>
+
+            {/* Corner Detail Icon */}
+            <div className="absolute top-8 left-8 w-10 h-10 border border-yellow-500/40 rounded flex items-center justify-center opacity-60">
+              <div className="w-6 h-6 border-2 border-yellow-500/40 rounded-sm rotate-45 flex items-center justify-center">
+                <div className="w-2 h-2 bg-yellow-500/60 rounded-full" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <style>{`
+        @keyframes floatMid { 0%, 100% { transform: translateZ(70px) translateY(0px); } 50% { transform: translateZ(85px) translateY(-10px); } }
+        @keyframes floatTop { 0%, 100% { transform: translateZ(140px) translateY(0px); } 50% { transform: translateZ(165px) translateY(-20px); } }
+      `}</style>
+      </div>
+    );
+  };
+
+  const rewardsRef = useRef(null);
+  const [rewardsVisible, setRewardsVisible] = useState(false);
+
+  useEffect(() => {
+    const obs = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) setRewardsVisible(true);
+      },
+      { threshold: 0.2 },
+    );
+
+    if (rewardsRef.current) obs.observe(rewardsRef.current);
+    return () => obs.disconnect();
+  }, []);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -777,11 +953,12 @@ export const Home = () => {
             Get Started
           </button>
         </div>
+        {/* ── Fixed Message Icon ── */}
         <button
-          className="absolute bottom-6 right-6 sm:bottom-8 sm:right-8 rounded-full bg-[#e91e8c] border-none flex items-center justify-center p-3 sm:p-3.5"
-          style={{ zIndex: 2 }}
+          className="fixed bottom-6 right-6 sm:bottom-8 sm:right-8 rounded-full bg-[#e91e8c] border-none flex items-center justify-center p-3 sm:p-3.5 shadow-2xl hover:scale-110 transition-transform cursor-pointer"
+          style={{ zIndex: 9999 }} // High z-index ensures it stays above all sections
         >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="white">
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
           </svg>
         </button>
@@ -1211,32 +1388,32 @@ export const Home = () => {
         ref={tradingRef}
         style={{
           background: "#0a0a0a" /* ← slightly darker */,
-          padding: "80px 24px 38px",
+          padding: "50px 24px 38px",
           position: "relative",
           overflow: "hidden",
         }}
       >
-       <div
-  style={{
-    position: "absolute",
-    inset: 0,
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
 
-    background: `
+            background: `
       radial-gradient(circle at 50% 50%, rgba(13,148,136,0.18), transparent 65%),
       radial-gradient(rgba(42,255,208,0.35) 1.2px, transparent 1.2px)
     `,
 
-    backgroundSize: "100% 100%, 50px 50px",
+            backgroundSize: "100% 100%, 50px 50px",
 
-    WebkitMaskImage:
-      "radial-gradient(ellipse 70% 70% at 50% 50%, transparent 30%, black 100%)",
-    maskImage:
-      "radial-gradient(ellipse 70% 70% at 50% 50%, transparent 30%, black 100%)",
+            WebkitMaskImage:
+              "radial-gradient(ellipse 70% 70% at 50% 50%, transparent 30%, black 100%)",
+            maskImage:
+              "radial-gradient(ellipse 70% 70% at 50% 50%, transparent 30%, black 100%)",
 
-    pointerEvents: "none",
-    zIndex: 0,
-  }}
-/>
+            pointerEvents: "none",
+            zIndex: 0,
+          }}
+        />
 
         <style>{`
           @keyframes drawAssetLine  { from { stroke-dashoffset: 300; } to { stroke-dashoffset: 0; } }
@@ -1319,8 +1496,8 @@ export const Home = () => {
             >
               <div
                 style={{
-                  width: "300px",
-                  height: "360px",
+                  width: "400px",
+                  height: "430px",
                   borderRadius: "20px",
                   overflow: "hidden",
                   border: "1px solid rgba(255,255,255,0.08)",
@@ -1770,6 +1947,56 @@ export const Home = () => {
               Traders who rely on us for unlocking lucrative arbitrage
               opportunities safely and securely.
             </p>
+          </div>
+        </div>
+      </section>
+      {/* ════ REWARDS PROGRAM ════ */}
+      <section
+        ref={rewardsRef}
+        className="relative bg-[#020609] py-24 px-6 overflow-hidden flex items-center min-h-[75vh]"
+      >
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-[#0d9488] opacity-5 blur-[160px]" />
+
+        <div className="max-w-6xl mx-auto grid md:grid-cols-2 gap-16 items-center z-10">
+          {/* Left */}
+          <div
+            style={{
+              opacity: rewardsVisible ? 1 : 0,
+              transform: rewardsVisible ? "translateX(0)" : "translateX(-40px)",
+              transition: "all 1s ease",
+            }}
+          >
+            <StackedCard3D />
+          </div>
+
+          {/* Right */}
+          <div
+            style={{
+              opacity: rewardsVisible ? 1 : 0,
+              transform: rewardsVisible ? "translateY(0)" : "translateY(30px)",
+              transition: "all 1s ease 0.3s",
+            }}
+            className="text-center md:text-left"
+          >
+            <span className="text-[#0d9488] text-xs font-bold tracking-[0.4em] uppercase mb-6 block">
+              Rewards Program
+            </span>
+
+            <h2 className="text-4xl md:text-6xl font-black text-white mb-8">
+              Earn weekly rewards <br />
+              <span className="bg-gradient-to-r from-[#2affd0] to-[#86efac] bg-clip-text text-transparent">
+                as you trade
+              </span>
+            </h2>
+
+            <p className="text-gray-400 mb-10 max-w-lg">
+              Earn consistent rewards as you trade and grow your portfolio over
+              time.
+            </p>
+
+            <button className="border-2 border-[#0d9488]/40 hover:border-[#0d9488] px-10 py-4 rounded-xl text-white transition">
+              Get Started
+            </button>
           </div>
         </div>
       </section>
