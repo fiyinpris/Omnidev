@@ -21,3 +21,217 @@
 * {
   cursor: none !important;
 }
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html,
+body {
+  overflow-x: hidden;
+  max-width: 100vw;
+  margin: 0;
+  padding: 0;
+}
+
+@keyframes drawAssetLine {
+  from {
+    stroke-dashoffset: 300;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes cardFloat {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+@keyframes floatPulse {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  50% {
+    transform: translateY(-8px);
+    opacity: 0.6;
+  }
+}
+@keyframes rowSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+@keyframes drawSpark {
+  from {
+    stroke-dashoffset: 300;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes trustFadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(28px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes partnerIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes heroUp {
+  from {
+    opacity: 0;
+    transform: translateY(32px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes ctaGlow {
+  0%,
+  100% {
+    box-shadow:
+      0 0 16px rgba(13, 200, 160, 0.5),
+      0 0 36px rgba(13, 200, 160, 0.18),
+      inset 0 0 10px rgba(13, 200, 160, 0.08);
+  }
+  50% {
+    box-shadow:
+      0 0 28px rgba(13, 200, 160, 0.8),
+      0 0 56px rgba(13, 200, 160, 0.36),
+      inset 0 0 18px rgba(13, 200, 160, 0.18);
+  }
+}
+@keyframes ctaSweep {
+  0% {
+    left: -60%;
+  }
+  100% {
+    left: 160%;
+  }
+}
+
+.mkt-row {
+  opacity: 0;
+}
+.mkt-row.vis {
+  animation: rowSlideIn 0.42s ease forwards;
+}
+.spark {
+  stroke-dasharray: 300;
+  stroke-dashoffset: 300;
+}
+.spark.vis {
+  animation: drawSpark 1.1s ease forwards;
+}
+.tc {
+  opacity: 0;
+}
+.tc.vis {
+  animation: trustFadeUp 0.52s ease forwards;
+}
+.pin {
+  opacity: 0;
+  animation: partnerIn 0.5s ease forwards;
+}
+
+/* ── Glowing pill CTA button ── */
+.cta-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 28px;
+  border-radius: 999px;
+  background: transparent;
+  color: #0d9488;
+  font-size: 14px;
+  font-weight: 600;
+  border: 1px solid #0d9488;
+  cursor: pointer;
+  overflow: hidden;
+  transition:
+    color 0.25s ease,
+    transform 0.2s ease;
+  isolation: isolate; /* important */
+}
+
+/* Smooth sliding background */
+.cta-pill::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: #0d9488;
+  transform: translateX(-100%);
+  transition: transform 0.35s ease;
+  z-index: -1; /* keep it behind */
+}
+
+.cta-pill:hover::before {
+  transform: translateX(0);
+}
+
+.cta-pill:hover {
+  color: #fff;
+  transform: translateY(-1px);
+}
+
+/* ── Responsive: prevent any section overflowing ── */
+section {
+  width: 100%;
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+@media (max-width: 640px) {
+  .hide-sm {
+    display: none !important;
+  }
+  .mkt-grid {
+    grid-template-columns: 1fr auto auto !important;
+  }
+}
+@media (max-width: 768px) {
+  .trading-row {
+    flex-direction: column;
+    align-items: center !important;
+  }
+  .trader-img {
+    width: 100% !important;
+    max-width: 320px !important;
+    height: 260px !important;
+  }
+  .asset-cards {
+    width: 100% !important;
+    max-width: 340px !important;
+    padding-left: 0 !important;
+  }
+  .asset-card {
+    min-width: unset !important;
+    width: 100% !important;
+  }
+}
