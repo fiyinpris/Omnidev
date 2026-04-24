@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import logo from "/src/images/omnidev logo.png";
+import { Link, useNavigate } from "react-router-dom";
 
 const NAV_LINKS = ["How It Works", "About Us", "FAQ", "Contact"];
 
@@ -105,8 +106,25 @@ const SIDEBAR_LINKS = [
 
 export const Navbar = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [session, setSession] = useState(null);
+  const navigate = useNavigate();
 
-  // Lock body scroll when sidebar is open
+  // Check session on mount and on storage changes
+  useEffect(() => {
+    const checkSession = () => {
+      const s = localStorage.getItem("omnidev_session");
+      setSession(s ? JSON.parse(s) : null);
+    };
+    checkSession();
+    window.addEventListener("storage", checkSession);
+    // Also poll every second for same-tab updates
+    const interval = setInterval(checkSession, 1000);
+    return () => {
+      window.removeEventListener("storage", checkSession);
+      clearInterval(interval);
+    };
+  }, []);
+
   useEffect(() => {
     document.body.style.overflow = sidebarOpen ? "hidden" : "";
     return () => {
@@ -114,10 +132,19 @@ export const Navbar = () => {
     };
   }, [sidebarOpen]);
 
+  const handleLogout = () => {
+    localStorage.removeItem("omnidev_session");
+    setSession(null);
+    setSidebarOpen(false);
+    navigate("/");
+  };
+
+  const isLoggedIn = session?.loggedIn;
+
   return (
     <>
       {/* ── Top banner ── */}
-      <div className="bg-[#0d9488] px-4 py-3 flex flex-col sm:flex-row justify-between items-center text-sm text-white gap-1 text-center">
+      <div className="bg-[#0d9488] px-4 py-2.5 sm:py-3 flex flex-col sm:flex-row justify-between items-center text-xs sm:text-sm text-white gap-1 text-center">
         <span>
           Join now and get <strong>free $100 credits</strong> on the first
           deposit.
@@ -147,7 +174,7 @@ export const Navbar = () => {
           background: "rgba(10,10,10,0.85)",
           backdropFilter: "blur(12px)",
           borderBottom: "1px solid #1a1a1a",
-          padding: "0 24px",
+          padding: "0 16px",
           height: "64px",
           display: "flex",
           alignItems: "center",
@@ -155,13 +182,21 @@ export const Navbar = () => {
         }}
       >
         {/* Logo */}
-        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+        <Link
+          to="/"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "10px",
+            textDecoration: "none",
+          }}
+        >
           <img
             src={logo}
             alt="Omnidev logo"
             style={{
-              width: "50px",
-              height: "50px",
+              width: "44px",
+              height: "44px",
               borderRadius: "50%",
               objectFit: "cover",
             }}
@@ -169,12 +204,12 @@ export const Navbar = () => {
           <span style={{ color: "#fff", fontWeight: 700, fontSize: "17px" }}>
             Omnidev
           </span>
-        </div>
+        </Link>
 
         {/* Desktop links */}
         <div
           className="hidden md:flex"
-          style={{ alignItems: "center", gap: "36px" }}
+          style={{ alignItems: "center", gap: "32px" }}
         >
           {NAV_LINKS.map((l) => (
             <a
@@ -197,37 +232,67 @@ export const Navbar = () => {
               {l}
             </a>
           ))}
-          <button
-            style={{
-              background: "#0d9488",
-              color: "#fff",
-              fontWeight: 600,
-              fontSize: "14px",
-              padding: "9px 22px",
-              borderRadius: "8px",
-              border: "none",
-              cursor: "pointer",
-              transition: "background 0.2s",
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = "#0f766e";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = "#0d9488";
-            }}
-          >
-            Login
-          </button>
+
+          {isLoggedIn ? (
+            <Link to="/dashboard">
+              <button
+                style={{
+                  background: "#0d9488",
+                  color: "#fff",
+                  fontWeight: 600,
+                  fontSize: "14px",
+                  padding: "9px 22px",
+                  borderRadius: "8px",
+                  border: "none",
+                  cursor: "pointer",
+                  transition: "background 0.2s",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "#0f766e";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "#0d9488";
+                }}
+              >
+                Dashboard
+              </button>
+            </Link>
+          ) : (
+            <Link to="/login">
+              <button
+                style={{
+                  background: "#0d9488",
+                  color: "#fff",
+                  fontWeight: 600,
+                  fontSize: "14px",
+                  padding: "9px 22px",
+                  borderRadius: "8px",
+                  border: "none",
+                  cursor: "pointer",
+                  transition: "background 0.2s",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "#0f766e";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "#0d9488";
+                }}
+              >
+                Login
+              </button>
+            </Link>
+          )}
         </div>
 
         {/* Hamburger — mobile only */}
         <button
-          className="md:hidden flex flex-col items-end gap-1 p-1"
+          className="md:hidden flex flex-col items-end gap-1.5 p-1"
           onClick={() => setSidebarOpen(true)}
+          aria-label="Open menu"
         >
           <span className="w-6 h-[2px] bg-white rounded"></span>
           <span className="w-6 h-[2px] bg-white rounded"></span>
-          <span className="w-4 h-[2px] bg-teal-600 rounded"></span>
+          <span className="w-4 h-[2px] bg-teal-500 rounded"></span>
         </button>
       </nav>
 
@@ -245,7 +310,7 @@ export const Navbar = () => {
         }}
       />
 
-      {/* ── Sidebar panel — slides in from RIGHT ── */}
+      {/* ── Sidebar panel ── */}
       <aside
         style={{
           position: "fixed",
@@ -317,7 +382,33 @@ export const Navbar = () => {
           </button>
         </div>
 
-        {/* Sidebar nav links with icons */}
+        {/* Logged-in user info in sidebar */}
+        {isLoggedIn && (
+          <div
+            style={{
+              padding: "14px 20px",
+              borderBottom: "1px solid #1e1e1e",
+              background: "rgba(13,148,136,0.07)",
+            }}
+          >
+            <p
+              style={{
+                color: "#9ca3af",
+                fontSize: "11px",
+                marginBottom: "2px",
+                textTransform: "uppercase",
+                letterSpacing: "0.08em",
+              }}
+            >
+              Signed in as
+            </p>
+            <p style={{ color: "#fff", fontSize: "14px", fontWeight: 600 }}>
+              {session?.username || session?.email}
+            </p>
+          </div>
+        )}
+
+        {/* Sidebar nav links */}
         <nav style={{ padding: "16px 0", flex: 1, overflowY: "auto" }}>
           {SIDEBAR_LINKS.map((item, i) => (
             <a
@@ -359,41 +450,107 @@ export const Navbar = () => {
 
         {/* Sidebar CTA */}
         <div style={{ padding: "20px", borderTop: "1px solid #1e1e1e" }}>
-          <p
-            style={{
-              color: "#6b7280",
-              fontSize: "12px",
-              marginBottom: "12px",
-              textAlign: "center",
-            }}
-          >
-            Ready to start trading?
-          </p>
-          <button
-            style={{
-              width: "100%",
-              background: "#0d9488",
-              color: "#fff",
-              fontWeight: 700,
-              fontSize: "14px",
-              padding: "12px",
-              borderRadius: "10px",
-              border: "none",
-              cursor: "pointer",
-              opacity: sidebarOpen ? 1 : 0,
-              transform: sidebarOpen ? "translateY(0)" : "translateY(10px)",
-              transition:
-                "opacity 0.3s ease 0.38s, transform 0.3s ease 0.38s, background 0.2s",
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = "#0f766e";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = "#0d9488";
-            }}
-          >
-            Get Started
-          </button>
+          {isLoggedIn ? (
+            <>
+              <Link to="/dashboard" onClick={() => setSidebarOpen(false)}>
+                <button
+                  style={{
+                    width: "100%",
+                    background: "#0d9488",
+                    color: "#fff",
+                    fontWeight: 700,
+                    fontSize: "14px",
+                    padding: "12px",
+                    borderRadius: "10px",
+                    border: "none",
+                    cursor: "pointer",
+                    marginBottom: "10px",
+                    opacity: sidebarOpen ? 1 : 0,
+                    transform: sidebarOpen
+                      ? "translateY(0)"
+                      : "translateY(10px)",
+                    transition:
+                      "opacity 0.3s ease 0.38s, transform 0.3s ease 0.38s, background 0.2s",
+                  }}
+                >
+                  Go to Dashboard
+                </button>
+              </Link>
+              <button
+                onClick={handleLogout}
+                style={{
+                  width: "100%",
+                  background: "transparent",
+                  color: "#9ca3af",
+                  fontWeight: 600,
+                  fontSize: "14px",
+                  padding: "11px",
+                  borderRadius: "10px",
+                  border: "1px solid #374151",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+              >
+                Logout
+              </button>
+            </>
+          ) : (
+            <>
+              <p
+                style={{
+                  color: "#6b7280",
+                  fontSize: "12px",
+                  marginBottom: "12px",
+                  textAlign: "center",
+                }}
+              >
+                Ready to start trading?
+              </p>
+              <Link to="/signup" onClick={() => setSidebarOpen(false)}>
+                <button
+                  style={{
+                    width: "100%",
+                    background: "#0d9488",
+                    color: "#fff",
+                    fontWeight: 700,
+                    fontSize: "14px",
+                    padding: "12px",
+                    borderRadius: "10px",
+                    border: "none",
+                    cursor: "pointer",
+                    marginBottom: "10px",
+                    opacity: sidebarOpen ? 1 : 0,
+                    transform: sidebarOpen
+                      ? "translateY(0)"
+                      : "translateY(10px)",
+                    transition:
+                      "opacity 0.3s ease 0.38s, transform 0.3s ease 0.38s, background 0.2s",
+                  }}
+                >
+                  Get Started
+                </button>
+              </Link>
+              <Link to="/login" onClick={() => setSidebarOpen(false)}>
+                <button
+                  style={{
+                    width: "100%",
+                    background: "transparent",
+                    color: "#9ca3af",
+                    fontWeight: 600,
+                    fontSize: "14px",
+                    padding: "11px",
+                    borderRadius: "10px",
+                    border: "1px solid #374151",
+                    cursor: "pointer",
+                    marginTop: "8px",
+                    transition: "all 0.2s",
+                  }}
+                >
+                  Login
+                </button>
+              </Link>
+            </>
+          )}
         </div>
       </aside>
     </>
