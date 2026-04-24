@@ -1382,41 +1382,32 @@ export const Home = () => {
           </button>
         </section>
 
+
+
         {/* ════ STATS + PARTNERS ════ */}
-        <section
-          style={{
-            position: "relative",
-            background: "#0a0a0a",
-            padding: "60px 16px 68px",
-            textAlign: "center",
-          }}
-        >
+        <section className="relative bg-[#0a0a0a] py-[60px] px-4 pb-[68px] text-center">
           <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              pointerEvents: "none",
-              zIndex: 0,
-              ...gridBg,
-            }}
+            className="absolute inset-0 pointer-events-none z-0"
+            style={gridBg}
           />
-          <div style={{ position: "relative", zIndex: 2 }}>
+
+          <div className="relative z-[2]">
             <div
               ref={statsRef}
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(3,1fr)",
-                border: "1px solid #121212",
-                borderRadius: "24px",
-                overflow: "hidden",
-                maxWidth: "580px",
-                margin: "0 auto 48px",
-              }}
+              className="
+        grid grid-cols-1 sm:grid-cols-3
+        border border-[#121212]
+        rounded-[24px] overflow-hidden
+        max-w-[580px] mx-auto mb-12
+      "
             >
               {STATS.map((s, i) => (
                 <div
                   key={s.label}
-                  style={{ borderRight: i < 2 ? "1px solid #1a1a1a" : "none" }}
+                  className="
+            sm:border-r border-[#1a1a1a]
+            sm:last:border-r-0
+          "
                 >
                   <StatItem
                     value={s.value}
@@ -1426,40 +1417,23 @@ export const Home = () => {
                 </div>
               ))}
             </div>
-            <p
-              style={{
-                color: "#4b5563",
-                fontSize: "12px",
-                marginBottom: "28px",
-                letterSpacing: "0.05em",
-              }}
-            >
+
+            <p className="text-[#4b5563] text-[12px] mb-[28px] tracking-[0.05em]">
               Trusted by dynamic companies around the world
             </p>
+
             <div
-              style={{
-                display: "flex",
-                justifyContent: "center",
-                alignItems: "center",
-                gap: "clamp(14px,3.5vw,44px)",
-                flexWrap: "wrap",
-                maxWidth: "860px",
-                margin: "0 auto",
-              }}
+              className="
+        flex justify-center items-center flex-wrap
+        gap-[clamp(14px,3.5vw,44px)]
+        max-w-[900px] mx-auto
+      "
             >
               {PARTNERS.map((p, i) => (
                 <div
                   key={p.name}
-                  className="pin"
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "8px",
-                    color: "#e5e7eb",
-                    fontWeight: 800,
-                    fontSize: "clamp(12px,2vw,18px)",
-                    animationDelay: `${i * 0.3}s`,
-                  }}
+                  className="pin flex items-center gap-2 text-[#e5e7eb] font-extrabold text-[clamp(12px,2vw,18px)] mt-10"
+                  style={{ animationDelay: `${i * 0.3}s` }}
                 >
                   {p.icon}
                   {p.name}
@@ -1468,6 +1442,8 @@ export const Home = () => {
             </div>
           </div>
         </section>
+
+
 
         {/* ════ FEATURE ════ */}
         <section
@@ -1690,7 +1666,7 @@ export const Home = () => {
           <div
             style={{
               position: "relative",
-              maxWidth: "860px",
+              maxWidth: "1000px",
               margin: "0 auto",
               zIndex: 1,
             }}
@@ -1826,8 +1802,8 @@ export const Home = () => {
                   style={{
                     display: "grid",
                     gridTemplateColumns: "1fr auto auto auto",
-                    gap: "6px",
-                    padding: "16px 14px",
+                    gap: "8px",
+                    padding: "25px 14px",
                     borderBottom:
                       i < rows.length - 1 ? "1px solid #1a1a1a" : "none",
                     alignItems: "center",
@@ -1941,8 +1917,6 @@ export const Home = () => {
             </div>
           </div>
         </section>
-
-        
 
         {/* ════ TRADING SIMPLIFIED ════ */}
         <section

@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import logo from "/src/images/omnidev logo.png";
 import { Link, useNavigate } from "react-router-dom";
+import { onAuthStateChanged, signOut } from "firebase/auth";
+import { auth } from "../firebase";
 
 const NAV_LINKS = ["How It Works", "About Us", "FAQ", "Contact"];
 
@@ -57,37 +59,6 @@ const SIDEBAR_LINKS = [
     ),
   },
   {
-    label: "Markets",
-    icon: (
-      <svg
-        width="18"
-        height="18"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-      >
-        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-      </svg>
-    ),
-  },
-  {
-    label: "Trade",
-    icon: (
-      <svg
-        width="18"
-        height="18"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-      >
-        <line x1="12" y1="1" x2="12" y2="23" />
-        <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
-      </svg>
-    ),
-  },
-  {
     label: "Contact",
     icon: (
       <svg
@@ -106,23 +77,15 @@ const SIDEBAR_LINKS = [
 
 export const Navbar = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [session, setSession] = useState(null);
+  const [user, setUser] = useState(null);
   const navigate = useNavigate();
 
-  // Check session on mount and on storage changes
+  // Listen to Firebase auth state — updates instantly on login/logout
   useEffect(() => {
-    const checkSession = () => {
-      const s = localStorage.getItem("omnidev_session");
-      setSession(s ? JSON.parse(s) : null);
-    };
-    checkSession();
-    window.addEventListener("storage", checkSession);
-    // Also poll every second for same-tab updates
-    const interval = setInterval(checkSession, 1000);
-    return () => {
-      window.removeEventListener("storage", checkSession);
-      clearInterval(interval);
-    };
+    const unsub = onAuthStateChanged(auth, (firebaseUser) => {
+      setUser(firebaseUser || null);
+    });
+    return () => unsub();
   }, []);
 
   useEffect(() => {
@@ -132,14 +95,14 @@ export const Navbar = () => {
     };
   }, [sidebarOpen]);
 
-  const handleLogout = () => {
-    localStorage.removeItem("omnidev_session");
-    setSession(null);
+  const handleLogout = async () => {
+    await signOut(auth);
+    setUser(null);
     setSidebarOpen(false);
     navigate("/");
   };
 
-  const isLoggedIn = session?.loggedIn;
+  const isLoggedIn = !!user;
 
   return (
     <>
@@ -165,22 +128,8 @@ export const Navbar = () => {
         </span>
       </div>
 
-      {/* ── Main nav ── */}
-      <nav
-        style={{
-          position: "sticky",
-          top: 0,
-          zIndex: 50,
-          background: "rgba(10,10,10,0.85)",
-          backdropFilter: "blur(12px)",
-          borderBottom: "1px solid #1a1a1a",
-          padding: "0 16px",
-          height: "64px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-        }}
-      >
+      {/* ── Main nav — sticky so it stays on top when scrolling ── */}
+      <nav className="sticky top-0 z-50 backdrop-blur-md bg-[#0a0a0a]/80 border-b border-[#1a1a1a] h-16 flex items-center justify-between px-4">
         {/* Logo */}
         <Link
           to="/"
@@ -233,6 +182,7 @@ export const Navbar = () => {
             </a>
           ))}
 
+          {/* Login ↔ Dashboard toggle based on Firebase auth */}
           {isLoggedIn ? (
             <Link to="/dashboard">
               <button
@@ -382,7 +332,7 @@ export const Navbar = () => {
           </button>
         </div>
 
-        {/* Logged-in user info in sidebar */}
+        {/* Logged-in user info */}
         {isLoggedIn && (
           <div
             style={{
@@ -403,7 +353,7 @@ export const Navbar = () => {
               Signed in as
             </p>
             <p style={{ color: "#fff", fontSize: "14px", fontWeight: 600 }}>
-              {session?.username || session?.email}
+              {user?.email}
             </p>
           </div>
         )}

@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
+import { auth } from "../firebase";
 import logo from "/src/images/omnidev logo.png";
 
 export default function Signup() {
@@ -10,6 +12,7 @@ export default function Signup() {
     username: "",
     password: "",
   });
+
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
@@ -19,10 +22,12 @@ export default function Signup() {
     setError("");
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
+
     const { firstName, lastName, email, username, password } = form;
 
+    // VALIDATION (your original logic kept)
     if (!firstName || !lastName || !email || !username || !password) {
       setError("Please fill in all fields.");
       return;
@@ -38,45 +43,36 @@ export default function Signup() {
       return;
     }
 
-    setLoading(true);
-    setTimeout(() => {
-      const accounts = JSON.parse(
-        localStorage.getItem("omnidev_accounts") || "{}",
-      );
+    try {
+      setLoading(true);
+      setError("");
 
-      if (accounts[email]) {
-        setError("An account with this email already exists.");
-        setLoading(false);
-        return;
-      }
-
-      // Check username uniqueness
-      const usernameTaken = Object.values(accounts).some(
-        (a) => a.username === username,
-      );
-      if (usernameTaken) {
-        setError("This username is already taken.");
-        setLoading(false);
-        return;
-      }
-
-      // Save account
-      accounts[email] = {
-        firstName,
-        lastName,
+      // 🔥 CREATE USER (Firebase)
+      const userCredential = await createUserWithEmailAndPassword(
+        auth,
         email,
-        username,
         password,
-        balance: 0,
-        transactions: [],
-        createdAt: new Date().toISOString(),
-      };
-      localStorage.setItem("omnidev_accounts", JSON.stringify(accounts));
+      );
 
-      setLoading(false);
-      // Redirect to login with success flag
+      // 🔥 ADD DISPLAY NAME (optional but useful)
+      await updateProfile(userCredential.user, {
+        displayName: `${firstName} ${lastName}`,
+      });
+
+      // ⚠️ IMPORTANT:
+      // Firebase does NOT store username automatically.
+      // If you want username → use Firestore (I can add it for you)
+
       navigate("/login?registered=true");
-    }, 800);
+    } catch (err) {
+      if (err.code === "auth/email-already-in-use") {
+        setError("Email already in use.");
+      } else {
+        setError("Failed to create account.");
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -94,6 +90,7 @@ export default function Signup() {
             "radial-gradient(ellipse 75% 75% at 50% 50%,transparent 35%,black 70%)",
         }}
       />
+      
 
       <div className="relative z-10 flex flex-col items-center text-center w-full max-w-sm sm:max-w-md">
         {/* LOGO */}
@@ -114,7 +111,7 @@ export default function Signup() {
               placeholder="Enter First Name"
               value={form.firstName}
               onChange={handleChange}
-              className="w-1/2 px-4 py-3.5 rounded-xl bg-white/90 text-black placeholder-gray-500 outline-none text-sm"
+              className="w-1/2 px-4 py-3.5 rounded-xl bg-white/90 text-black outline-none text-sm"
             />
             <input
               type="text"
@@ -122,7 +119,7 @@ export default function Signup() {
               placeholder="Enter Last Name"
               value={form.lastName}
               onChange={handleChange}
-              className="w-1/2 px-4 py-3.5 rounded-xl bg-white/90 text-black placeholder-gray-500 outline-none text-sm"
+              className="w-1/2 px-4 py-3.5 rounded-xl bg-white/90 text-black outline-none text-sm"
             />
           </div>
 
@@ -132,7 +129,7 @@ export default function Signup() {
             placeholder="Enter Email"
             value={form.email}
             onChange={handleChange}
-            className="w-full px-5 py-3.5 sm:py-4 rounded-xl bg-white/90 text-black placeholder-gray-500 outline-none text-sm sm:text-base"
+            className="w-full px-5 py-3.5 rounded-xl bg-white/90 text-black outline-none"
           />
 
           <input
@@ -141,7 +138,7 @@ export default function Signup() {
             placeholder="Enter Username"
             value={form.username}
             onChange={handleChange}
-            className="w-full px-5 py-3.5 sm:py-4 rounded-xl bg-white/90 text-black placeholder-gray-500 outline-none text-sm sm:text-base"
+            className="w-full px-5 py-3.5 rounded-xl bg-white/90 text-black outline-none"
           />
 
           <input
@@ -150,7 +147,7 @@ export default function Signup() {
             placeholder="Enter Password"
             value={form.password}
             onChange={handleChange}
-            className="w-full px-5 py-3.5 sm:py-4 rounded-xl bg-white/90 text-black placeholder-gray-500 outline-none text-sm sm:text-base"
+            className="w-full px-5 py-3.5 rounded-xl bg-white/90 text-black outline-none"
           />
 
           {error && (
@@ -162,37 +159,12 @@ export default function Signup() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-3.5 sm:py-4 rounded-xl font-semibold text-white text-sm sm:text-base
+            className="w-full py-3.5 rounded-xl font-semibold text-white
               bg-gradient-to-r from-teal-500 to-teal-600
               hover:from-teal-400 hover:to-teal-500 transition-all duration-200
-              disabled:opacity-60 disabled:cursor-not-allowed"
+              disabled:opacity-60"
           >
-            {loading ? (
-              <span className="flex items-center justify-center gap-2">
-                <svg
-                  className="animate-spin w-4 h-4"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                >
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  />
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8v8z"
-                  />
-                </svg>
-                Creating account...
-              </span>
-            ) : (
-              "Sign Up"
-            )}
+            {loading ? "Creating account..." : "Sign Up"}
           </button>
         </form>
 

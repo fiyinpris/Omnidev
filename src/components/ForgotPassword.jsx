@@ -19,7 +19,8 @@ export default function ForgotPassword() {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    const { identifier, newPassword } = form;
+
+    let { identifier, newPassword } = form;
 
     if (!identifier || !newPassword) {
       setError("Please fill in all fields.");
@@ -31,28 +32,30 @@ export default function ForgotPassword() {
       return;
     }
 
+    // ✅ normalize input
+    identifier = identifier.trim().toLowerCase();
+
     const accounts = JSON.parse(
       localStorage.getItem("omnidev_accounts") || "{}",
     );
 
-    // find account by email OR username
     let accountKey = null;
-    let account = null;
 
+    // ✅ 1. try email match
     if (accounts[identifier]) {
       accountKey = identifier;
-      account = accounts[identifier];
     } else {
-      const found = Object.entries(accounts).find(
-        ([, acc]) => acc.username === identifier,
-      );
+      // ✅ 2. try username match (case insensitive)
+      const found = Object.entries(accounts).find(([email, acc]) => {
+        return acc.username?.toLowerCase() === identifier;
+      });
+
       if (found) {
-        accountKey = found[0];
-        account = found[1];
+        accountKey = found[0]; // email key
       }
     }
 
-    if (!account) {
+    if (!accountKey) {
       setError("Account not found.");
       return;
     }
@@ -70,7 +73,7 @@ export default function ForgotPassword() {
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-[#0b0b0f] relative overflow-hidden px-4">
-      {/* GRID BACKGROUND (same as login) */}
+      {/* GRID BACKGROUND */}
       <div
         className="absolute inset-0 pointer-events-none z-0"
         style={{
@@ -92,7 +95,6 @@ export default function ForgotPassword() {
         </h1>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* EMAIL OR USERNAME */}
           <input
             type="text"
             name="identifier"
@@ -102,7 +104,6 @@ export default function ForgotPassword() {
             className="w-full px-5 py-4 rounded-xl bg-white/90 text-black outline-none"
           />
 
-          {/* NEW PASSWORD */}
           <input
             type="password"
             name="newPassword"
@@ -112,21 +113,18 @@ export default function ForgotPassword() {
             className="w-full px-5 py-4 rounded-xl bg-white/90 text-black outline-none"
           />
 
-          {/* ERROR */}
           {error && (
             <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-3">
               <p className="text-red-400 text-sm text-left">{error}</p>
             </div>
           )}
 
-          {/* SUCCESS */}
           {success && (
             <div className="bg-green-500/10 border border-green-500/30 rounded-lg px-4 py-3">
               <p className="text-green-400 text-sm text-left">{success}</p>
             </div>
           )}
 
-          {/* BUTTON */}
           <button
             type="submit"
             className="w-full py-4 rounded-xl font-semibold text-white
