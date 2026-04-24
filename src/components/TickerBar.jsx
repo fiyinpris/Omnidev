@@ -91,124 +91,77 @@ export const TickerBar = () => {
   const [prices, setPrices] = useState({});
   const [flash, setFlash] = useState({});
   const prevPrices = useRef({});
-  const wsRef = useRef(null);
-  const fallbackRef = useRef(null);
+  const flashTimers = useRef({});
 
-  // ✅ INITIAL FETCH (only once)
-  const fetchPrices = async () => {
-    try {
-      const ids = COINS.map((c) => c.id).join(",");
-      const res = await fetch(
-        `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`,
-      );
-      const data = await res.json();
+  useEffect(() => {
+    const fetchInitial = async () => {
+      try {
+        const ids = COINS.map((c) => c.id).join(",");
+        const res = await fetch(
+          `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`,
+        );
+        const data = await res.json();
+        const initial = {};
+        COINS.forEach((c) => {
+          initial[c.symbol] = {
+            price: data[c.id]?.usd ?? 0,
+            change: data[c.id]?.usd_24h_change ?? 0,
+          };
+        });
+        setPrices(initial);
+        prevPrices.current = initial;
+      } catch (e) {
+        console.error("Initial fetch failed:", e);
+      }
+    };
+    fetchInitial();
 
-      const mapped = {};
-      COINS.forEach((c) => {
-        mapped[c.symbol] = {
-          price: data[c.id]?.usd ?? 0,
-          change: data[c.id]?.usd_24h_change ?? 0,
-        };
-      });
-
-      setPrices(mapped);
-      prevPrices.current = mapped;
-    } catch (e) {
-      console.error("Fetch failed:", e);
-    }
-  };
-
-  // ✅ START FALLBACK ONLY WHEN NEEDED
-  const startFallback = () => {
-    if (fallbackRef.current) return;
-
-    console.log("⚠️ Fallback mode (10s updates)");
-
-    fallbackRef.current = setInterval(fetchPrices, 10000);
-  };
-
-  const stopFallback = () => {
-    if (fallbackRef.current) {
-      clearInterval(fallbackRef.current);
-      fallbackRef.current = null;
-    }
-  };
-
-  // ✅ CONNECT WEBSOCKET
-  const connectWS = () => {
     const streams = COINS.map((c) => `${c.wsSymbol}@miniTicker`).join("/");
     const ws = new WebSocket(
       `wss://stream.binance.com:9443/stream?streams=${streams}`,
     );
 
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      console.log("✅ WS Connected");
-      stopFallback(); // stop fallback if WS is back
-    };
-
     ws.onmessage = (event) => {
-      const { data } = JSON.parse(event.data);
-
-      const symbol = data.s.replace("USDT", "");
+      const { data: streamData } = JSON.parse(event.data);
+      const symbol = streamData.s.replace("USDT", "");
       const coin = COINS.find((c) => c.symbol === symbol);
       if (!coin) return;
 
-      const newPrice = parseFloat(data.c);
-      const openPrice = parseFloat(data.o);
+      const newPrice = parseFloat(streamData.c);
+      const openPrice = parseFloat(streamData.o);
       const change = ((newPrice - openPrice) / openPrice) * 100;
-
-      const prev = prevPrices.current[coin.symbol]?.price;
-
-      let direction = null;
-      if (prev !== undefined) {
-        if (newPrice > prev) direction = "up";
-        else if (newPrice < prev) direction = "down";
-      }
+      const prevPrice = prevPrices.current[coin.symbol]?.price;
+      const direction =
+        prevPrice !== undefined
+          ? newPrice > prevPrice
+            ? "up"
+            : newPrice < prevPrice
+              ? "down"
+              : null
+          : null;
 
       prevPrices.current[coin.symbol] = { price: newPrice, change };
 
-      setPrices((prevState) => ({
-        ...prevState,
+      setPrices((prev) => ({
+        ...prev,
         [coin.symbol]: { price: newPrice, change },
       }));
 
       if (direction) {
+        if (flashTimers.current[coin.symbol]) {
+          clearTimeout(flashTimers.current[coin.symbol]);
+        }
         setFlash((prev) => ({ ...prev, [coin.symbol]: direction }));
-        setTimeout(() => {
+        flashTimers.current[coin.symbol] = setTimeout(() => {
           setFlash((prev) => ({ ...prev, [coin.symbol]: null }));
-        }, 600);
+        }, 800);
       }
     };
 
-    ws.onerror = () => {
-      console.log("❌ WS Error → fallback");
-      startFallback();
-      reconnect();
-    };
-
-    ws.onclose = () => {
-      console.log("❌ WS Closed → reconnecting");
-      startFallback();
-      reconnect();
-    };
-  };
-
-  // ✅ RECONNECT LOGIC
-  const reconnect = () => {
-    setTimeout(() => {
-      connectWS();
-    }, 3000);
-  };
-
-  useEffect(() => {
-    fetchPrices(); // initial load
-    connectWS();
-
+    ws.onerror = (e) => console.error("WS error:", e);
     return () => {
-      wsRef.current?.close();
-      stopFallback();
+      ws.close();
+      Object.values(flashTimers.current).forEach(clearTimeout);
     };
   }, []);
 
@@ -223,8 +176,25 @@ export const TickerBar = () => {
   const items = [...COINS, ...COINS];
 
   return (
-    <div className="bg-[#0d0d0d] border-b border-[#1a1a1a] overflow-hidden h-[40px] flex items-center">
-      <div className="flex gap-12 animate-[ticker_25s_linear_infinite] whitespace-nowrap pl-4">
+    <div
+      style={{
+        background: "#0d0d0d",
+        borderBottom: "1px solid #1a1a1a",
+        overflow: "hidden",
+        height: "40px",
+        display: "flex",
+        alignItems: "center",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          gap: "3rem",
+          animation: "ticker 25s linear infinite",
+          whiteSpace: "nowrap",
+          paddingLeft: "1rem",
+        }}
+      >
         {items.map((coin, i) => {
           const data = prices[coin.symbol];
           const flashDir = flash[coin.symbol];
@@ -232,29 +202,51 @@ export const TickerBar = () => {
           return (
             <span
               key={i}
-              className="inline-flex items-center gap-2 text-[13px] border-r border-[#1f1f1f] pr-12"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                fontSize: "13px",
+                borderRight: "1px solid #1f1f1f",
+                paddingRight: "3rem",
+              }}
             >
-              <img src={coin.logo} className="w-[18px] h-[18px] rounded-full" />
-
-              <span className="text-gray-300 font-semibold">{coin.symbol}</span>
-
+              <img
+                src={coin.logo}
+                alt={coin.symbol}
+                style={{
+                  width: "18px",
+                  height: "18px",
+                  borderRadius: "50%",
+                  flexShrink: 0,
+                }}
+              />
+              <span style={{ color: "#ccc", fontWeight: 600 }}>
+                {coin.symbol}
+              </span>
               <span
-                className={`font-medium transition ${
-                  flashDir === "up"
-                    ? "text-green-500"
-                    : flashDir === "down"
-                      ? "text-red-500"
-                      : "text-white"
-                }`}
+                style={{
+                  color:
+                    flashDir === "up"
+                      ? "#22c55e"
+                      : flashDir === "down"
+                        ? "#ef4444"
+                        : "#fff",
+                  fontWeight: 500,
+                  transition: "color 0.15s ease",
+                }}
               >
                 ${data ? fmt(data.price) : "—"}
               </span>
-
               {data && (
                 <span
-                  className={`text-[12px] flex items-center gap-[2px] ${
-                    data.change >= 0 ? "text-green-500" : "text-red-500"
-                  }`}
+                  style={{
+                    color: data.change >= 0 ? "#22c55e" : "#ef4444",
+                    fontSize: "12px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "2px",
+                  }}
                 >
                   {data.change >= 0 ? "▲" : "▼"}{" "}
                   {Math.abs(data.change).toFixed(2)}%
@@ -267,7 +259,7 @@ export const TickerBar = () => {
 
       <style>{`
         @keyframes ticker {
-          0% { transform: translateX(0); }
+          0%   { transform: translateX(0); }
           100% { transform: translateX(-50%); }
         }
       `}</style>
