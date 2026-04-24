@@ -10,7 +10,7 @@ const firebaseConfig = {
   appId: "1:783981327183:web:11b6a91b2afef8bf91cb3a",
 };
 
-const app = initializeApp(firebaseConfig);
+const app = initializeApp(firebaseConfig)
 
 
 export const auth = getAuth(app);
