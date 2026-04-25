@@ -78,11 +78,12 @@ const PARTNERS = [
   },
 ];
 
+// Coins with wsSymbol for live data
 const CYCLING_COINS = [
   {
     name: "Bitcoin",
     symbol: "BTC",
-    price: "$67,420.00",
+    wsSymbol: "btcusdt",
     change: "+4.2%",
     up: true,
     logo: "https://assets.coingecko.com/coins/images/1/small/bitcoin.png",
@@ -90,7 +91,7 @@ const CYCLING_COINS = [
   {
     name: "Ethereum",
     symbol: "ETH",
-    price: "$3,512.80",
+    wsSymbol: "ethusdt",
     change: "+2.8%",
     up: true,
     logo: "https://assets.coingecko.com/coins/images/279/small/ethereum.png",
@@ -98,7 +99,7 @@ const CYCLING_COINS = [
   {
     name: "Polkadot",
     symbol: "DOT",
-    price: "$8.34",
+    wsSymbol: "dotusdt",
     change: "-1.2%",
     up: false,
     logo: "https://assets.coingecko.com/coins/images/12171/small/polkadot.png",
@@ -106,7 +107,7 @@ const CYCLING_COINS = [
   {
     name: "Chainlink",
     symbol: "LINK",
-    price: "$14.92",
+    wsSymbol: "linkusdt",
     change: "+5.1%",
     up: true,
     logo: "https://assets.coingecko.com/coins/images/877/small/chainlink-new-logo.png",
@@ -114,7 +115,7 @@ const CYCLING_COINS = [
   {
     name: "Avalanche",
     symbol: "AVAX",
-    price: "$38.10",
+    wsSymbol: "avaxusdt",
     change: "+3.7%",
     up: true,
     logo: "https://assets.coingecko.com/coins/images/12559/small/Avalanche_Circle_RedWhite_Trans.png",
@@ -122,7 +123,7 @@ const CYCLING_COINS = [
   {
     name: "Solana",
     symbol: "SOL",
-    price: "$172.55",
+    wsSymbol: "solusdt",
     change: "+6.4%",
     up: true,
     logo: "https://assets.coingecko.com/coins/images/4128/small/solana.png",
@@ -130,7 +131,7 @@ const CYCLING_COINS = [
   {
     name: "Cardano",
     symbol: "ADA",
-    price: "$0.4821",
+    wsSymbol: "adausdt",
     change: "-0.9%",
     up: false,
     logo: "https://assets.coingecko.com/coins/images/975/small/cardano.png",
@@ -138,7 +139,7 @@ const CYCLING_COINS = [
   {
     name: "Dogecoin",
     symbol: "DOGE",
-    price: "$0.1632",
+    wsSymbol: "dogeusdt",
     change: "+1.5%",
     up: true,
     logo: "https://assets.coingecko.com/coins/images/5/small/dogecoin.png",
@@ -281,7 +282,7 @@ const MARKET_DATA = {
   ],
 };
 
-/* ─── count-up hook ─── */
+/* ── count-up hook ── */
 const useCountUp = (target, duration = 1800, triggered = false) => {
   const [count, setCount] = useState(0);
   useEffect(() => {
@@ -1127,9 +1128,6 @@ const StackedCards3D = ({ visible }) => (
   </div>
 );
 
-/* ════════════════════════════════════════════════
-   MAIN COMPONENT
-════════════════════════════════════════════════ */
 export const Home = () => {
   const [wordIndex, setWordIndex] = useState(0);
   const [wordVisible, setWordVisible] = useState(true);
@@ -1143,6 +1141,11 @@ export const Home = () => {
   const [coinVisible, setCoinVisible] = useState(true);
   const [activeTab, setActiveTab] = useState("crypto");
 
+  // Live prices from Binance WebSocket for CYCLING_COINS
+  const [livePrices, setLivePrices] = useState({});
+  const wsRef = useRef(null);
+  const prevRef = useRef({});
+
   const statsRef = useRef(null);
   const featureRef = useRef(null);
   const tradingRef = useRef(null);
@@ -1150,7 +1153,58 @@ export const Home = () => {
   const trustRef = useRef(null);
   const rewardsRef = useRef(null);
 
-  /* word cycle */
+  // Section refs for nav scroll
+  const whyRef = useRef(null); // "How It Works" → Why choose OmniDev
+  const trustedRef = useRef(null); // "About Us" → Most trusted platform
+  const footerRef = useRef(null); // "FAQ" → OmniDev Pro footer
+
+  // Live WebSocket for home page coin prices
+  useEffect(() => {
+    const connect = () => {
+      const streams = CYCLING_COINS.map((c) => `${c.wsSymbol}@miniTicker`).join(
+        "/",
+      );
+      const ws = new WebSocket(
+        `wss://stream.binance.com:9443/stream?streams=${streams}`,
+      );
+      wsRef.current = ws;
+
+      ws.onmessage = (event) => {
+        try {
+          const parsed = JSON.parse(event.data);
+          const d = parsed.data || parsed;
+          if (!d?.s) return;
+          const sym = d.s.replace("USDT", "");
+          const newP = parseFloat(d.c);
+          const openP = parseFloat(d.o);
+          if (isNaN(newP)) return;
+          const change = ((newP - openP) / openP) * 100;
+          prevRef.current[sym] = { price: newP, change };
+          setLivePrices((p) => ({ ...p, [sym]: { price: newP, change } }));
+        } catch (_) {}
+      };
+
+      ws.onclose = () => {
+        setTimeout(() => {
+          if (wsRef.current === ws) connect();
+        }, 3000);
+      };
+    };
+    connect();
+    return () => {
+      if (wsRef.current) wsRef.current.close();
+    };
+  }, []);
+
+  const fmt = (p) =>
+    p < 1
+      ? p.toFixed(4)
+      : p.toLocaleString("en-US", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        });
+
+  // Word cycle
   useEffect(() => {
     const id = setInterval(() => {
       setWordVisible(false);
@@ -1162,7 +1216,7 @@ export const Home = () => {
     return () => clearInterval(id);
   }, []);
 
-  /* coin cycle */
+  // Coin cycle
   useEffect(() => {
     const id = setInterval(() => {
       setCoinVisible(false);
@@ -1174,7 +1228,7 @@ export const Home = () => {
     return () => clearInterval(id);
   }, []);
 
-  /* intersection observers */
+  // Intersection observers
   const mkObs = (cb, threshold = 0.1) =>
     new IntersectionObserver(
       ([e]) => {
@@ -1213,6 +1267,21 @@ export const Home = () => {
     return () => o.disconnect();
   }, []);
 
+  // Expose scroll targets to window so Navbar can call them
+  useEffect(() => {
+    window.__scrollToHowItWorks = () =>
+      whyRef.current?.scrollIntoView({ behavior: "smooth" });
+    window.__scrollToAboutUs = () =>
+      trustedRef.current?.scrollIntoView({ behavior: "smooth" });
+    window.__scrollToFAQ = () =>
+      footerRef.current?.scrollIntoView({ behavior: "smooth" });
+    return () => {
+      delete window.__scrollToHowItWorks;
+      delete window.__scrollToAboutUs;
+      delete window.__scrollToFAQ;
+    };
+  }, []);
+
   const STATS = [
     { value: "7K+", label: "Active Users" },
     { value: "0%", label: "Commission Fee" },
@@ -1220,9 +1289,9 @@ export const Home = () => {
   ];
 
   const coin = CYCLING_COINS[coinIndex];
+  const liveData = livePrices[coin.symbol];
   const rows = MARKET_DATA[activeTab];
 
-  /* ── shared style helpers ── */
   const gridBg = {
     backgroundImage:
       "linear-gradient(rgba(13,148,136,0.24) 2px,transparent 2px),linear-gradient(90deg,rgba(13,148,136,0.24) 2px,transparent 2px)",
@@ -1358,7 +1427,6 @@ export const Home = () => {
               </button>
             </div>
           </div>
-          {/* Fixed chat button */}
           <button
             style={{
               position: "fixed",
@@ -1382,32 +1450,21 @@ export const Home = () => {
           </button>
         </section>
 
-
-
         {/* ════ STATS + PARTNERS ════ */}
         <section className="relative bg-[#0a0a0a] py-[60px] px-4 pb-[68px] text-center">
           <div
             className="absolute inset-0 pointer-events-none z-0"
             style={gridBg}
           />
-
           <div className="relative z-[2]">
             <div
               ref={statsRef}
-              className="
-        grid grid-cols-1 sm:grid-cols-3
-        border border-[#121212]
-        rounded-[24px] overflow-hidden
-        max-w-[580px] mx-auto mb-12
-      "
+              className="grid grid-cols-1 sm:grid-cols-3 border border-[#121212] rounded-[24px] overflow-hidden max-w-[580px] mx-auto mb-12"
             >
-              {STATS.map((s, i) => (
+              {STATS.map((s) => (
                 <div
                   key={s.label}
-                  className="
-            sm:border-r border-[#1a1a1a]
-            sm:last:border-r-0
-          "
+                  className="sm:border-r border-[#1a1a1a] sm:last:border-r-0"
                 >
                   <StatItem
                     value={s.value}
@@ -1417,18 +1474,10 @@ export const Home = () => {
                 </div>
               ))}
             </div>
-
             <p className="text-[#4b5563] text-[12px] mb-[28px] tracking-[0.05em]">
               Trusted by dynamic companies around the world
             </p>
-
-            <div
-              className="
-        flex justify-center items-center flex-wrap
-        gap-[clamp(14px,3.5vw,44px)]
-        max-w-[900px] mx-auto
-      "
-            >
+            <div className="flex justify-center items-center flex-wrap gap-[clamp(14px,3.5vw,44px)] max-w-[900px] mx-auto">
               {PARTNERS.map((p, i) => (
                 <div
                   key={p.name}
@@ -1443,11 +1492,12 @@ export const Home = () => {
           </div>
         </section>
 
-
-
-        {/* ════ FEATURE ════ */}
+        {/* ════ FEATURE — "How It Works" scrolls here ════ */}
         <section
-          ref={featureRef}
+          ref={(el) => {
+            featureRef.current = el;
+            whyRef.current = el;
+          }}
           style={{ background: "#080808", padding: "60px 16px 76px" }}
         >
           <div
@@ -1542,6 +1592,7 @@ export const Home = () => {
                     display: "block",
                   }}
                 />
+                {/* Live coin overlay */}
                 <div
                   style={{
                     position: "absolute",
@@ -1597,7 +1648,7 @@ export const Home = () => {
                           margin: 0,
                         }}
                       >
-                        {coin.price}
+                        {liveData ? `$${fmt(liveData.price)}` : "loading..."}
                       </p>
                     </div>
                   </div>
@@ -1607,14 +1658,19 @@ export const Home = () => {
                       fontWeight: 700,
                       padding: "5px 10px",
                       borderRadius: "7px",
-                      background: coin.up
+                      background: (liveData ? liveData.change >= 0 : coin.up)
                         ? "rgba(13,148,136,0.2)"
                         : "rgba(239,68,68,0.2)",
-                      color: coin.up ? "#2affd0" : "#f87171",
-                      border: `1px solid ${coin.up ? "rgba(13,148,136,0.3)" : "rgba(239,68,68,0.3)"}`,
+                      color: (liveData ? liveData.change >= 0 : coin.up)
+                        ? "#2affd0"
+                        : "#f87171",
+                      border: `1px solid ${(liveData ? liveData.change >= 0 : coin.up) ? "rgba(13,148,136,0.3)" : "rgba(239,68,68,0.3)"}`,
                     }}
                   >
-                    {coin.up ? "▲" : "▼"} {coin.change}
+                    {(liveData ? liveData.change >= 0 : coin.up) ? "▲" : "▼"}{" "}
+                    {liveData
+                      ? `${Math.abs(liveData.change).toFixed(2)}%`
+                      : coin.change}
                   </span>
                 </div>
                 <div
@@ -1798,7 +1854,6 @@ export const Home = () => {
               {rows.map((row, i) => (
                 <div
                   key={row.symbol}
-                  className={`mkt-row mkt-grid ${marketVisible ? "vis" : ""}`}
                   style={{
                     display: "grid",
                     gridTemplateColumns: "1fr auto auto auto",
@@ -1807,7 +1862,6 @@ export const Home = () => {
                     borderBottom:
                       i < rows.length - 1 ? "1px solid #1a1a1a" : "none",
                     alignItems: "center",
-                    animationDelay: `${0.2 + i * 0.09}s`,
                     cursor: "pointer",
                     transition: "background .2s",
                   }}
@@ -1902,13 +1956,11 @@ export const Home = () => {
                       fill="none"
                     >
                       <path
-                        className={`spark ${marketVisible ? "vis" : ""}`}
                         d={row.path}
                         stroke={row.up ? "#0d9488" : "#ef4444"}
                         strokeWidth="2"
                         strokeLinecap="round"
                         strokeLinejoin="round"
-                        style={{ animationDelay: `${0.45 + i * 0.1}s` }}
                       />
                     </svg>
                   </div>
@@ -1957,7 +2009,6 @@ export const Home = () => {
             }}
           >
             <div
-              className="trading-row"
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -1967,7 +2018,6 @@ export const Home = () => {
                 width: "100%",
               }}
             >
-              {/* Trader photo */}
               <div
                 style={{
                   position: "relative",
@@ -1980,7 +2030,6 @@ export const Home = () => {
                 }}
               >
                 <div
-                  className="trader-img"
                   style={{
                     width: "clamp(240px,36vw,390px)",
                     height: "clamp(260px,38vw,420px)",
@@ -2001,104 +2050,8 @@ export const Home = () => {
                     }}
                   />
                 </div>
-                {/* Market overview overlay — hidden on small screens */}
-                <div
-                  className="hide-sm"
-                  style={{
-                    position: "absolute",
-                    bottom: "-34px",
-                    left: "-96px",
-                    animation: tradingVisible
-                      ? "cardFloat 4s ease-in-out 1s infinite"
-                      : "none",
-                    opacity: tradingVisible ? 1 : 0,
-                    transition: "opacity .6s ease .5s",
-                  }}
-                >
-                  <div
-                    style={{
-                      background: "rgba(10,14,20,0.88)",
-                      backdropFilter: "blur(12px)",
-                      border: "1px solid rgba(255,255,255,0.08)",
-                      borderRadius: "12px",
-                      padding: "12px 14px",
-                      width: "178px",
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        marginBottom: "8px",
-                      }}
-                    >
-                      <span
-                        style={{
-                          color: "#9ca3af",
-                          fontSize: "10px",
-                          fontWeight: 600,
-                        }}
-                      >
-                        Market Overview
-                      </span>
-                      <span style={{ color: "#6b7280", fontSize: "9px" }}>
-                        30d ▾
-                      </span>
-                    </div>
-                    <svg
-                      width="148"
-                      height="44"
-                      viewBox="0 0 160 50"
-                      fill="none"
-                      style={{ display: "block", marginBottom: "8px" }}
-                    >
-                      <defs>
-                        <linearGradient id="cg" x1="0" y1="0" x2="0" y2="1">
-                          <stop
-                            offset="0%"
-                            stopColor="#0d9488"
-                            stopOpacity="0.35"
-                          />
-                          <stop
-                            offset="100%"
-                            stopColor="#0d9488"
-                            stopOpacity="0"
-                          />
-                        </linearGradient>
-                      </defs>
-                      <path
-                        d="M0,42 C15,38 25,30 45,22 C65,14 75,28 95,20 C115,12 130,16 160,8 L160,50 L0,50Z"
-                        fill="url(#cg)"
-                      />
-                      <path
-                        d="M0,42 C15,38 25,30 45,22 C65,14 75,28 95,20 C115,12 130,16 160,8"
-                        stroke="#0d9488"
-                        strokeWidth="1.8"
-                        fill="none"
-                        strokeLinecap="round"
-                      />
-                      <circle cx="160" cy="8" r="3.2" fill="#0d9488" />
-                    </svg>
-                    <span
-                      style={{
-                        background: "rgba(13,148,136,0.18)",
-                        border: "1px solid rgba(13,148,136,0.3)",
-                        borderRadius: "7px",
-                        padding: "3px 8px",
-                        color: "#2affd0",
-                        fontSize: "11px",
-                        fontWeight: 700,
-                      }}
-                    >
-                      ▲ +32.6%
-                    </span>
-                  </div>
-                </div>
               </div>
-
-              {/* Asset cards */}
               <div
-                className="asset-cards"
                 style={{
                   display: "flex",
                   flexDirection: "column",
@@ -2110,7 +2063,6 @@ export const Home = () => {
                 {ASSET_CARDS.map((card, i) => (
                   <div
                     key={card.symbol}
-                    className="asset-card"
                     style={{
                       background: "rgba(10,14,20,0.75)",
                       backdropFilter: "blur(14px)",
@@ -2125,29 +2077,25 @@ export const Home = () => {
                         ? "translateX(0)"
                         : "translateX(28px)",
                       transition: `opacity .6s ease ${0.25 + i * 0.15}s, transform .6s ease ${0.25 + i * 0.15}s`,
-                      animation: tradingVisible
-                        ? `cardFloat ${4.5 + i * 0.7}s ease-in-out ${1.5 + i * 0.4}s infinite`
-                        : "none",
                       boxShadow: "0 4px 28px rgba(0,0,0,0.4)",
                     }}
                   >
-                    <div style={{ flexShrink: 0 }}>
-                      <img
-                        src={`https://logo.clearbit.com/${card.domain}`}
-                        alt={card.name}
-                        style={{
-                          width: "46px",
-                          height: "46px",
-                          borderRadius: "6px",
-                          objectFit: "contain",
-                          background: "#0f1720",
-                          padding: "4px",
-                        }}
-                        onError={(e) => {
-                          e.currentTarget.src = `https://www.google.com/s2/favicons?sz=64&domain_url=${card.domain}`;
-                        }}
-                      />
-                    </div>
+                    <img
+                      src={`https://logo.clearbit.com/${card.domain}`}
+                      alt={card.name}
+                      style={{
+                        width: "46px",
+                        height: "46px",
+                        borderRadius: "6px",
+                        objectFit: "contain",
+                        background: "#0f1720",
+                        padding: "4px",
+                        flexShrink: 0,
+                      }}
+                      onError={(e) => {
+                        e.currentTarget.src = `https://www.google.com/s2/favicons?sz=64&domain_url=${card.domain}`;
+                      }}
+                    />
                     <div style={{ flex: 1 }}>
                       <p
                         style={{
@@ -2196,8 +2144,6 @@ export const Home = () => {
                 ))}
               </div>
             </div>
-
-            {/* Heading + CTA */}
             <div
               style={{
                 textAlign: "center",
@@ -2252,53 +2198,39 @@ export const Home = () => {
           </div>
         </section>
 
-        {/* ════ TRUSTED PLATFORM ════ */}
+        {/* ════ TRUSTED PLATFORM — "About Us" scrolls here ════ */}
         <section
-          ref={trustRef}
+          ref={(el) => {
+            trustRef.current = el;
+            trustedRef.current = el;
+          }}
           className="relative bg-[#060608] px-4 pt-[76px] pb-[84px]"
         >
-          {/* KEEP YOUR EXACT GRID */}
           <div
             className="absolute inset-0 pointer-events-none z-0"
             style={gridBg}
           />
-
-          {/* CENTER GLOW (unchanged) */}
           <div
-            className="absolute top-1/2 left-1/2 w-[560px] h-[280px] pointer-events-none z-0
-    -translate-x-1/2 -translate-y-1/2"
+            className="absolute top-1/2 left-1/2 w-[560px] h-[280px] pointer-events-none z-0 -translate-x-1/2 -translate-y-1/2"
             style={{
               background:
                 "radial-gradient(ellipse, rgba(13,148,136,0.07) 0%, transparent 70%)",
             }}
           />
-
-          {/* CONTENT */}
           <div className="relative z-10 max-w-[880px] mx-auto text-center">
             <div
-              className={`transition-all duration-700 ${
-                trustVisible
-                  ? "opacity-100 translate-y-0"
-                  : "opacity-0 translate-y-5"
-              }`}
+              className={`transition-all duration-700 ${trustVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-5"}`}
             >
               <p className="text-[#0d9488] text-[12px] font-bold tracking-[0.18em] uppercase mb-4">
                 Why traders choose us
               </p>
-
               <h2 className="text-white text-[clamp(22px,5vw,48px)] font-black leading-[1.12] tracking-[-0.025em] max-w-[740px] mx-auto mb-4">
                 The most trusted cryptocurrency trading and arbitrage platform
               </h2>
-
               <p className="text-gray-500 text-[15px] leading-[1.75] max-w-[520px] mx-auto mb-14">
                 Traders who rely on us for unlocking lucrative arbitrage
                 opportunities safely and securely.
               </p>
-            </div>
-
-            {/* GRID */}
-            <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(200px,1fr))]">
-              {/* your cards */}
             </div>
           </div>
         </section>
@@ -2308,7 +2240,6 @@ export const Home = () => {
           ref={rewardsRef}
           className="relative bg-[#0a0a0a] px-4 pt-[60px] pb-[52px] overflow-hidden"
         >
-          {/* DOT GRID */}
           <div
             className="absolute inset-0 z-0 pointer-events-none opacity-70"
             style={{
@@ -2317,22 +2248,13 @@ export const Home = () => {
               backgroundSize: "50px 50px",
             }}
           />
-
-          {/* GLOW ORB */}
           <div
             className="absolute inset-0 z-0 pointer-events-none opacity-40 sm:opacity-70"
             style={{
-              background: `
-      radial-gradient(
-        circle at 85% 110%,
-        rgba(45,255,210,0.5),
-        transparent 120px
-      )
-    `,
+              background:
+                "radial-gradient(circle at 85% 110%, rgba(45,255,210,0.5), transparent 120px)",
             }}
           />
-
-          {/* MASK FADE */}
           <div
             className="absolute inset-0 z-0 pointer-events-none"
             style={{
@@ -2343,59 +2265,37 @@ export const Home = () => {
               background: "#0a0a0a",
             }}
           />
-
           <div className="relative z-10 max-w-[960px] mx-auto">
-            {/* Header */}
             <div
-              className={`text-center mb-14 transition-all duration-700 ${
-                rewardsVisible
-                  ? "opacity-100 translate-y-0"
-                  : "opacity-0 translate-y-6"
-              }`}
+              className={`text-center mb-14 transition-all duration-700 ${rewardsVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-6"}`}
             >
               <p className="text-[#0d9488] text-[11px] font-semibold tracking-[0.22em] uppercase mb-3">
                 Rewards Program
               </p>
-
               <h2 className="text-[clamp(26px,5vw,50px)] font-black text-white leading-tight mb-3">
                 Earn weekly rewards <span className="text-[#9ae6d6]">as</span>
                 <br />
                 <span className="text-[#5eead4]">you trade</span>
               </h2>
             </div>
-
-            {/* Body */}
             <div className="flex items-center justify-center gap-[clamp(20px,6vw,68px)] flex-wrap">
-              {/* 3D Cards */}
               <div
-                className={`flex-[0_1_350px] transition-all duration-700 delay-200 ${
-                  rewardsVisible
-                    ? "opacity-100 translate-x-0"
-                    : "opacity-0 -translate-x-8"
-                }`}
+                className={`flex-[0_1_350px] transition-all duration-700 delay-200 ${rewardsVisible ? "opacity-100 translate-x-0" : "opacity-0 -translate-x-8"}`}
               >
                 <StackedCards3D visible={rewardsVisible} />
               </div>
-
-              {/* Info */}
               <div
-                className={`flex-1 max-w-[380px] flex flex-col gap-5 transition-all duration-700 delay-300 ${
-                  rewardsVisible
-                    ? "opacity-100 translate-y-0"
-                    : "opacity-0 translate-y-7"
-                }`}
+                className={`flex-1 max-w-[380px] flex flex-col gap-5 transition-all duration-700 delay-300 ${rewardsVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-7"}`}
               >
                 <h3 className="text-[clamp(20px,3vw,30px)] font-black text-[#ddeaea] leading-tight tracking-tight">
                   Earn weekly rewards
                   <br />
                 </h3>
-
                 <p className="text-[#7dd3c7] text-sm leading-relaxed">
                   Amplify Your Profits with Weekly Rewards as You Engage in
                   Crypto Transactions, Making Every Trade Count Towards Your
                   Financial Growth.
                 </p>
-
                 <button className="cta-pill self-start">
                   <svg
                     width="14"
@@ -2413,55 +2313,29 @@ export const Home = () => {
               </div>
             </div>
           </div>
-
-          {/* Sparkle */}
-          <svg
-            className="absolute bottom-6 right-6 opacity-30"
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-          >
-            <path
-              d="M12 2L13.5 10.5L22 12L13.5 13.5L12 22L10.5 13.5L2 12L10.5 10.5Z"
-              fill="rgba(255,255,255,0.5)"
-            />
-          </svg>
         </section>
 
-        {/* ════ FOOTER SECTION ════ */}
-        <section className="relative bg-[#020609] px-4 pt-[60px] pb-[44px] border-t border-[#0d2020] overflow-hidden">
-          {/* Grid background */}
-          <div
-            className="absolute inset-0 pointer-events-none z-0 
-  [background-image:linear-gradient(rgba(13,148,136,0.16)_1px,transparent_2px),linear-gradient(90deg,rgba(13,148,136,0.16)_1px,transparent_1px)]
-  [background-size:80px_80px]
-  [mask-image:radial-gradient(ellipse_90%_90%_at_50%_50%,transparent_22%,black_100%)]
-  [-webkit-mask-image:radial-gradient(ellipse_90%_90%_at_50%_50%,transparent_22%,black_100%)]
-"
-          />
-
-          {/* Content */}
+        {/* ════ FOOTER — "FAQ" scrolls here ════ */}
+        <section
+          ref={footerRef}
+          className="relative bg-[#020609] px-4 pt-[60px] pb-[44px] border-t border-[#0d2020] overflow-hidden"
+        >
+          <div className="absolute inset-0 pointer-events-none z-0 [background-image:linear-gradient(rgba(13,148,136,0.16)_1px,transparent_2px),linear-gradient(90deg,rgba(13,148,136,0.16)_1px,transparent_1px)] [background-size:80px_80px] [mask-image:radial-gradient(ellipse_90%_90%_at_50%_50%,transparent_22%,black_100%)] [-webkit-mask-image:radial-gradient(ellipse_90%_90%_at_50%_50%,transparent_22%,black_100%)]" />
           <div className="relative z-10 max-w-[900px] mx-auto text-center">
             <p className="text-[#0d9488] text-[11px] font-bold tracking-[0.28em] uppercase mb-3">
               OmniDev Pro
             </p>
-
             <h4 className="text-white text-[clamp(18px,3.5vw,28px)] font-extrabold mb-1">
               Crypto & arbitrage opportunities
             </h4>
-
             <p className="text-[#0d9488] text-[clamp(18px,3.5vw,30px)] font-extrabold italic mb-5">
               anytime, anywhere.
             </p>
-
             <p className="text-[#4b6060] text-[13px] leading-relaxed max-w-[460px] mx-auto mb-7">
               Discover and Navigate the Intriguing World of Price Differences
               Across Markets, Unveiling Profitable Avenues in Cryptocurrency
               Trading
             </p>
-
-            {/* CTA */}
             <button className="cta-pill">
               <svg
                 width="15"
@@ -2476,32 +2350,16 @@ export const Home = () => {
               </svg>
               Start Trading
             </button>
-
-            {/* Divider */}
             <div className="w-full h-px bg-gradient-to-r from-transparent via-[#0d9488]/30 to-transparent my-9" />
-
-            {/* Bottom row */}
             <div className="flex items-center justify-center gap-2 flex-wrap">
-              {/* Logo + name */}
-              <div className="flex items-center gap-2">
-                <img
-                  src="/imagess/omnidev-logo.png"
-                  alt="Omnidev Logo"
-                  className="w-7 h-7 object-contain"
-                />
-                <span className="text-gray-500 text-xs font-semibold">
-                  Omnidev
-                </span>
-              </div>
-
+              <span className="text-gray-500 text-xs font-semibold">
+                Omnidev
+              </span>
               <span className="text-[#1e2e2e] text-xs">•</span>
-
               <span className="text-gray-500 text-xs">
-                Unlocking arbitrage opportunities, anytime, anywhere.
+                UnlFocking arbitrage opportunities, anytime, anywhere.
               </span>
             </div>
-
-            {/* Copyright */}
             <p className="text-[#037676] text-[11px] mt-5">
               © {new Date().getFullYear()} Omnidev Exchange Inc. All Rights
               Reserved.

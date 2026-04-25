@@ -1,14 +1,21 @@
 import { useEffect, useState } from "react";
 import logo from "/src/images/omnidev logo.png";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { auth } from "../firebase";
 
-const NAV_LINKS = ["How It Works", "About Us", "FAQ", "Contact"];
+// Nav links — each has a scrollKey that maps to window.__scrollTo*
+const NAV_LINKS = [
+  { label: "How It Works", scrollKey: "__scrollToHowItWorks" },
+  { label: "About Us", scrollKey: "__scrollToAboutUs" },
+  { label: "FAQ", scrollKey: "__scrollToFAQ" },
+  { label: "Contact", scrollKey: null }, // no section yet
+];
 
 const SIDEBAR_LINKS = [
   {
     label: "How It Works",
+    scrollKey: "__scrollToHowItWorks",
     icon: (
       <svg
         width="18"
@@ -25,6 +32,7 @@ const SIDEBAR_LINKS = [
   },
   {
     label: "About Us",
+    scrollKey: "__scrollToAboutUs",
     icon: (
       <svg
         width="18"
@@ -43,6 +51,7 @@ const SIDEBAR_LINKS = [
   },
   {
     label: "FAQ",
+    scrollKey: "__scrollToFAQ",
     icon: (
       <svg
         width="18"
@@ -60,6 +69,7 @@ const SIDEBAR_LINKS = [
   },
   {
     label: "Contact",
+    scrollKey: null,
     icon: (
       <svg
         width="18"
@@ -79,8 +89,9 @@ export const Navbar = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [user, setUser] = useState(null);
   const navigate = useNavigate();
+  const location = useLocation();
+  const isHome = location.pathname === "/" || location.pathname === "/home";
 
-  // Listen to Firebase auth state — updates instantly on login/logout
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser || null);
@@ -94,6 +105,7 @@ export const Navbar = () => {
       document.body.style.overflow = "";
     };
   }, [sidebarOpen]);
+  
 
   const handleLogout = async () => {
     await signOut(auth);
@@ -102,6 +114,26 @@ export const Navbar = () => {
     navigate("/");
   };
 
+  const handleNavClick = (scrollKey) => {
+    // 🔥 trigger cursor animation
+    window.dispatchEvent(new Event("cursor-expand"));
+
+    setSidebarOpen(false);
+
+    if (!scrollKey) return;
+
+    if (isHome) {
+      setTimeout(() => {
+        window[scrollKey]?.();
+      }, 50);
+    } else {
+      navigate("/");
+      setTimeout(() => {
+        window[scrollKey]?.();
+      }, 400);
+    }
+  };
+  
   const isLoggedIn = !!user;
 
   return (
@@ -128,9 +160,8 @@ export const Navbar = () => {
         </span>
       </div>
 
-      {/* ── Main nav — sticky so it stays on top when scrolling ── */}
-      <nav className="sticky top-0 z-50 backdrop-blur-md bg-[#0a0a0a]/80 border-b border-[#1a1a1a] h-16 flex items-center justify-between px-4">
-        {/* Logo */}
+      {/* ── Main nav — sticky ── */}
+      <nav className="sticky top-0 z-50 backdrop-blur-md bg-[#0a0a0a]/85 border-b border-[#1a1a1a] h-16 flex items-center justify-between px-4">
         <Link
           to="/"
           style={{
@@ -161,28 +192,31 @@ export const Navbar = () => {
           style={{ alignItems: "center", gap: "32px" }}
         >
           {NAV_LINKS.map((l) => (
-            <a
-              key={l}
-              href="#"
+            <button
+              key={l.label}
+              onClick={() => handleNavClick(l.scrollKey)}
+              // 🔥 ADD THESE
+              onMouseEnter={() => {
+                window.dispatchEvent(new Event("cursor-expand"));
+              }}
+              onMouseLeave={() => {
+                window.dispatchEvent(new Event("cursor-shrink"));
+              }}
               style={{
+                background: "none",
+                border: "none",
                 color: "#9ca3af",
                 fontSize: "14px",
                 fontWeight: 500,
-                textDecoration: "none",
+                cursor: "pointer",
                 transition: "color 0.2s",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.color = "#fff";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.color = "#9ca3af";
+                padding: 0,
               }}
             >
-              {l}
-            </a>
+              {l.label}
+            </button>
           ))}
 
-          {/* Login ↔ Dashboard toggle based on Firebase auth */}
           {isLoggedIn ? (
             <Link to="/dashboard">
               <button
@@ -246,7 +280,7 @@ export const Navbar = () => {
         </button>
       </nav>
 
-      {/* ── Sidebar overlay ── */}
+      {/* ── Overlay — clicking it closes sidebar ── */}
       <div
         onClick={() => setSidebarOpen(false)}
         style={{
@@ -260,7 +294,7 @@ export const Navbar = () => {
         }}
       />
 
-      {/* ── Sidebar panel ── */}
+      {/* ── Sidebar — slides from RIGHT on mobile, NO X button ── */}
       <aside
         style={{
           position: "fixed",
@@ -277,12 +311,11 @@ export const Navbar = () => {
           transition: "transform 0.35s cubic-bezier(0.4,0,0.2,1)",
         }}
       >
-        {/* Sidebar header */}
+        {/* Sidebar header — logo only, NO X */}
         <div
           style={{
             display: "flex",
             alignItems: "center",
-            justifyContent: "space-between",
             padding: "18px 20px 16px",
             borderBottom: "1px solid #1e1e1e",
           }}
@@ -309,27 +342,6 @@ export const Navbar = () => {
               OmniDev
             </span>
           </div>
-          <button
-            onClick={() => setSidebarOpen(false)}
-            style={{
-              background: "none",
-              border: "none",
-              cursor: "pointer",
-              color: "#9ca3af",
-            }}
-          >
-            <svg
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
         </div>
 
         {/* Logged-in user info */}
@@ -361,20 +373,23 @@ export const Navbar = () => {
         {/* Sidebar nav links */}
         <nav style={{ padding: "16px 0", flex: 1, overflowY: "auto" }}>
           {SIDEBAR_LINKS.map((item, i) => (
-            <a
+            <button
               key={item.label}
-              href="#"
-              onClick={() => setSidebarOpen(false)}
+              onClick={() => handleNavClick(item.scrollKey)}
               style={{
+                width: "100%",
                 display: "flex",
                 alignItems: "center",
                 gap: "14px",
                 padding: "13px 24px",
                 color: "#e5e7eb",
-                textDecoration: "none",
+                background: "transparent",
+                border: "none",
                 fontSize: "15px",
                 fontWeight: 600,
                 borderLeft: "3px solid transparent",
+                cursor: "pointer",
+                textAlign: "left",
                 opacity: sidebarOpen ? 1 : 0,
                 transform: sidebarOpen ? "translateX(0)" : "translateX(12px)",
                 transition: `opacity 0.3s ease ${0.07 + i * 0.055}s, transform 0.3s ease ${0.07 + i * 0.055}s, color 0.2s, background 0.2s, border-color 0.2s`,
@@ -394,7 +409,7 @@ export const Navbar = () => {
                 {item.icon}
               </span>
               {item.label}
-            </a>
+            </button>
           ))}
         </nav>
 
