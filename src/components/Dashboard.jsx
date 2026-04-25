@@ -328,7 +328,7 @@ export default function Dashboard() {
   const [balanceVisible, setBalanceVisible] = useState(true);
   const [logoutMsg, setLogoutMsg] = useState(false);
   const navigate = useNavigate();
-
+  const [savingProfile, setSavingProfile] = useState(false);
   const [profilePic, setProfilePic] = useState(null);
   const [profileForm, setProfileForm] = useState({
     firstName: "",
@@ -342,98 +342,63 @@ export default function Dashboard() {
   // Add these states at the top of Dashboard component:
   const [profileLoading, setProfileLoading] = useState(true);
 
-  // Replace the onAuthStateChanged useEffect with this:
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
       if (!user) {
         navigate("/login");
         return;
       }
-      const s = { email: user.email, uid: user.uid };
+
+      await user.reload();
+      const freshUser = auth.currentUser;
+
+      const s = { email: freshUser.email, uid: freshUser.uid };
       setSession(s);
 
+      const timeout = setTimeout(() => {
+        setProfileLoading(false);
+      }, 5000);
+
       try {
-        // Try Firestore first
-        const userDoc = await getDoc(doc(db, "users", user.uid));
+        // ✅ Load from users collection (where signup saves data)
+        const userDoc = await getDoc(doc(db, "users", freshUser.uid));
         const userData = userDoc.exists() ? userDoc.data() : {};
 
-        const profileDoc = await getDoc(doc(db, "profiles", user.uid));
+        // ✅ Load from profiles collection (for picture + updated username)
+        const profileDoc = await getDoc(doc(db, "profiles", freshUser.uid));
         const profileData = profileDoc.exists() ? profileDoc.data() : {};
 
-        // 🔥 FALLBACK: If no Firestore data, try localStorage (old accounts)
-        const localProfile = JSON.parse(
-          localStorage.getItem(`omnidev_profile_${user.uid}`) || "{}",
-        );
-        const localSignup = JSON.parse(
-          localStorage.getItem(`omnidev_signup_${user.uid}`) || "{}",
-        );
-
-        // Priority: Firestore > localStorage > Auth > defaults
         setProfileForm({
           firstName:
-            userData.firstName ||
-            localSignup.firstName ||
-            localProfile.firstName ||
-            user.displayName?.split(" ")[0] ||
-            "",
+            userData.firstName || freshUser.displayName?.split(" ")[0] || "",
           lastName:
-            userData.lastName ||
-            localSignup.lastName ||
-            localProfile.lastName ||
-            user.displayName?.split(" ")[1] ||
-            "",
+            userData.lastName || freshUser.displayName?.split(" ")[1] || "",
+          // ✅ profiles username takes priority (it's the editable one)
+          // then fall back to users collection (set during signup)
           username:
             profileData.username ||
             userData.username ||
-            localProfile.username ||
-            localSignup.username ||
-            user.email.split("@")[0],
-          email: userData.email || localSignup.email || user.email,
+            freshUser.email.split("@")[0],
+          email: userData.email || freshUser.email,
         });
 
-        setProfilePic(profileData.picture || localProfile.picture || null);
+        setProfilePic(profileData.picture || null);
+
+        clearTimeout(timeout);
       } catch (err) {
         console.error("Profile load error:", err);
-        // 🔥 EMERGENCY FALLBACK — use Auth data only
         setProfileForm({
-          firstName: user.displayName?.split(" ")[0] || "",
-          lastName: user.displayName?.split(" ")[1] || "",
-          username: user.email.split("@")[0],
-          email: user.email,
+          firstName: freshUser.displayName?.split(" ")[0] || "",
+          lastName: freshUser.displayName?.split(" ")[1] || "",
+          username: freshUser.email.split("@")[0],
+          email: freshUser.email,
         });
+        clearTimeout(timeout);
       } finally {
         setProfileLoading(false);
       }
     });
-    return () => unsub();
-  }, [navigate]);
 
-  // 🔥 LOAD USER DATA FROM FIRESTORE (cross-device sync)
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (user) => {
-      if (!user) {
-        navigate("/login");
-        return;
-      }
-      const s = { email: user.email, uid: user.uid };
-      setSession(s);
-
-      const userDoc = await getDoc(doc(db, "users", user.uid));
-      const userData = userDoc.exists() ? userDoc.data() : {};
-
-      const profileDoc = await getDoc(doc(db, "profiles", user.uid));
-      const profileData = profileDoc.exists() ? profileDoc.data() : {};
-
-      setProfileForm({
-        firstName: userData.firstName || "",
-        lastName: userData.lastName || "",
-        username:
-          profileData.username || userData.username || user.email.split("@")[0],
-        email: userData.email || user.email,
-      });
-
-      setProfilePic(profileData.picture || null);
-    });
     return () => unsub();
   }, [navigate]);
 
@@ -445,9 +410,12 @@ export default function Dashboard() {
   }, [sidebarOpen]);
 
   const handleLogout = async () => {
-    await signOut(auth);
-    localStorage.removeItem("omnidev_session");
-    navigate("/");
+    setLogoutMsg(true); // ← show overlay first
+    setTimeout(async () => {
+      await signOut(auth);
+      localStorage.removeItem("omnidev_session");
+      navigate("/");
+    }, 1800); // ← then sign out after 1.8s
   };
 
   // 🔥 AUTO-SAVE PROFILE PICTURE TO FIRESTORE
@@ -483,66 +451,68 @@ export default function Dashboard() {
     return foundDoc.id !== session.uid;
   };
 
-  // 🔥 SAVE USERNAME WITH UNIQUENESS CHECK
   const handleProfileSave = async () => {
     if (!session) return;
     setProfileError("");
+    setProfileSaved(false);
+    setSavingProfile(true); // ← spinner starts
 
     const newUsername = profileForm.username.toLowerCase().trim();
 
-    // Validate username format
     if (newUsername.length < 3) {
       setProfileError("Username must be at least 3 characters.");
+      setSavingProfile(false);
       return;
     }
     if (!/^[a-zA-Z0-9_]+$/.test(newUsername)) {
       setProfileError(
         "Username can only contain letters, numbers, and underscores.",
       );
+      setSavingProfile(false);
       return;
     }
 
-    // Check uniqueness
-    const taken = await isUsernameTakenByOther(newUsername);
-    if (taken) {
-      setProfileError("Username already taken by another user.");
-      return;
+    try {
+      const taken = await isUsernameTakenByOther(newUsername);
+      if (taken) {
+        setProfileError("Username already taken by another user.");
+        setSavingProfile(false);
+        return;
+      }
+
+      await setDoc(
+        doc(db, "profiles", session.uid),
+        { username: newUsername, picture: profilePic },
+        { merge: true },
+      );
+
+      await setDoc(
+        doc(db, "users", session.uid),
+        { username: newUsername },
+        { merge: true },
+      );
+
+      setProfileForm((prev) => ({ ...prev, username: newUsername }));
+      setSavingProfile(false); // ← spinner stops
+      setProfileSaved(true); // ← "Saved!" shows
+      setTimeout(() => setProfileSaved(false), 2500);
+    } catch (err) {
+      console.error("Save error:", err);
+      setProfileError("Failed to save. Check your connection and try again.");
+      setSavingProfile(false); // ← spinner stops on error too
     }
-
-    // Save to Firestore
-    await setDoc(
-      doc(db, "profiles", session.uid),
-      {
-        username: newUsername,
-        picture: profilePic,
-      },
-      { merge: true },
-    );
-
-    // Update username in users collection too
-    await setDoc(
-      doc(db, "users", session.uid),
-      {
-        username: newUsername,
-      },
-      { merge: true },
-    );
-
-    // 🔥 SHOW "SAVED" CONFIRMATION
-    setProfileSaved(true);
-    setTimeout(() => setProfileSaved(false), 2500);
   };
 
   if (!session) return null;
 
-  const account = (() => {
-    const a = JSON.parse(localStorage.getItem("omnidev_accounts") || "{}");
-    return a[session.email] || {};
-  })();
+  const account =
+    JSON.parse(localStorage.getItem("omnidev_accounts") || "{}")[
+      session?.email
+    ] || {};
   const balance = account.balance || 0;
   const transactions = account.transactions || [];
-  const displayName = profileForm.username || session.email.split("@")[0];
-
+  const displayName =
+    profileForm.username || session?.email?.split("@")[0] || "";
   return (
     <>
       {/* Logout overlay */}
@@ -1800,39 +1770,6 @@ export default function Dashboard() {
                           </div>
                         )}
 
-                        {/* Saved / Error messages */}
-                        {profileSaved && (
-                          <div
-                            style={{
-                              background: "rgba(13,148,136,0.15)",
-                              border: "1px solid rgba(13,148,136,0.35)",
-                              borderRadius: "10px",
-                              padding: "11px 16px",
-                              color: "#2affd0",
-                              fontSize: "13px",
-                              marginBottom: "16px",
-                              textAlign: "center",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              gap: "8px",
-                            }}
-                          >
-                            <svg
-                              width="15"
-                              height="15"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2.5"
-                            >
-                              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                              <polyline points="22 4 12 14.01 9 11.01" />
-                            </svg>
-                            Saved!
-                          </div>
-                        )}
-
                         {profileError && (
                           <div
                             style={{
@@ -2063,25 +2000,69 @@ export default function Dashboard() {
 
                           <button
                             onClick={handleProfileSave}
+                            disabled={profileSaved}
                             style={{
                               padding: "14px",
-                              background: "#0d9488",
-                              border: "none",
+                              background: profileSaved ? "#065f46" : "#0d9488",
+                              border: profileSaved
+                                ? "1px solid #34d399"
+                                : "none",
                               borderRadius: "10px",
-                              color: "#fff",
+                              color: profileSaved ? "#34d399" : "#fff",
                               fontWeight: 700,
                               fontSize: "16px",
-                              cursor: "pointer",
-                              transition: "background 0.2s",
+                              cursor: profileSaved ? "default" : "pointer",
+                              transition: "all 0.3s ease",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              gap: "8px",
                             }}
-                            onMouseEnter={(e) =>
-                              (e.currentTarget.style.background = "#0f766e")
-                            }
-                            onMouseLeave={(e) =>
-                              (e.currentTarget.style.background = "#0d9488")
-                            }
+                            onMouseEnter={(e) => {
+                              if (!profileSaved)
+                                e.currentTarget.style.background = "#0f766e";
+                            }}
+                            onMouseLeave={(e) => {
+                              if (!profileSaved)
+                                e.currentTarget.style.background = profileSaved
+                                  ? "#065f46"
+                                  : "#0d9488";
+                            }}
                           >
-                            Save Changes
+                            {profileSaved ? (
+                              <>
+                                <svg
+                                  width="16"
+                                  height="16"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2.5"
+                                >
+                                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                                  <polyline points="22 4 12 14.01 9 11.01" />
+                                </svg>
+                                Saved!
+                              </>
+                            ) : savingProfile ? (
+                              <>
+                                <div
+                                  style={{
+                                    width: "16px",
+                                    height: "16px",
+                                    border: "2.5px solid rgba(255,255,255,0.3)",
+                                    borderTop: "2.5px solid #fff",
+                                    borderRadius: "50%",
+                                    animation: "spin 0.7s linear infinite",
+                                    flexShrink: 0,
+                                  }}
+                                />
+                                Saving...
+                              </>
+                            ) : (
+                              "Save Changes"
+                            )}
+                            <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
                           </button>
                         </div>
                       </>
