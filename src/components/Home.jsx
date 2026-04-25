@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import main3 from "/src/images/main3.jpg";
 import main2 from "/src/images/main2.jpg";
 import traderPhoto from "/src/images/main7.jpg";
+import { useNavigate } from "react-router-dom";
+import { getAuth, onAuthStateChanged } from "firebase/auth";
 
 const WORDS = ["Smarter", "Faster", "Safer", "Simpler"];
 
@@ -474,10 +476,7 @@ const CornerBracket = ({ side, visible }) => {
   );
 };
 
-/* ════════════════════════════════════════════════
-   3D STACKED CARDS — Gold / Silver-Blue / Bronze
-   Exactly matching the reference images
-════════════════════════════════════════════════ */
+/* 3D stacked images */
 const StackedCards3D = ({ visible }) => (
   <div
     style={{
@@ -508,8 +507,8 @@ const StackedCards3D = ({ visible }) => (
         height: "24px",
         borderRadius: "50%",
         background:
-          "radial-gradient(ellipse, rgba(210,90,10,0.9) 0%, transparent 70%)",
-        filter: "blur(12px)",
+          "radial-gradient(ellipse, rgba(210,90,10,0.35) 0%, transparent 80%)",
+        filter: "blur(8px)",
         animation: visible ? "gGlow 3s ease-in-out infinite" : "none",
         zIndex: 0,
       }}
@@ -530,7 +529,7 @@ const StackedCards3D = ({ visible }) => (
           "linear-gradient(145deg,#3c1604 0%,#9c5020 18%,#c86c38 34%,#783010 50%,#b85c2c 64%,#4c1c06 80%,#a04818 100%)",
         border: "1.5px solid rgba(192,100,44,0.55)",
         boxShadow:
-          "0 0 30px rgba(180,70,10,0.5),inset 0 1px 2px rgba(255,140,60,0.15)",
+          "0 0 14px rgba(180,70,10,0.25), inset 0 1px 2px rgba(255,140,60,0.08)",
         animation: visible ? "floatB 6.5s ease-in-out 0.8s infinite" : "none",
         overflow: "hidden",
         zIndex: 1,
@@ -642,7 +641,7 @@ const StackedCards3D = ({ visible }) => (
         <defs>
           <linearGradient id="bsh" x1="0" y1="0" x2="1" y2="0">
             <stop offset="0%" stopColor="rgba(255,255,255,0)" />
-            <stop offset="28%" stopColor="rgba(255,150,65,.1)" />
+            <stop offset="28%" stopColor="rgba(255,150,65,.05)" />
             <stop offset="44%" stopColor="rgba(255,255,255,0)" />
           </linearGradient>
         </defs>
@@ -665,7 +664,7 @@ const StackedCards3D = ({ visible }) => (
           "linear-gradient(145deg,#0c1628 0%,#1a2d4a 18%,#2a4060 34%,#152238 50%,#1e3258 64%,#0a1422 80%,#182a48 100%)",
         border: "1.5px solid rgba(80,130,200,0.42)",
         boxShadow:
-          "0 0 20px rgba(60,100,180,0.2),inset 0 1px 3px rgba(100,160,255,0.1)",
+          "0 0 10px rgba(60,100,180,0.12), inset 0 1px 2px rgba(100,160,255,0.06)",
         animation: visible ? "floatS 5.8s ease-in-out 0.4s infinite" : "none",
         overflow: "hidden",
         zIndex: 2,
@@ -763,7 +762,7 @@ const StackedCards3D = ({ visible }) => (
         <defs>
           <linearGradient id="svsh" x1="0" y1="0" x2="1" y2="0">
             <stop offset="0%" stopColor="rgba(255,255,255,0)" />
-            <stop offset="30%" stopColor="rgba(100,160,255,.11)" />
+            <stop offset="30%" stopColor="rgba(100,160,255,.05)" />
             <stop offset="46%" stopColor="rgba(255,255,255,0)" />
           </linearGradient>
         </defs>
@@ -783,10 +782,10 @@ const StackedCards3D = ({ visible }) => (
         height: "148px",
         borderRadius: "14px",
         background:
-          "linear-gradient(145deg,#7a5000 0%,#d49010 12%,#f5cc48 28%,#c88a0c 44%,#f0c030 60%,#ae7808 76%,#dda016 100%)",
+          "linear-gradient(145deg,#5a3a00 0%,#b57a0c 12%,#e0b83a 28%,#a86e08 44%,#d8a828 60%,#8e5e06 76%,#b88312 100%)",
         border: "1.5px solid rgba(255,218,60,0.65)",
-        boxShadow:
-          "0 0 48px rgba(230,170,0,0.65),0 0 90px rgba(230,130,0,0.2),inset 0 1px 4px rgba(255,242,150,0.4)",
+        bboxShadow:
+          "0 0 18px rgba(230,170,0,0.25), 0 0 40px rgba(230,130,0,0.12), inset 0 1px 3px rgba(255,242,150,0.15)",
         animation: visible ? "floatG 5.2s ease-in-out 0s infinite" : "none",
         overflow: "hidden",
         zIndex: 3,
@@ -1118,7 +1117,7 @@ const StackedCards3D = ({ visible }) => (
         <defs>
           <linearGradient id="gsh" x1="0" y1="0" x2="1" y2="0">
             <stop offset="0%" stopColor="rgba(255,255,255,0)" />
-            <stop offset="24%" stopColor="rgba(255,246,160,.3)" />
+            <stop offset="24%" stopColor="rgba(255,246,160,.12)" />
             <stop offset="40%" stopColor="rgba(255,255,255,0)" />
           </linearGradient>
         </defs>
@@ -1130,6 +1129,8 @@ const StackedCards3D = ({ visible }) => (
 
 export const Home = () => {
   const [wordIndex, setWordIndex] = useState(0);
+  const [text, setText] = useState("");
+  const [isDeleting, setIsDeleting] = useState(false);
   const [wordVisible, setWordVisible] = useState(true);
   const [statsTriggered, setStatsTriggered] = useState(false);
   const [featureVisible, setFeatureVisible] = useState(false);
@@ -1140,6 +1141,11 @@ export const Home = () => {
   const [coinIndex, setCoinIndex] = useState(0);
   const [coinVisible, setCoinVisible] = useState(true);
   const [activeTab, setActiveTab] = useState("crypto");
+  const navigate = useNavigate();
+  const auth = getAuth();
+
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
 
   // Live prices from Binance WebSocket for CYCLING_COINS
   const [livePrices, setLivePrices] = useState({});
@@ -1157,6 +1163,25 @@ export const Home = () => {
   const whyRef = useRef(null); // "How It Works" → Why choose OmniDev
   const trustedRef = useRef(null); // "About Us" → Most trusted platform
   const footerRef = useRef(null); // "FAQ" → OmniDev Pro footer
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const handleStart = () => {
+    if (loading) return; // wait till Firebase finishes checking
+
+    if (user) {
+      navigate("/dashboard");
+    } else {
+      navigate("/login");
+    }
+  };
 
   // Live WebSocket for home page coin prices
   useEffect(() => {
@@ -1205,16 +1230,41 @@ export const Home = () => {
         });
 
   // Word cycle
+  const timeoutRef = useRef(null);
+
   useEffect(() => {
-    const id = setInterval(() => {
-      setWordVisible(false);
-      setTimeout(() => {
-        setWordIndex((i) => (i + 1) % WORDS.length);
-        setWordVisible(true);
-      }, 380);
-    }, 2000);
-    return () => clearInterval(id);
-  }, []);
+    const currentWord = WORDS[wordIndex];
+
+    const typingSpeed = 280;
+    const deletingSpeed = 140;
+    const pauseTime = 3500;
+
+    clearTimeout(timeoutRef.current);
+
+    if (!isDeleting && text === currentWord) {
+      timeoutRef.current = setTimeout(() => {
+        setIsDeleting(true);
+      }, pauseTime);
+      return;
+    }
+
+    if (isDeleting && text === "") {
+      setIsDeleting(false);
+      setWordIndex((prev) => (prev + 1) % WORDS.length);
+      return;
+    }
+
+    timeoutRef.current = setTimeout(
+      () => {
+        setText((prev) =>
+          currentWord.substring(0, prev.length + (isDeleting ? -1 : 1)),
+        );
+      },
+      isDeleting ? deletingSpeed : typingSpeed,
+    );
+
+    return () => clearTimeout(timeoutRef.current);
+  }, [text, isDeleting, wordIndex]);
 
   // Coin cycle
   useEffect(() => {
@@ -1317,6 +1367,7 @@ export const Home = () => {
         }}
       >
         {/* ════ HERO ════ */}
+        {/* ════ HERO ════ */}
         <section
           style={{
             position: "relative",
@@ -1328,6 +1379,7 @@ export const Home = () => {
             padding: "0 16px",
           }}
         >
+          {/* Background */}
           <div
             style={{
               position: "absolute",
@@ -1347,6 +1399,8 @@ export const Home = () => {
               zIndex: 1,
             }}
           />
+
+          {/* Content */}
           <div
             style={{
               position: "relative",
@@ -1370,38 +1424,49 @@ export const Home = () => {
             >
               Next-gen crypto platform
             </p>
+
             <h1
               style={{
-                fontSize: "clamp(30px,7vw,70px)",
+                fontSize: "clamp(40px,7vw,70px)",
                 fontWeight: 900,
-                lineHeight: 1.1,
+                lineHeight: 1.4,
                 color: "#fff",
                 marginBottom: "18px",
                 animation: "heroUp .7s ease .25s both",
               }}
             >
-              Crypto Trading,
-              <br />
+              Crypto Trading,{""}
               <span
                 style={{
-                  color: "#0d9488",
                   display: "inline-block",
-                  opacity: wordVisible ? 1 : 0,
-                  transform: wordVisible
-                    ? "translateY(0)"
-                    : "translateY(-10px)",
-                  transition: "opacity .33s ease, transform .33s ease",
+                  minWidth: "7ch", // 👈 adjust to longest word
                 }}
               >
-                {WORDS[wordIndex]}
-              </span>{" "}
+                <span
+                  style={{
+                    color: "#0d9488",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {text}
+                  <span
+                    style={{
+                      marginLeft: "2px",
+                      borderRight: "2px solid #0d9488",
+                      animation: "blink 1s infinite",
+                    }}
+                  />
+                </span>
+              </span>
+              {""}
               Than Ever.
             </h1>
+
             <p
               style={{
                 color: "#9ca3af",
-                fontSize: "clamp(13px,2vw,16px)",
-                lineHeight: 1.7,
+                fontSize: "clamp(15px,2vw,16px)", // 👈 fixed
+                lineHeight: 1.9,
                 maxWidth: "500px",
                 margin: "0 auto 28px",
                 animation: "heroUp .7s ease .4s both",
@@ -1410,8 +1475,9 @@ export const Home = () => {
               Buy, sell and withdraw instantly. Zero commission fees, real-time
               prices, and seamless withdrawals.
             </p>
+
             <div style={{ animation: "heroUp .7s ease .55s both" }}>
-              <button className="cta-pill">
+              <button className="cta-pill" onClick={handleStart}>
                 <svg
                   width="15"
                   height="15"
@@ -1427,6 +1493,8 @@ export const Home = () => {
               </button>
             </div>
           </div>
+
+          {/* Floating Chat Button */}
           <button
             style={{
               position: "fixed",
@@ -1450,103 +1518,36 @@ export const Home = () => {
           </button>
         </section>
 
-        {/* ════ STATS + PARTNERS ════ */}
-        <section className="relative bg-[#0a0a0a] py-[60px] px-4 pb-[68px] text-center">
-          <div
-            className="absolute inset-0 pointer-events-none z-0"
-            style={gridBg}
-          />
-          <div className="relative z-[2]">
-            <div
-              ref={statsRef}
-              className="grid grid-cols-1 sm:grid-cols-3 border border-[#121212] rounded-[24px] overflow-hidden max-w-[580px] mx-auto mb-12"
-            >
-              {STATS.map((s) => (
-                <div
-                  key={s.label}
-                  className="sm:border-r border-[#1a1a1a] sm:last:border-r-0"
-                >
-                  <StatItem
-                    value={s.value}
-                    label={s.label}
-                    triggered={statsTriggered}
-                  />
-                </div>
-              ))}
-            </div>
-            <p className="text-[#4b5563] text-[12px] mb-[28px] tracking-[0.05em]">
-              Trusted by dynamic companies around the world
-            </p>
-            <div className="flex justify-center items-center flex-wrap gap-[clamp(14px,3.5vw,44px)] max-w-[900px] mx-auto">
-              {PARTNERS.map((p, i) => (
-                <div
-                  key={p.name}
-                  className="pin flex items-center gap-2 text-[#e5e7eb] font-extrabold text-[clamp(12px,2vw,18px)] mt-10"
-                  style={{ animationDelay: `${i * 0.3}s` }}
-                >
-                  {p.icon}
-                  {p.name}
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
         {/* ════ FEATURE — "How It Works" scrolls here ════ */}
         <section
           ref={(el) => {
             featureRef.current = el;
             whyRef.current = el;
           }}
-          style={{ background: "#080808", padding: "60px 16px 76px" }}
+          className="bg-[#080808] px-4 py-[60px] md:py-[76px]"
         >
-          <div
-            style={{
-              maxWidth: "1060px",
-              margin: "0 auto",
-              display: "flex",
-              flexWrap: "wrap",
-              alignItems: "center",
-              gap: "36px",
-              justifyContent: "center",
-            }}
-          >
+          <div className="max-w-[1060px] mx-auto flex flex-col items-center text-center md:flex-row md:items-center md:justify-between md:text-left gap-9">
+            {/* LEFT TEXT */}
             <div
-              style={{
-                flex: "1 1 260px",
-                maxWidth: "440px",
-                opacity: featureVisible ? 1 : 0,
-                transform: featureVisible
-                  ? "translateX(0)"
-                  : "translateX(-38px)",
-                transition: "opacity .7s ease, transform .7s ease",
-              }}
+              className={`flex-1 max-w-[440px] flex flex-col items-center md:items-start ${
+                featureVisible
+                  ? "opacity-100 translate-x-0"
+                  : "opacity-0 -translate-x-10"
+              } transition-all duration-700`}
             >
-              <p
-                style={{
-                  color: "#0d9488",
-                  fontSize: "11px",
-                  fontWeight: 600,
-                  letterSpacing: "0.2em",
-                  textTransform: "uppercase",
-                  marginBottom: "14px",
-                }}
-              >
+              <p className="text-[#0d9488] text-[13px] font-semibold tracking-[0.2em] uppercase mb-3.5">
                 Why choose OmniDev
               </p>
-              <h2
-                style={{
-                  fontSize: "clamp(24px,4vw,44px)",
-                  fontWeight: 900,
-                  color: "#fff",
-                  lineHeight: 1.15,
-                  marginBottom: "20px",
-                }}
-              >
+
+              <h2 className="text-[clamp(26px,4vw,44px)] font-black text-white leading-tight mb-5">
                 There's no better time than now to{" "}
-                <span style={{ color: "#0d9488" }}>begin trading.</span>
+                <span className="text-[#0d9488]">begin trading.</span>
               </h2>
-              <button className="cta-pill" style={{ marginTop: "14px" }}>
+
+              <button
+                className="cta-pill mt-4 self-center md:self-start mb-10"
+                onClick={handleStart}
+              >
                 <svg
                   width="14"
                   height="14"
@@ -1561,111 +1562,53 @@ export const Home = () => {
                 Start Trading Now
               </button>
             </div>
+
+            {/* RIGHT IMAGE */}
             <div
-              style={{
-                flex: "1 1 260px",
-                maxWidth: "500px",
-                opacity: featureVisible ? 1 : 0,
-                transform: featureVisible
-                  ? "translateX(0)"
-                  : "translateX(38px)",
-                transition: "opacity .7s ease .2s, transform .7s ease .2s",
-              }}
+              className={`flex-1 max-w-[500px] w-full ${
+                featureVisible
+                  ? "opacity-100 translate-x-0"
+                  : "opacity-0 translate-x-10"
+              } transition-all duration-700 delay-200`}
             >
-              <div
-                style={{
-                  position: "relative",
-                  borderRadius: "18px",
-                  overflow: "hidden",
-                  border: "1px solid #1a1a1a",
-                  boxShadow: "0 0 60px rgba(13,148,136,0.1)",
-                }}
-              >
+              <div className="relative rounded-[18px] overflow-hidden border border-[#1a1a1a] shadow-[0_0_40px_rgba(13,148,136,0.08)]">
                 <img
                   src={main3}
                   alt="Trading platform"
-                  style={{
-                    width: "100%",
-                    objectFit: "cover",
-                    minHeight: "220px",
-                    maxHeight: "400px",
-                    display: "block",
-                  }}
+                  className="w-full object-cover min-h-[220px] max-h-[400px]"
                 />
+
                 {/* Live coin overlay */}
                 <div
-                  style={{
-                    position: "absolute",
-                    bottom: "10px",
-                    left: "10px",
-                    right: "10px",
-                    background: "rgba(0,0,0,0.76)",
-                    backdropFilter: "blur(10px)",
-                    border: "1px solid #1a1a1a",
-                    borderRadius: "12px",
-                    padding: "10px 14px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    opacity: coinVisible ? 1 : 0,
-                    transform: coinVisible
-                      ? "translateY(0)"
-                      : "translateY(8px)",
-                    transition: "opacity .33s ease, transform .33s ease",
-                  }}
+                  className={`absolute bottom-2 left-2 right-2 bg-black/70 backdrop-blur-md border border-[#1a1a1a] rounded-xl px-3 py-2 flex items-center justify-between ${
+                    coinVisible
+                      ? "opacity-100 translate-y-0"
+                      : "opacity-0 translate-y-2"
+                  } transition-all duration-300`}
                 >
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "10px",
-                    }}
-                  >
+                  <div className="flex items-center gap-2.5">
                     <img
                       src={coin.logo}
                       alt={coin.symbol}
-                      style={{
-                        width: "30px",
-                        height: "30px",
-                        borderRadius: "50%",
-                      }}
+                      className="w-[30px] h-[30px] rounded-full"
                     />
+
                     <div>
-                      <p
-                        style={{
-                          color: "#6b7280",
-                          fontSize: "10px",
-                          margin: "0 0 2px",
-                        }}
-                      >
+                      <p className="text-[#6b7280] text-[10px] mb-[2px]">
                         {coin.name} ({coin.symbol})
                       </p>
-                      <p
-                        style={{
-                          color: "#fff",
-                          fontWeight: 700,
-                          fontSize: "15px",
-                          margin: 0,
-                        }}
-                      >
+                      <p className="text-white font-bold text-[15px]">
                         {liveData ? `$${fmt(liveData.price)}` : "loading..."}
                       </p>
                     </div>
                   </div>
+
                   <span
-                    style={{
-                      fontSize: "11px",
-                      fontWeight: 700,
-                      padding: "5px 10px",
-                      borderRadius: "7px",
-                      background: (liveData ? liveData.change >= 0 : coin.up)
-                        ? "rgba(13,148,136,0.2)"
-                        : "rgba(239,68,68,0.2)",
-                      color: (liveData ? liveData.change >= 0 : coin.up)
-                        ? "#2affd0"
-                        : "#f87171",
-                      border: `1px solid ${(liveData ? liveData.change >= 0 : coin.up) ? "rgba(13,148,136,0.3)" : "rgba(239,68,68,0.3)"}`,
-                    }}
+                    className={`text-[11px] font-bold px-2.5 py-1 rounded-md border ${
+                      (liveData ? liveData.change >= 0 : coin.up)
+                        ? "bg-[#0d948833] text-[#2affd0] border-[#0d948855]"
+                        : "bg-red-500/20 text-red-400 border-red-500/30"
+                    }`}
                   >
                     {(liveData ? liveData.change >= 0 : coin.up) ? "▲" : "▼"}{" "}
                     {liveData
@@ -1673,26 +1616,15 @@ export const Home = () => {
                       : coin.change}
                   </span>
                 </div>
-                <div
-                  style={{
-                    position: "absolute",
-                    top: "8px",
-                    right: "8px",
-                    display: "flex",
-                    gap: "4px",
-                  }}
-                >
+
+                {/* Top dots */}
+                <div className="absolute top-2 right-2 flex gap-1">
                   {CYCLING_COINS.map((_, i) => (
                     <div
                       key={i}
-                      style={{
-                        width: "5px",
-                        height: "5px",
-                        borderRadius: "50%",
-                        background:
-                          i === coinIndex ? "#0d9488" : "rgba(255,255,255,0.2)",
-                        transition: "background .3s",
-                      }}
+                      className={`w-[5px] h-[5px] rounded-full ${
+                        i === coinIndex ? "bg-[#0d9488]" : "bg-white/20"
+                      }`}
                     />
                   ))}
                 </div>
@@ -2031,7 +1963,7 @@ export const Home = () => {
               >
                 <div
                   style={{
-                    width: "clamp(240px,36vw,390px)",
+                    width: "clamp(340px,36vw,390px)",
                     height: "clamp(260px,38vw,420px)",
                     borderRadius: "18px",
                     overflow: "hidden",
@@ -2161,7 +2093,7 @@ export const Home = () => {
                   fontSize: "clamp(24px,5vw,44px)",
                   fontWeight: 800,
                   lineHeight: 1.15,
-                  margin: "0 0 14px",
+                  margin: "40px 0 16px",
                   letterSpacing: "-0.02em",
                 }}
               >
@@ -2180,7 +2112,7 @@ export const Home = () => {
                 Whether you're just getting started or you're an expert, our
                 platform is designed for everyone.
               </p>
-              <button className="cta-pill">
+              <button className="cta-pill" onClick={handleStart}>
                 <svg
                   width="15"
                   height="15"
@@ -2221,13 +2153,13 @@ export const Home = () => {
             <div
               className={`transition-all duration-700 ${trustVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-5"}`}
             >
-              <p className="text-[#0d9488] text-[12px] font-bold tracking-[0.18em] uppercase mb-4">
+              <p className="text-[#0d9488] text-[13px] font-bold tracking-[0.18em] uppercase mb-4">
                 Why traders choose us
               </p>
               <h2 className="text-white text-[clamp(22px,5vw,48px)] font-black leading-[1.12] tracking-[-0.025em] max-w-[740px] mx-auto mb-4">
                 The most trusted cryptocurrency trading and arbitrage platform
               </h2>
-              <p className="text-gray-500 text-[15px] leading-[1.75] max-w-[520px] mx-auto mb-14">
+              <p className="text-gray-500 text-[16px] leading-[1.75] max-w-[520px] mx-auto mb-14">
                 Traders who rely on us for unlocking lucrative arbitrage
                 opportunities safely and securely.
               </p>
@@ -2269,7 +2201,7 @@ export const Home = () => {
             <div
               className={`text-center mb-14 transition-all duration-700 ${rewardsVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-6"}`}
             >
-              <p className="text-[#0d9488] text-[11px] font-semibold tracking-[0.22em] uppercase mb-3">
+              <p className="text-[#0d9488] text-[13px] font-semibold tracking-[0.22em] uppercase mb-3">
                 Rewards Program
               </p>
               <h2 className="text-[clamp(26px,5vw,50px)] font-black text-white leading-tight mb-3">
@@ -2278,25 +2210,42 @@ export const Home = () => {
                 <span className="text-[#5eead4]">you trade</span>
               </h2>
             </div>
-            <div className="flex items-center justify-center gap-[clamp(20px,6vw,68px)] flex-wrap">
+
+            <div className="flex flex-col items-center text-center md:flex-row md:items-center md:justify-center md:text-left gap-[clamp(20px,6vw,68px)]">
+              {/* 3D Cards */}
               <div
-                className={`flex-[0_1_350px] transition-all duration-700 delay-200 ${rewardsVisible ? "opacity-100 translate-x-0" : "opacity-0 -translate-x-8"}`}
+                className={`flex-[0_1_350px] flex justify-center transition-all duration-700 delay-200 ${
+                  rewardsVisible
+                    ? "opacity-100 translate-x-0"
+                    : "opacity-0 -translate-x-8"
+                }`}
               >
                 <StackedCards3D visible={rewardsVisible} />
               </div>
+
+              {/* Text Content */}
               <div
-                className={`flex-1 max-w-[380px] flex flex-col gap-5 transition-all duration-700 delay-300 ${rewardsVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-7"}`}
+                className={`flex-1 max-w-[380px] flex flex-col items-center md:items-start gap-5 transition-all duration-700 delay-300 ${
+                  rewardsVisible
+                    ? "opacity-100 translate-y-0"
+                    : "opacity-0 translate-y-7"
+                }`}
               >
-                <h3 className="text-[clamp(20px,3vw,30px)] font-black text-[#ddeaea] leading-tight tracking-tight">
+                <h3 className="text-[clamp(26px,3vw,30px)] font-black text-[#ddeaea] leading-tight tracking-tight">
                   Earn weekly rewards
                   <br />
                 </h3>
-                <p className="text-[#7dd3c7] text-sm leading-relaxed">
+
+                <p className="text-[#7dd3c7] text-[16px] leading-relaxed">
                   Amplify Your Profits with Weekly Rewards as You Engage in
                   Crypto Transactions, Making Every Trade Count Towards Your
                   Financial Growth.
                 </p>
-                <button className="cta-pill self-start">
+
+                <button
+                  className="cta-pill self-center md:self-start"
+                  onClick={handleStart}
+                >
                   <svg
                     width="14"
                     height="14"
@@ -2322,21 +2271,21 @@ export const Home = () => {
         >
           <div className="absolute inset-0 pointer-events-none z-0 [background-image:linear-gradient(rgba(13,148,136,0.16)_1px,transparent_2px),linear-gradient(90deg,rgba(13,148,136,0.16)_1px,transparent_1px)] [background-size:80px_80px] [mask-image:radial-gradient(ellipse_90%_90%_at_50%_50%,transparent_22%,black_100%)] [-webkit-mask-image:radial-gradient(ellipse_90%_90%_at_50%_50%,transparent_22%,black_100%)]" />
           <div className="relative z-10 max-w-[900px] mx-auto text-center">
-            <p className="text-[#0d9488] text-[11px] font-bold tracking-[0.28em] uppercase mb-3">
+            <p className="text-[#0d9488] text-[12px] font-bold tracking-[0.28em] uppercase mb-3">
               OmniDev Pro
             </p>
-            <h4 className="text-white text-[clamp(18px,3.5vw,28px)] font-extrabold mb-1">
+            <h4 className="text-white text-[clamp(20px,3.5vw,28px)] font-extrabold mb-1">
               Crypto & arbitrage opportunities
             </h4>
-            <p className="text-[#0d9488] text-[clamp(18px,3.5vw,30px)] font-extrabold italic mb-5">
+            <p className="text-[#0d9488] text-[clamp(20px,3.5vw,30px)] font-extrabold italic mb-5">
               anytime, anywhere.
             </p>
-            <p className="text-[#4b6060] text-[13px] leading-relaxed max-w-[460px] mx-auto mb-7">
+            <p className="text-[#4b6060] text-[16px] leading-relaxed max-w-[460px] mx-auto mb-7">
               Discover and Navigate the Intriguing World of Price Differences
               Across Markets, Unveiling Profitable Avenues in Cryptocurrency
               Trading
             </p>
-            <button className="cta-pill">
+            <button className="cta-pill" onClick={handleStart}>
               <svg
                 width="15"
                 height="15"

@@ -1,7 +1,15 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
-import { auth } from "../firebase";
+import {
+  doc,
+  setDoc,
+  getDocs,
+  collection,
+  query,
+  where,
+} from "firebase/firestore";
+import { auth, db } from "../firebase";
 import logo from "/src/images/omnidev logo.png";
 
 export default function Signup() {
@@ -22,12 +30,21 @@ export default function Signup() {
     setError("");
   };
 
+  // 🔥 CHECK IF USERNAME IS ALREADY TAKEN
+  const isUsernameTaken = async (username) => {
+    const q = query(
+      collection(db, "users"),
+      where("username", "==", username.toLowerCase().trim()),
+    );
+    const snapshot = await getDocs(q);
+    return !snapshot.empty;
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
 
     const { firstName, lastName, email, username, password } = form;
 
-    // VALIDATION (your original logic kept)
     if (!firstName || !lastName || !email || !username || !password) {
       setError("Please fill in all fields.");
       return;
@@ -43,25 +60,52 @@ export default function Signup() {
       return;
     }
 
+    if (username.length < 3) {
+      setError("Username must be at least 3 characters.");
+      return;
+    }
+
+    if (!/^[a-zA-Z0-9_]+$/.test(username)) {
+      setError("Username can only contain letters, numbers, and underscores.");
+      return;
+    }
+
     try {
       setLoading(true);
       setError("");
 
-      // 🔥 CREATE USER (Firebase)
+      // 🔥 CHECK USERNAME UNIQUENESS
+      const taken = await isUsernameTaken(username);
+      if (taken) {
+        setError("Username already taken. Please choose another.");
+        setLoading(false);
+        return;
+      }
+
       const userCredential = await createUserWithEmailAndPassword(
         auth,
         email,
         password,
       );
 
-      // 🔥 ADD DISPLAY NAME (optional but useful)
       await updateProfile(userCredential.user, {
         displayName: `${firstName} ${lastName}`,
       });
 
-      // ⚠️ IMPORTANT:
-      // Firebase does NOT store username automatically.
-      // If you want username → use Firestore (I can add it for you)
+      // Save to Firestore
+      await setDoc(doc(db, "users", userCredential.user.uid), {
+        firstName,
+        lastName,
+        username: username.toLowerCase().trim(),
+        email,
+        createdAt: new Date().toISOString(),
+      });
+
+      // Also save username in a separate collection for quick lookup
+      await setDoc(doc(db, "usernames", username.toLowerCase().trim()), {
+        uid: userCredential.user.uid,
+        username: username.toLowerCase().trim(),
+      });
 
       navigate("/login?registered=true");
     } catch (err) {
@@ -77,7 +121,6 @@ export default function Signup() {
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-[#0b0b0f] relative overflow-hidden px-4 py-8">
-      {/* GRID BACKGROUND */}
       <div
         className="absolute inset-0 pointer-events-none z-0"
         style={{
@@ -90,19 +133,15 @@ export default function Signup() {
             "radial-gradient(ellipse 75% 75% at 50% 50%,transparent 35%,black 70%)",
         }}
       />
-      
 
       <div className="relative z-10 flex flex-col items-center text-center w-full max-w-sm sm:max-w-md">
-        {/* LOGO */}
         <img src={logo} alt="logo" className="w-16 sm:w-20 mb-5" />
 
-        {/* TITLE */}
         <h1 className="text-white text-lg sm:text-xl md:text-2xl font-medium leading-relaxed px-2">
           Join Omnidev Today! Sign Up to Begin Your Journey into the Exciting
           World of Cryptocurrency.
         </h1>
 
-        {/* FORM */}
         <form onSubmit={handleSubmit} className="w-full mt-8 space-y-4">
           <div className="flex gap-3">
             <input

@@ -99,13 +99,28 @@ export const Navbar = () => {
     return () => unsub();
   }, []);
 
+  // 🔒 Lock body scroll when sidebar is open
   useEffect(() => {
-    document.body.style.overflow = sidebarOpen ? "hidden" : "";
+    if (sidebarOpen) {
+      document.body.style.overflow = "hidden";
+      document.body.style.position = "fixed";
+      document.body.style.width = "100%";
+      document.body.style.top = `-${window.scrollY}px`;
+    } else {
+      const scrollY = document.body.style.top;
+      document.body.style.overflow = "";
+      document.body.style.position = "";
+      document.body.style.width = "";
+      document.body.style.top = "";
+      window.scrollTo(0, parseInt(scrollY || "0") * -1);
+    }
     return () => {
       document.body.style.overflow = "";
+      document.body.style.position = "";
+      document.body.style.width = "";
+      document.body.style.top = "";
     };
   }, [sidebarOpen]);
-  
 
   const handleLogout = async () => {
     await signOut(auth);
@@ -115,9 +130,7 @@ export const Navbar = () => {
   };
 
   const handleNavClick = (scrollKey) => {
-    // 🔥 trigger cursor animation
     window.dispatchEvent(new Event("cursor-expand"));
-
     setSidebarOpen(false);
 
     if (!scrollKey) return;
@@ -133,7 +146,7 @@ export const Navbar = () => {
       }, 400);
     }
   };
-  
+
   const isLoggedIn = !!user;
 
   return (
@@ -195,7 +208,6 @@ export const Navbar = () => {
             <button
               key={l.label}
               onClick={() => handleNavClick(l.scrollKey)}
-              // 🔥 ADD THESE
               onMouseEnter={() => {
                 window.dispatchEvent(new Event("cursor-expand"));
               }}
@@ -280,7 +292,7 @@ export const Navbar = () => {
         </button>
       </nav>
 
-      {/* ── Overlay — clicking it closes sidebar ── */}
+      {/* ── Overlay — clicking closes sidebar ── */}
       <div
         onClick={() => setSidebarOpen(false)}
         style={{
@@ -294,7 +306,7 @@ export const Navbar = () => {
         }}
       />
 
-      {/* ── Sidebar — slides from RIGHT on mobile, NO X button ── */}
+      {/* ── Sidebar ── */}
       <aside
         style={{
           position: "fixed",
@@ -311,11 +323,12 @@ export const Navbar = () => {
           transition: "transform 0.35s cubic-bezier(0.4,0,0.2,1)",
         }}
       >
-        {/* Sidebar header — logo only, NO X */}
+        {/* Sidebar header — logo + X close button */}
         <div
           style={{
             display: "flex",
             alignItems: "center",
+            justifyContent: "space-between",
             padding: "18px 20px 16px",
             borderBottom: "1px solid #1e1e1e",
           }}
@@ -342,35 +355,49 @@ export const Navbar = () => {
               OmniDev
             </span>
           </div>
+
+          {/* X close button */}
+          <button
+            onClick={() => setSidebarOpen(false)}
+            style={{
+              background: "none",
+              border: "none",
+              color: "#9ca3af",
+              cursor: "pointer",
+              padding: "4px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              borderRadius: "6px",
+              transition: "color 0.2s, background 0.2s",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = "#fff";
+              e.currentTarget.style.background = "rgba(255,255,255,0.08)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = "#9ca3af";
+              e.currentTarget.style.background = "transparent";
+            }}
+            aria-label="Close sidebar"
+          >
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
         </div>
 
-        {/* Logged-in user info */}
-        {isLoggedIn && (
-          <div
-            style={{
-              padding: "14px 20px",
-              borderBottom: "1px solid #1e1e1e",
-              background: "rgba(13,148,136,0.07)",
-            }}
-          >
-            <p
-              style={{
-                color: "#9ca3af",
-                fontSize: "11px",
-                marginBottom: "2px",
-                textTransform: "uppercase",
-                letterSpacing: "0.08em",
-              }}
-            >
-              Signed in as
-            </p>
-            <p style={{ color: "#fff", fontSize: "14px", fontWeight: 600 }}>
-              {user?.email}
-            </p>
-          </div>
-        )}
-
-        {/* Sidebar nav links */}
+        {/* Sidebar nav links — with spacing */}
         <nav style={{ padding: "16px 0", flex: 1, overflowY: "auto" }}>
           {SIDEBAR_LINKS.map((item, i) => (
             <button
@@ -381,7 +408,8 @@ export const Navbar = () => {
                 display: "flex",
                 alignItems: "center",
                 gap: "14px",
-                padding: "13px 24px",
+                padding: "16px 24px",
+                marginBottom: "8px",
                 color: "#e5e7eb",
                 background: "transparent",
                 border: "none",
@@ -413,10 +441,41 @@ export const Navbar = () => {
           ))}
         </nav>
 
-        {/* Sidebar CTA */}
+        {/* Sidebar bottom — Signed in info + CTA */}
         <div style={{ padding: "20px", borderTop: "1px solid #1e1e1e" }}>
           {isLoggedIn ? (
             <>
+              {/* Signed in as — moved to bottom */}
+              <div
+                style={{
+                  padding: "12px 0",
+                  marginBottom: "12px",
+                  borderBottom: "1px solid #1e1e1e",
+                }}
+              >
+                <p
+                  style={{
+                    color: "#6b7280",
+                    fontSize: "11px",
+                    marginBottom: "4px",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.08em",
+                  }}
+                >
+                  Signed in as
+                </p>
+                <p
+                  style={{
+                    color: "#fff",
+                    fontSize: "14px",
+                    fontWeight: 600,
+                    wordBreak: "break-all",
+                  }}
+                >
+                  {user?.email}
+                </p>
+              </div>
+
               <Link to="/dashboard" onClick={() => setSidebarOpen(false)}>
                 <button
                   style={{
@@ -429,7 +488,6 @@ export const Navbar = () => {
                     borderRadius: "10px",
                     border: "none",
                     cursor: "pointer",
-                    marginBottom: "10px",
                     opacity: sidebarOpen ? 1 : 0,
                     transform: sidebarOpen
                       ? "translateY(0)"
@@ -441,23 +499,6 @@ export const Navbar = () => {
                   Go to Dashboard
                 </button>
               </Link>
-              <button
-                onClick={handleLogout}
-                style={{
-                  width: "100%",
-                  background: "transparent",
-                  color: "#9ca3af",
-                  fontWeight: 600,
-                  fontSize: "14px",
-                  padding: "11px",
-                  borderRadius: "10px",
-                  border: "1px solid #374151",
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                }}
-              >
-                Logout
-              </button>
             </>
           ) : (
             <>

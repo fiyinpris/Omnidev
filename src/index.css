@@ -238,3 +238,11 @@ section {
 input {
   font-size: 16px; /* prevents iOS zoom */
 }
+@keyframes blink {
+  0%, 50%, 100% {
+    opacity: 1;
+  }
+  25%, 75% {
+    opacity: 0;
+  }
+}

@@ -2,7 +2,16 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import logo from "/src/images/omnidev logo.png";
 import { onAuthStateChanged, signOut } from "firebase/auth";
-import { auth } from "../firebase";
+import { auth, db } from "../firebase";
+import {
+  doc,
+  getDoc,
+  setDoc,
+  getDocs,
+  collection,
+  query,
+  where,
+} from "firebase/firestore";
 
 const SIDEBAR_ITEMS = [
   {
@@ -325,27 +334,105 @@ export default function Dashboard() {
     firstName: "",
     lastName: "",
     username: "",
+    email: "",
   });
   const [profileSaved, setProfileSaved] = useState(false);
+  const [profileError, setProfileError] = useState("");
   const fileInputRef = useRef(null);
+  // Add these states at the top of Dashboard component:
+  const [profileLoading, setProfileLoading] = useState(true);
 
+  // Replace the onAuthStateChanged useEffect with this:
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (user) => {
+    const unsub = onAuthStateChanged(auth, async (user) => {
       if (!user) {
         navigate("/login");
         return;
       }
       const s = { email: user.email, uid: user.uid };
       setSession(s);
-      const saved = JSON.parse(
-        localStorage.getItem(`omnidev_profile_${user.uid}`) || "{}",
-      );
+
+      try {
+        // Try Firestore first
+        const userDoc = await getDoc(doc(db, "users", user.uid));
+        const userData = userDoc.exists() ? userDoc.data() : {};
+
+        const profileDoc = await getDoc(doc(db, "profiles", user.uid));
+        const profileData = profileDoc.exists() ? profileDoc.data() : {};
+
+        // 🔥 FALLBACK: If no Firestore data, try localStorage (old accounts)
+        const localProfile = JSON.parse(
+          localStorage.getItem(`omnidev_profile_${user.uid}`) || "{}",
+        );
+        const localSignup = JSON.parse(
+          localStorage.getItem(`omnidev_signup_${user.uid}`) || "{}",
+        );
+
+        // Priority: Firestore > localStorage > Auth > defaults
+        setProfileForm({
+          firstName:
+            userData.firstName ||
+            localSignup.firstName ||
+            localProfile.firstName ||
+            user.displayName?.split(" ")[0] ||
+            "",
+          lastName:
+            userData.lastName ||
+            localSignup.lastName ||
+            localProfile.lastName ||
+            user.displayName?.split(" ")[1] ||
+            "",
+          username:
+            profileData.username ||
+            userData.username ||
+            localProfile.username ||
+            localSignup.username ||
+            user.email.split("@")[0],
+          email: userData.email || localSignup.email || user.email,
+        });
+
+        setProfilePic(profileData.picture || localProfile.picture || null);
+      } catch (err) {
+        console.error("Profile load error:", err);
+        // 🔥 EMERGENCY FALLBACK — use Auth data only
+        setProfileForm({
+          firstName: user.displayName?.split(" ")[0] || "",
+          lastName: user.displayName?.split(" ")[1] || "",
+          username: user.email.split("@")[0],
+          email: user.email,
+        });
+      } finally {
+        setProfileLoading(false);
+      }
+    });
+    return () => unsub();
+  }, [navigate]);
+
+  // 🔥 LOAD USER DATA FROM FIRESTORE (cross-device sync)
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        navigate("/login");
+        return;
+      }
+      const s = { email: user.email, uid: user.uid };
+      setSession(s);
+
+      const userDoc = await getDoc(doc(db, "users", user.uid));
+      const userData = userDoc.exists() ? userDoc.data() : {};
+
+      const profileDoc = await getDoc(doc(db, "profiles", user.uid));
+      const profileData = profileDoc.exists() ? profileDoc.data() : {};
+
       setProfileForm({
-        firstName: saved.firstName || "",
-        lastName: saved.lastName || "",
-        username: saved.username || user.email.split("@")[0],
+        firstName: userData.firstName || "",
+        lastName: userData.lastName || "",
+        username:
+          profileData.username || userData.username || user.email.split("@")[0],
+        email: userData.email || user.email,
       });
-      setProfilePic(saved.picture || null);
+
+      setProfilePic(profileData.picture || null);
     });
     return () => unsub();
   }, [navigate]);
@@ -363,20 +450,85 @@ export default function Dashboard() {
     navigate("/");
   };
 
+  // 🔥 AUTO-SAVE PROFILE PICTURE TO FIRESTORE
   const handleFileChange = (e) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || !session) return;
     const reader = new FileReader();
-    reader.onload = (ev) => setProfilePic(ev.target.result);
+    reader.onload = async (ev) => {
+      const pic = ev.target.result;
+      setProfilePic(pic);
+      await setDoc(
+        doc(db, "profiles", session.uid),
+        {
+          picture: pic,
+          username: profileForm.username,
+        },
+        { merge: true },
+      );
+    };
     reader.readAsDataURL(file);
   };
 
-  const handleProfileSave = () => {
-    if (!session) return;
-    localStorage.setItem(
-      `omnidev_profile_${session.uid}`,
-      JSON.stringify({ ...profileForm, picture: profilePic }),
+  // 🔥 CHECK IF USERNAME IS TAKEN BY ANOTHER USER
+  const isUsernameTakenByOther = async (username) => {
+    const q = query(
+      collection(db, "users"),
+      where("username", "==", username.toLowerCase().trim()),
     );
+    const snapshot = await getDocs(q);
+    if (snapshot.empty) return false;
+    // Check if the found user is the current user
+    const foundDoc = snapshot.docs[0];
+    return foundDoc.id !== session.uid;
+  };
+
+  // 🔥 SAVE USERNAME WITH UNIQUENESS CHECK
+  const handleProfileSave = async () => {
+    if (!session) return;
+    setProfileError("");
+
+    const newUsername = profileForm.username.toLowerCase().trim();
+
+    // Validate username format
+    if (newUsername.length < 3) {
+      setProfileError("Username must be at least 3 characters.");
+      return;
+    }
+    if (!/^[a-zA-Z0-9_]+$/.test(newUsername)) {
+      setProfileError(
+        "Username can only contain letters, numbers, and underscores.",
+      );
+      return;
+    }
+
+    // Check uniqueness
+    const taken = await isUsernameTakenByOther(newUsername);
+    if (taken) {
+      setProfileError("Username already taken by another user.");
+      return;
+    }
+
+    // Save to Firestore
+    await setDoc(
+      doc(db, "profiles", session.uid),
+      {
+        username: newUsername,
+        picture: profilePic,
+      },
+      { merge: true },
+    );
+
+    // Update username in users collection too
+    await setDoc(
+      doc(db, "users", session.uid),
+      {
+        username: newUsername,
+      },
+      { merge: true },
+    );
+
+    // 🔥 SHOW "SAVED" CONFIRMATION
     setProfileSaved(true);
     setTimeout(() => setProfileSaved(false), 2500);
   };
@@ -389,10 +541,7 @@ export default function Dashboard() {
   })();
   const balance = account.balance || 0;
   const transactions = account.transactions || [];
-  const displayName =
-    profileForm.firstName ||
-    profileForm.username ||
-    session.email.split("@")[0];
+  const displayName = profileForm.username || session.email.split("@")[0];
 
   return (
     <>
@@ -445,12 +594,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/*
-        Root layout: full-height flex column
-        Header is fixed at top (58px)
-        Below header: flex row of sidebar + main
-        Main is a flex column: ticker + scrollable content + sticky footer
-      */}
       <div
         style={{
           height: "100vh",
@@ -492,7 +635,6 @@ export default function Dashboard() {
             </span>
           </div>
 
-          {/* Desktop logout */}
           <button
             onClick={handleLogout}
             className="dash-logout-desktop"
@@ -520,7 +662,6 @@ export default function Dashboard() {
             Logout
           </button>
 
-          {/* Mobile hamburger */}
           <button
             onClick={() => setSidebarOpen(true)}
             className="dash-hamburger"
@@ -574,7 +715,6 @@ export default function Dashboard() {
             position: "relative",
           }}
         >
-          {/* Overlay — click outside closes sidebar on mobile */}
           {sidebarOpen && (
             <div
               onClick={() => setSidebarOpen(false)}
@@ -587,9 +727,6 @@ export default function Dashboard() {
             />
           )}
 
-          {/* ── SIDEBAR ──
-              Desktop: always visible on left (translateX(0))
-              Mobile: slides from RIGHT, no X button, click overlay closes */}
           <aside
             className="dash-sidebar"
             style={{
@@ -599,7 +736,6 @@ export default function Dashboard() {
               borderRight: "1px solid #1a1a2e",
               display: "flex",
               flexDirection: "column",
-              /* Mobile: fixed, slide from RIGHT */
               position: "fixed",
               top: "58px",
               right: 0,
@@ -702,7 +838,6 @@ export default function Dashboard() {
             </div>
           </aside>
 
-          {/* ── MAIN CONTENT: flex column so footer sticks to bottom ── */}
           <main
             className="dash-main"
             style={{
@@ -714,7 +849,6 @@ export default function Dashboard() {
               position: "relative",
             }}
           >
-            {/* Grid background */}
             <div
               style={{
                 position: "absolute",
@@ -731,12 +865,10 @@ export default function Dashboard() {
               }}
             />
 
-            {/* Live ticker — fixed height, no scroll */}
             <div style={{ position: "relative", zIndex: 2, flexShrink: 0 }}>
               <LiveTickerBar />
             </div>
 
-            {/* Scrollable content area — flex:1 means it takes remaining height */}
             <div
               style={{
                 flex: 1,
@@ -808,10 +940,10 @@ export default function Dashboard() {
                         <div>
                           <h2
                             style={{
-                              fontSize: "clamp(22px,4vw,32px)",
+                              fontSize: "clamp(30px,4vw,32px)",
                               fontWeight: 800,
                               color: "#fff",
-                              margin: "0 0 2px",
+                              margin: "0 0 12px",
                             }}
                           >
                             Dashboard
@@ -819,7 +951,7 @@ export default function Dashboard() {
                           <p
                             style={{
                               color: "#9ca3af",
-                              fontSize: "14px",
+                              fontSize: "17px",
                               margin: 0,
                             }}
                           >
@@ -834,7 +966,7 @@ export default function Dashboard() {
                       <p
                         style={{
                           color: "#9ca3af",
-                          fontSize: "14px",
+                          fontSize: "18px",
                           margin: "8px 0 0",
                         }}
                       >
@@ -852,7 +984,6 @@ export default function Dashboard() {
                         marginBottom: "28px",
                       }}
                     >
-                      {/* Balance Card */}
                       <div
                         style={{
                           background: "#111",
@@ -1040,7 +1171,6 @@ export default function Dashboard() {
                         </div>
                       </div>
 
-                      {/* Transactions Card */}
                       <div
                         style={{
                           background: "#111",
@@ -1099,7 +1229,6 @@ export default function Dashboard() {
                       </div>
                     </div>
 
-                    {/* Recent Transactions */}
                     <div>
                       <div
                         style={{
@@ -1192,7 +1321,7 @@ export default function Dashboard() {
                     <h2
                       style={{
                         color: "#fff",
-                        fontSize: "28px",
+                        fontSize: "35px",
                         fontWeight: 800,
                         marginBottom: "12px",
                       }}
@@ -1202,7 +1331,7 @@ export default function Dashboard() {
                     <p
                       style={{
                         color: "#9ca3af",
-                        fontSize: "14px",
+                        fontSize: "18px",
                         marginBottom: "28px",
                         lineHeight: 1.6,
                       }}
@@ -1259,7 +1388,7 @@ export default function Dashboard() {
                     <h2
                       style={{
                         color: "#fff",
-                        fontSize: "24px",
+                        fontSize: "35px",
                         fontWeight: 800,
                         textAlign: "center",
                         marginBottom: "8px",
@@ -1270,7 +1399,7 @@ export default function Dashboard() {
                     <p
                       style={{
                         color: "#9ca3af",
-                        fontSize: "14px",
+                        fontSize: "18px",
                         textAlign: "center",
                         marginBottom: "28px",
                       }}
@@ -1319,7 +1448,7 @@ export default function Dashboard() {
                             borderRadius: "12px",
                             padding: "13px 16px",
                             color: "#fff",
-                            fontSize: "14px",
+                            fontSize: "16px",
                             outline: "none",
                           }}
                           onFocus={(e) =>
@@ -1350,7 +1479,7 @@ export default function Dashboard() {
                             borderRadius: "12px",
                             padding: "13px 16px",
                             color: "#fff",
-                            fontSize: "14px",
+                            fontSize: "16px",
                             outline: "none",
                             resize: "none",
                           }}
@@ -1368,7 +1497,7 @@ export default function Dashboard() {
                           borderRadius: "12px",
                           color: "#fff",
                           fontWeight: 700,
-                          fontSize: "15px",
+                          fontSize: "16px",
                           cursor: "pointer",
                         }}
                         onMouseEnter={(e) =>
@@ -1390,7 +1519,7 @@ export default function Dashboard() {
                     <h2
                       style={{
                         color: "#fff",
-                        fontSize: "24px",
+                        fontSize: "35px",
                         fontWeight: 800,
                         marginBottom: "20px",
                       }}
@@ -1416,7 +1545,7 @@ export default function Dashboard() {
                           borderRadius: "10px",
                           padding: "10px 14px",
                           color: "#fff",
-                          fontSize: "13px",
+                          fontSize: "16px",
                           outline: "none",
                         }}
                       />
@@ -1427,7 +1556,7 @@ export default function Dashboard() {
                           borderRadius: "10px",
                           padding: "10px 14px",
                           color: "#fff",
-                          fontSize: "13px",
+                          fontSize: "16px",
                           outline: "none",
                         }}
                       >
@@ -1548,7 +1677,7 @@ export default function Dashboard() {
                     <h2
                       style={{
                         color: "#fff",
-                        fontSize: "24px",
+                        fontSize: "35px",
                         fontWeight: 800,
                         textAlign: "center",
                         marginBottom: "6px",
@@ -1556,296 +1685,413 @@ export default function Dashboard() {
                     >
                       Profile
                     </h2>
-                    <p
-                      style={{
-                        color: "#9ca3af",
-                        fontSize: "14px",
-                        textAlign: "center",
-                        marginBottom: "28px",
-                      }}
-                    >
-                      Edit your personal information
-                    </p>
-                    <div style={{ textAlign: "center", marginBottom: "28px" }}>
+
+                    {profileLoading ? (
                       <div
-                        onClick={() => fileInputRef.current?.click()}
                         style={{
-                          width: "84px",
-                          height: "84px",
-                          borderRadius: "50%",
-                          background: "#0d9488",
-                          margin: "0 auto 10px",
-                          cursor: "pointer",
-                          overflow: "hidden",
-                          border: "3px solid #0d9488",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          position: "relative",
+                          textAlign: "center",
+                          padding: "40px",
+                          color: "#6b7280",
                         }}
                       >
-                        {profilePic ? (
-                          <img
-                            src={profilePic}
-                            alt="Profile"
-                            style={{
-                              width: "100%",
-                              height: "100%",
-                              objectFit: "cover",
-                            }}
-                          />
-                        ) : (
-                          <svg
-                            width="32"
-                            height="32"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="white"
-                            strokeWidth="1.5"
-                          >
-                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                            <circle cx="12" cy="7" r="4" />
-                          </svg>
-                        )}
                         <div
                           style={{
-                            position: "absolute",
-                            inset: 0,
-                            background: "rgba(0,0,0,0.45)",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            opacity: 0,
-                            transition: "opacity 0.2s",
+                            width: "32px",
+                            height: "32px",
+                            border: "3px solid #1a1a1a",
+                            borderTop: "3px solid #0d9488",
+                            borderRadius: "50%",
+                            animation: "spin 1s linear infinite",
+                            margin: "0 auto 16px",
                           }}
-                          onMouseEnter={(e) =>
-                            (e.currentTarget.style.opacity = "1")
-                          }
-                          onMouseLeave={(e) =>
-                            (e.currentTarget.style.opacity = "0")
-                          }
+                        />
+                        <p style={{ fontSize: "14px" }}>Loading profile...</p>
+                        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+                      </div>
+                    ) : (
+                      <>
+                        {/* Profile Picture */}
+                        <div
+                          style={{ textAlign: "center", marginBottom: "28px" }}
                         >
-                          <svg
-                            width="20"
-                            height="20"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="white"
-                            strokeWidth="2"
+                          <div
+                            onClick={() => fileInputRef.current?.click()}
+                            style={{
+                              width: "84px",
+                              height: "84px",
+                              borderRadius: "50%",
+                              background: "#0d9488",
+                              margin: "0 auto 10px",
+                              cursor: "pointer",
+                              overflow: "hidden",
+                              border: "3px solid #0d9488",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              position: "relative",
+                            }}
                           >
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                            <polyline points="17 8 12 3 7 8" />
-                            <line x1="12" y1="3" x2="12" y2="15" />
-                          </svg>
+                            {profilePic ? (
+                              <img
+                                src={profilePic}
+                                alt="Profile"
+                                style={{
+                                  width: "100%",
+                                  height: "100%",
+                                  objectFit: "cover",
+                                }}
+                              />
+                            ) : (
+                              <svg
+                                width="32"
+                                height="32"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="white"
+                                strokeWidth="1.5"
+                              >
+                                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                                <circle cx="12" cy="7" r="4" />
+                              </svg>
+                            )}
+                          </div>
+                          <p
+                            style={{
+                              color: "#6b7280",
+                              fontSize: "11px",
+                              textTransform: "uppercase",
+                              letterSpacing: "0.1em",
+                              marginBottom: "12px",
+                            }}
+                          >
+                            Tap to update picture
+                          </p>
+                          <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept="image/*"
+                            style={{ display: "none" }}
+                            onChange={handleFileChange}
+                          />
                         </div>
-                      </div>
-                      <p
-                        style={{
-                          color: "#6b7280",
-                          fontSize: "11px",
-                          textTransform: "uppercase",
-                          letterSpacing: "0.1em",
-                          marginBottom: "12px",
-                        }}
-                      >
-                        Tap to update picture
-                      </p>
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept="image/*"
-                        style={{ display: "none" }}
-                        onChange={handleFileChange}
-                      />
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          gap: "10px",
-                          background: "#111",
-                          border: "1px solid #333",
-                          borderRadius: "10px",
-                          padding: "10px 16px",
-                        }}
-                      >
-                        <button
-                          onClick={() => fileInputRef.current?.click()}
-                          style={{
-                            padding: "8px 16px",
-                            background: "#0d9488",
-                            border: "none",
-                            borderRadius: "8px",
-                            color: "#fff",
-                            fontSize: "13px",
-                            fontWeight: 600,
-                            cursor: "pointer",
-                          }}
-                        >
-                          Choose File
-                        </button>
-                        <span style={{ color: "#9ca3af", fontSize: "13px" }}>
-                          {profilePic ? "Image selected ✓" : "No file chosen"}
-                        </span>
-                      </div>
-                    </div>
-                    {profileSaved && (
-                      <div
-                        style={{
-                          background: "rgba(13,148,136,0.15)",
-                          border: "1px solid rgba(13,148,136,0.35)",
-                          borderRadius: "10px",
-                          padding: "11px 16px",
-                          color: "#2affd0",
-                          fontSize: "13px",
-                          marginBottom: "16px",
-                          textAlign: "center",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          gap: "8px",
-                        }}
-                      >
-                        <svg
-                          width="15"
-                          height="15"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2.5"
-                        >
-                          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                          <polyline points="22 4 12 14.01 9 11.01" />
-                        </svg>
-                        Profile saved successfully!
-                      </div>
-                    )}
-                    <div
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: "13px",
-                      }}
-                    >
-                      {[
-                        ["firstName", "First Name"],
-                        ["lastName", "Last Name"],
-                        ["username", "Username"],
-                      ].map(([field, ph]) => (
-                        <input
-                          key={field}
-                          type="text"
-                          placeholder={ph}
-                          value={profileForm[field]}
-                          onChange={(e) =>
-                            setProfileForm({
-                              ...profileForm,
-                              [field]: e.target.value,
-                            })
-                          }
-                          style={{
-                            width: "100%",
-                            boxSizing: "border-box",
-                            background: "#111",
-                            border: "1px solid #333",
-                            borderRadius: "10px",
-                            padding: "13px 16px",
-                            color: "#fff",
-                            fontSize: "14px",
-                            outline: "none",
-                          }}
-                          onFocus={(e) =>
-                            (e.target.style.borderColor = "#0d9488")
-                          }
-                          onBlur={(e) => (e.target.style.borderColor = "#333")}
-                        />
-                      ))}
-                      <div style={{ position: "relative" }}>
-                        <input
-                          type="email"
-                          value={session.email}
-                          readOnly
-                          style={{
-                            width: "100%",
-                            boxSizing: "border-box",
-                            background: "#0d0d0d",
-                            border: "1px solid #2a2a2a",
-                            borderRadius: "10px",
-                            padding: "13px 16px 13px 42px",
-                            color: "#6b7280",
-                            fontSize: "14px",
-                            outline: "none",
-                            cursor: "not-allowed",
-                          }}
-                        />
-                        <span
-                          style={{
-                            position: "absolute",
-                            left: "14px",
-                            top: "50%",
-                            transform: "translateY(-50%)",
-                            color: "#4b5563",
-                          }}
-                        >
-                          <svg
-                            width="15"
-                            height="15"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
+
+                        {/* Show message if data came from fallback */}
+                        {!profileForm.firstName && !profileForm.lastName && (
+                          <div
+                            style={{
+                              background: "rgba(13,148,136,0.1)",
+                              border: "1px solid rgba(13,148,136,0.2)",
+                              borderRadius: "10px",
+                              padding: "12px",
+                              marginBottom: "20px",
+                              textAlign: "center",
+                            }}
                           >
-                            <rect x="3" y="11" width="18" height="11" rx="2" />
-                            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                          </svg>
-                        </span>
-                        <span
+                            <p
+                              style={{
+                                color: "#0d9488",
+                                fontSize: "13px",
+                                margin: 0,
+                              }}
+                            >
+                              ⚠️ Complete your profile — some details are
+                              missing from your account.
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Saved / Error messages */}
+                        {profileSaved && (
+                          <div
+                            style={{
+                              background: "rgba(13,148,136,0.15)",
+                              border: "1px solid rgba(13,148,136,0.35)",
+                              borderRadius: "10px",
+                              padding: "11px 16px",
+                              color: "#2affd0",
+                              fontSize: "13px",
+                              marginBottom: "16px",
+                              textAlign: "center",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              gap: "8px",
+                            }}
+                          >
+                            <svg
+                              width="15"
+                              height="15"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.5"
+                            >
+                              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                              <polyline points="22 4 12 14.01 9 11.01" />
+                            </svg>
+                            Saved!
+                          </div>
+                        )}
+
+                        {profileError && (
+                          <div
+                            style={{
+                              background: "rgba(239,68,68,0.1)",
+                              border: "1px solid rgba(239,68,68,0.3)",
+                              borderRadius: "10px",
+                              padding: "11px 16px",
+                              color: "#f87171",
+                              fontSize: "13px",
+                              marginBottom: "16px",
+                              textAlign: "center",
+                            }}
+                          >
+                            {profileError}
+                          </div>
+                        )}
+
+                        {/* Form fields */}
+                        <div
                           style={{
-                            position: "absolute",
-                            right: "12px",
-                            top: "50%",
-                            transform: "translateY(-50%)",
-                            color: "#4b5563",
-                            fontSize: "11px",
-                            background: "#1a1a1a",
-                            padding: "2px 8px",
-                            borderRadius: "5px",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "13px",
                           }}
                         >
-                          locked
-                        </span>
-                      </div>
-                      <button
-                        onClick={handleProfileSave}
-                        style={{
-                          padding: "14px",
-                          background: "#0d9488",
-                          border: "none",
-                          borderRadius: "10px",
-                          color: "#fff",
-                          fontWeight: 700,
-                          fontSize: "15px",
-                          cursor: "pointer",
-                          transition: "background 0.2s",
-                        }}
-                        onMouseEnter={(e) =>
-                          (e.currentTarget.style.background = "#0f766e")
-                        }
-                        onMouseLeave={(e) =>
-                          (e.currentTarget.style.background = "#0d9488")
-                        }
-                      >
-                        Save Changes
-                      </button>
-                    </div>
+                          {/* First Name */}
+                          <div>
+                            <label
+                              style={{
+                                color: "#6b7280",
+                                fontSize: "11px",
+                                textTransform: "uppercase",
+                                letterSpacing: "0.08em",
+                                marginBottom: "4px",
+                                display: "block",
+                              }}
+                            >
+                              First Name
+                            </label>
+                            <input
+                              type="text"
+                              value={profileForm.firstName}
+                              readOnly
+                              style={{
+                                width: "100%",
+                                boxSizing: "border-box",
+                                background: "#0d0d0d",
+                                border: "1px solid #2a2a2a",
+                                borderRadius: "10px",
+                                padding: "13px 16px",
+                                color: profileForm.firstName
+                                  ? "#6b7280"
+                                  : "#ef4444",
+                                fontSize: "16px",
+                                outline: "none",
+                                cursor: "not-allowed",
+                              }}
+                            />
+                            {!profileForm.firstName && (
+                              <span
+                                style={{
+                                  color: "#ef4444",
+                                  fontSize: "11px",
+                                  marginTop: "4px",
+                                  display: "block",
+                                }}
+                              >
+                                Missing — sign up again or contact support
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Last Name */}
+                          <div>
+                            <label
+                              style={{
+                                color: "#6b7280",
+                                fontSize: "11px",
+                                textTransform: "uppercase",
+                                letterSpacing: "0.08em",
+                                marginBottom: "4px",
+                                display: "block",
+                              }}
+                            >
+                              Last Name
+                            </label>
+                            <input
+                              type="text"
+                              value={profileForm.lastName}
+                              readOnly
+                              style={{
+                                width: "100%",
+                                boxSizing: "border-box",
+                                background: "#0d0d0d",
+                                border: "1px solid #2a2a2a",
+                                borderRadius: "10px",
+                                padding: "13px 16px",
+                                color: profileForm.lastName
+                                  ? "#6b7280"
+                                  : "#ef4444",
+                                fontSize: "16px",
+                                outline: "none",
+                                cursor: "not-allowed",
+                              }}
+                            />
+                          </div>
+
+                          {/* Username — EDITABLE */}
+                          <div>
+                            <label
+                              style={{
+                                color: "#0d9488",
+                                fontSize: "11px",
+                                textTransform: "uppercase",
+                                letterSpacing: "0.08em",
+                                marginBottom: "4px",
+                                display: "block",
+                              }}
+                            >
+                              Username (Editable)
+                            </label>
+                            <input
+                              type="text"
+                              value={profileForm.username}
+                              onChange={(e) => {
+                                setProfileForm({
+                                  ...profileForm,
+                                  username: e.target.value,
+                                });
+                                setProfileError("");
+                              }}
+                              style={{
+                                width: "100%",
+                                boxSizing: "border-box",
+                                background: "#111",
+                                border: "1px solid #333",
+                                borderRadius: "10px",
+                                padding: "13px 16px",
+                                color: "#fff",
+                                fontSize: "16px",
+                                outline: "none",
+                              }}
+                              onFocus={(e) =>
+                                (e.target.style.borderColor = "#0d9488")
+                              }
+                              onBlur={(e) =>
+                                (e.target.style.borderColor = "#333")
+                              }
+                            />
+                          </div>
+
+                          {/* Email — LOCKED */}
+                          <div>
+                            <label
+                              style={{
+                                color: "#6b7280",
+                                fontSize: "11px",
+                                textTransform: "uppercase",
+                                letterSpacing: "0.08em",
+                                marginBottom: "4px",
+                                display: "block",
+                              }}
+                            >
+                              Email
+                            </label>
+                            <div style={{ position: "relative" }}>
+                              <input
+                                type="email"
+                                value={profileForm.email}
+                                readOnly
+                                style={{
+                                  width: "100%",
+                                  boxSizing: "border-box",
+                                  background: "#0d0d0d",
+                                  border: "1px solid #2a2a2a",
+                                  borderRadius: "10px",
+                                  padding: "13px 16px 13px 42px",
+                                  color: "#6b7280",
+                                  fontSize: "16px",
+                                  outline: "none",
+                                  cursor: "not-allowed",
+                                }}
+                              />
+                              <span
+                                style={{
+                                  position: "absolute",
+                                  left: "14px",
+                                  top: "50%",
+                                  transform: "translateY(-50%)",
+                                  color: "#4b5563",
+                                }}
+                              >
+                                <svg
+                                  width="15"
+                                  height="15"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                >
+                                  <rect
+                                    x="3"
+                                    y="11"
+                                    width="18"
+                                    height="11"
+                                    rx="2"
+                                  />
+                                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                                </svg>
+                              </span>
+                              <span
+                                style={{
+                                  position: "absolute",
+                                  right: "12px",
+                                  top: "50%",
+                                  transform: "translateY(-50%)",
+                                  color: "#4b5563",
+                                  fontSize: "11px",
+                                  background: "#1a1a1a",
+                                  padding: "2px 8px",
+                                  borderRadius: "5px",
+                                }}
+                              >
+                                locked
+                              </span>
+                            </div>
+                          </div>
+
+                          <button
+                            onClick={handleProfileSave}
+                            style={{
+                              padding: "14px",
+                              background: "#0d9488",
+                              border: "none",
+                              borderRadius: "10px",
+                              color: "#fff",
+                              fontWeight: 700,
+                              fontSize: "16px",
+                              cursor: "pointer",
+                              transition: "background 0.2s",
+                            }}
+                            onMouseEnter={(e) =>
+                              (e.currentTarget.style.background = "#0f766e")
+                            }
+                            onMouseLeave={(e) =>
+                              (e.currentTarget.style.background = "#0d9488")
+                            }
+                          >
+                            Save Changes
+                          </button>
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
-              {/* end padding wrapper */}
             </div>
-            {/* end scrollable area */}
 
-            {/* ── FOOTER — always at bottom, never jumps ── */}
+            {/* ── FOOTER ── */}
             <div
               style={{
                 flexShrink: 0,
@@ -1875,7 +2121,6 @@ export default function Dashboard() {
         @media (min-width: 768px) {
           .dash-logout-desktop { display: flex !important; }
           .dash-hamburger { display: none !important; }
-          /* On desktop: sidebar is relative (left side), always visible */
           .dash-sidebar {
             position: relative !important;
             top: auto !important;
@@ -1883,7 +2128,6 @@ export default function Dashboard() {
             transform: translateX(0) !important;
             height: 100% !important;
           }
-          .dash-main { /* no left margin needed since sidebar is in flow */ }
         }
       `}</style>
     </>
