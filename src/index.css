@@ -239,24 +239,33 @@ input {
   font-size: 16px; /* prevents iOS zoom */
 }
 @keyframes blink {
-  0%, 50%, 100% {
+  0%,
+  50%,
+  100% {
     opacity: 1;
   }
-  25%, 75% {
+  25%,
+  75% {
     opacity: 0;
   }
 }
- @media (min-width: 768px) {
-    .dash-logout-desktop { display: flex !important; }
-    .dash-hamburger { display: none !important; }
-    .dash-sidebar {
-      position: relative !important;
-      top: auto !important;
-      left: auto !important;
-      transform: translateX(0) !important;
-      height: 100% !important;
-      width: 232px !important;
-    }
-    /* Hide mobile sidebar header on desktop */
-    .dash-sidebar > div:first-child { display: none !important; }
+@media (min-width: 768px) {
+  .dash-logout-desktop {
+    display: flex !important;
   }
+  .dash-hamburger {
+    display: none !important;
+  }
+  .dash-sidebar {
+    position: relative !important;
+    top: auto !important;
+    left: auto !important;
+    transform: translateX(0) !important;
+    height: 100% !important;
+    width: 232px !important;
+  }
+  /* Hide mobile sidebar header on desktop */
+  .dash-sidebar > div:first-child {
+    display: none !important;
+  }
+}

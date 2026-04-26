@@ -3,162 +3,180 @@ import { useEffect, useRef, useState } from "react";
 const COINS = [
   {
     symbol: "BTC",
-    wsSymbol: "btcusdt",
+    name: "Bitcoin",
+    id: "bitcoin",
     logo: "https://assets.coingecko.com/coins/images/1/small/bitcoin.png",
   },
   {
     symbol: "ETH",
-    wsSymbol: "ethusdt",
+    name: "Ethereum",
+    id: "ethereum",
     logo: "https://assets.coingecko.com/coins/images/279/small/ethereum.png",
   },
   {
     symbol: "BNB",
-    wsSymbol: "bnbusdt",
+    name: "BNB",
+    id: "binancecoin",
     logo: "https://assets.coingecko.com/coins/images/825/small/bnb-icon2_2x.png",
   },
   {
     symbol: "SOL",
-    wsSymbol: "solusdt",
+    name: "Solana",
+    id: "solana",
     logo: "https://assets.coingecko.com/coins/images/4128/small/solana.png",
   },
   {
     symbol: "XRP",
-    wsSymbol: "xrpusdt",
+    name: "XRP",
+    id: "ripple",
     logo: "https://assets.coingecko.com/coins/images/44/small/xrp-symbol-white-128.png",
   },
   {
     symbol: "ADA",
-    wsSymbol: "adausdt",
+    name: "Cardano",
+    id: "cardano",
     logo: "https://assets.coingecko.com/coins/images/975/small/cardano.png",
   },
   {
     symbol: "DOGE",
-    wsSymbol: "dogeusdt",
+    name: "Dogecoin",
+    id: "dogecoin",
     logo: "https://assets.coingecko.com/coins/images/5/small/dogecoin.png",
   },
   {
     symbol: "DOT",
-    wsSymbol: "dotusdt",
+    name: "Polkadot",
+    id: "polkadot",
     logo: "https://assets.coingecko.com/coins/images/12171/small/polkadot.png",
   },
   {
     symbol: "LINK",
-    wsSymbol: "linkusdt",
+    name: "Chainlink",
+    id: "chainlink",
     logo: "https://assets.coingecko.com/coins/images/877/small/chainlink-new-logo.png",
   },
   {
     symbol: "AVAX",
-    wsSymbol: "avaxusdt",
+    name: "Avalanche",
+    id: "avalanche-2",
     logo: "https://assets.coingecko.com/coins/images/12559/small/Avalanche_Circle_RedWhite_Trans.png",
   },
   {
-    symbol: "MATIC",
-    wsSymbol: "maticusdt",
-    logo: "https://assets.coingecko.com/coins/images/4713/small/matic-token-icon.png",
+    symbol: "POL",
+    name: "Polygon",
+    id: "polygon-ecosystem-token",
+    logo: "https://assets.coingecko.com/coins/images/32440/small/polygon-ecosystem-token.png",
   },
   {
     symbol: "LTC",
-    wsSymbol: "ltcusdt",
+    name: "Litecoin",
+    id: "litecoin",
     logo: "https://assets.coingecko.com/coins/images/2/small/litecoin.png",
   },
   {
     symbol: "TRX",
-    wsSymbol: "trxusdt",
+    name: "TRON",
+    id: "tron",
     logo: "https://assets.coingecko.com/coins/images/1094/small/tron-logo.png",
   },
   {
     symbol: "UNI",
-    wsSymbol: "uniusdt",
+    name: "Uniswap",
+    id: "uniswap",
     logo: "https://assets.coingecko.com/coins/images/12504/small/uni.jpg",
   },
 ];
+
+const IDS = COINS.map((c) => c.id).join(",");
 
 export const TickerBar = () => {
   const [prices, setPrices] = useState({});
   const [flash, setFlash] = useState({});
   const prevRef = useRef({});
   const timers = useRef({});
-  const wsRef = useRef(null);
 
   useEffect(() => {
     let mounted = true;
 
-    const connect = () => {
-      if (!mounted) return;
-
-      // 🛑 prevent duplicate connections
-      if (wsRef.current && wsRef.current.readyState !== WebSocket.CLOSED) {
-        return;
-      }
-
-      const streams = COINS.map((c) => `${c.wsSymbol}@miniTicker`).join("/");
-
-      const ws = new WebSocket(
-        `wss://stream.binance.com:9443/stream?streams=${streams}`,
-      );
-
-      wsRef.current = ws;
-
-      ws.onmessage = (ev) => {
+    const fetchPrices = async () => {
+      try {
+        const res = await fetch(
+          `https://api.coingecko.com/api/v3/simple/price?ids=${IDS}&vs_currencies=usd&include_24hr_change=true`,
+        );
+        if (!res.ok) return;
+        const data = await res.json();
         if (!mounted) return;
-        try {
-          const parsed = JSON.parse(ev.data);
-          const d = parsed.data || parsed;
-          if (!d?.s) return;
-          const sym = d.s.replace("USDT", "");
-          const coin = COINS.find((c) => c.symbol === sym);
-          if (!coin) return;
-          const newP = parseFloat(d.c),
-            open = parseFloat(d.o);
-          if (isNaN(newP)) return;
-          const change = ((newP - open) / open) * 100;
-          const prev = prevRef.current[sym]?.price;
-          const dir =
-            prev != null
-              ? newP > prev
+
+        const newPrices = {};
+        const newFlashes = {};
+
+        for (const coin of COINS) {
+          const val = data[coin.id];
+          if (!val) continue;
+
+          const newPrice = val.usd;
+          if (newPrice == null || isNaN(newPrice)) continue;
+
+          const prevPrice = prevRef.current[coin.symbol]?.price;
+
+          newPrices[coin.symbol] = {
+            price: newPrice,
+            change: val.usd_24h_change ?? 0,
+          };
+
+          if (prevPrice != null) {
+            const dir =
+              newPrice > prevPrice
                 ? "up"
-                : newP < prev
+                : newPrice < prevPrice
                   ? "down"
-                  : null
-              : null;
-          prevRef.current[sym] = { price: newP, change };
-          setPrices((p) => ({ ...p, [sym]: { price: newP, change } }));
-          if (dir) {
-            clearTimeout(timers.current[sym]);
-            setFlash((p) => ({ ...p, [sym]: dir }));
-            timers.current[sym] = setTimeout(
-              () => setFlash((p) => ({ ...p, [sym]: null })),
-              800,
-            );
+                  : null;
+
+            if (dir) {
+              newFlashes[coin.symbol] = dir;
+              clearTimeout(timers.current[coin.symbol]);
+              timers.current[coin.symbol] = setTimeout(() => {
+                if (mounted) {
+                  setFlash((f) => ({ ...f, [coin.symbol]: null }));
+                }
+              }, 800);
+            }
           }
-        } catch (_) {}
-      };
-      ws.onerror = () => {};
-      ws.onclose = () => {
-        setTimeout(() => {
-          if (mounted && wsRef.current === ws) connect();
-        }, 3000);
-      };
+
+          prevRef.current[coin.symbol] = { price: newPrice };
+        }
+
+        setPrices(newPrices);
+        if (Object.keys(newFlashes).length > 0) {
+          setFlash((f) => ({ ...f, ...newFlashes }));
+        }
+      } catch (err) {
+        console.error("Ticker fetch error:", err);
+      }
     };
 
-    connect();
+    fetchPrices();
+    const interval = setInterval(fetchPrices, 3000);
+
     return () => {
       mounted = false;
-      wsRef.current?.close();
-      wsRef.current = null;
+      clearInterval(interval);
       Object.values(timers.current).forEach(clearTimeout);
     };
   }, []);
 
-  const fmt = (p) =>
-    p < 1
+  const fmt = (p) => {
+    if (p == null || isNaN(p)) return "—";
+    return p < 1
       ? p.toFixed(4)
       : p.toLocaleString("en-US", {
           minimumFractionDigits: 2,
           maximumFractionDigits: 2,
         });
-  const items = [...COINS, ...COINS, ...COINS];
+  };
 
+  const items = [...COINS, ...COINS, ...COINS];
+  
   return (
     <div
       style={{
@@ -224,9 +242,9 @@ export const TickerBar = () => {
                   display: "inline-block",
                 }}
               >
-                {data ? `$${fmt(data.price)}` : "loading..."}
+                {data?.price != null ? `$${fmt(data.price)}` : "—"}
               </span>
-              {data && (
+              {data?.price != null && (
                 <span
                   style={{
                     color: data.change >= 0 ? "#22c55e" : "#ef4444",
@@ -241,7 +259,7 @@ export const TickerBar = () => {
           );
         })}
       </div>
-      <style>{`@keyframes tickerScroll{0%{transform:translateX(0)}100%{transform:translateX(-33.333%)}}`}</style>
+      <style>{`@keyframes tickerScroll { 0% { transform: translateX(0) } 100% { transform: translateX(-33.333%) } }`}</style>
     </div>
   );
 };

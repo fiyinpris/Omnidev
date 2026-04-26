@@ -12,6 +12,7 @@ import {
   query,
   where,
 } from "firebase/firestore";
+import { TickerBar } from "./TickerBar";
 
 const SIDEBAR_ITEMS = [
   {
@@ -107,220 +108,6 @@ const SIDEBAR_ITEMS = [
   },
 ];
 
-const TICKER_COINS = [
-  {
-    symbol: "BTC",
-    wsSymbol: "btcusdt",
-    logo: "https://assets.coingecko.com/coins/images/1/small/bitcoin.png",
-  },
-  {
-    symbol: "ETH",
-    wsSymbol: "ethusdt",
-    logo: "https://assets.coingecko.com/coins/images/279/small/ethereum.png",
-  },
-  {
-    symbol: "BNB",
-    wsSymbol: "bnbusdt",
-    logo: "https://assets.coingecko.com/coins/images/825/small/bnb-icon2_2x.png",
-  },
-  {
-    symbol: "SOL",
-    wsSymbol: "solusdt",
-    logo: "https://assets.coingecko.com/coins/images/4128/small/solana.png",
-  },
-  {
-    symbol: "XRP",
-    wsSymbol: "xrpusdt",
-    logo: "https://assets.coingecko.com/coins/images/44/small/xrp-symbol-white-128.png",
-  },
-  {
-    symbol: "ADA",
-    wsSymbol: "adausdt",
-    logo: "https://assets.coingecko.com/coins/images/975/small/cardano.png",
-  },
-  {
-    symbol: "DOT",
-    wsSymbol: "dotusdt",
-    logo: "https://assets.coingecko.com/coins/images/12171/small/polkadot.png",
-  },
-  {
-    symbol: "LINK",
-    wsSymbol: "linkusdt",
-    logo: "https://assets.coingecko.com/coins/images/877/small/chainlink-new-logo.png",
-  },
-  {
-    symbol: "AVAX",
-    wsSymbol: "avaxusdt",
-    logo: "https://assets.coingecko.com/coins/images/12559/small/Avalanche_Circle_RedWhite_Trans.png",
-  },
-  {
-    symbol: "DOGE",
-    wsSymbol: "dogeusdt",
-    logo: "https://assets.coingecko.com/coins/images/5/small/dogecoin.png",
-  },
-  {
-    symbol: "TRX",
-    wsSymbol: "trxusdt",
-    logo: "https://assets.coingecko.com/coins/images/1094/small/tron-logo.png",
-  },
-];
-
-/* ── Real-time ticker bar ── */
-const LiveTickerBar = () => {
-  const [prices, setPrices] = useState({});
-  const [flash, setFlash] = useState({});
-  const prevRef = useRef({});
-  const timers = useRef({});
-  const wsRef = useRef(null);
-
-  useEffect(() => {
-    const connect = () => {
-      const streams = TICKER_COINS.map((c) => `${c.wsSymbol}@miniTicker`).join(
-        "/",
-      );
-      const ws = new WebSocket(
-        `wss://stream.binance.com:9443/stream?streams=${streams}`,
-      );
-      wsRef.current = ws;
-      ws.onmessage = (ev) => {
-        try {
-          const parsed = JSON.parse(ev.data);
-          const d = parsed.data || parsed;
-          if (!d?.s) return;
-          const sym = d.s.replace("USDT", "");
-          const coin = TICKER_COINS.find((c) => c.symbol === sym);
-          if (!coin) return;
-          const newP = parseFloat(d.c);
-          const open = parseFloat(d.o);
-          if (isNaN(newP)) return;
-          const change = ((newP - open) / open) * 100;
-          const prev = prevRef.current[sym]?.price;
-          const dir =
-            prev !== undefined
-              ? newP > prev
-                ? "up"
-                : newP < prev
-                  ? "down"
-                  : null
-              : null;
-          prevRef.current[sym] = { price: newP, change };
-          setPrices((p) => ({ ...p, [sym]: { price: newP, change } }));
-          if (dir) {
-            if (timers.current[sym]) clearTimeout(timers.current[sym]);
-            setFlash((p) => ({ ...p, [sym]: dir }));
-            timers.current[sym] = setTimeout(
-              () => setFlash((p) => ({ ...p, [sym]: null })),
-              800,
-            );
-          }
-        } catch (_) {}
-      };
-      ws.onclose = () => {
-        setTimeout(() => {
-          if (wsRef.current === ws) connect();
-        }, 3000);
-      };
-    };
-    connect();
-    return () => {
-      if (wsRef.current) wsRef.current.close();
-      Object.values(timers.current).forEach(clearTimeout);
-    };
-  }, []);
-
-  const fmt = (p) =>
-    p < 1
-      ? p.toFixed(4)
-      : p.toLocaleString("en-US", {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
-        });
-  const items = [...TICKER_COINS, ...TICKER_COINS, ...TICKER_COINS];
-
-  return (
-    <div
-      style={{
-        background: "#0d0d0d",
-        borderBottom: "1px solid #1a1a1a",
-        overflow: "hidden",
-        height: "38px",
-        display: "flex",
-        alignItems: "center",
-        width: "100%",
-        flexShrink: 0,
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          width: "max-content",
-          animation: "dashTicker 40s linear infinite",
-          whiteSpace: "nowrap",
-          willChange: "transform",
-          flexShrink: 0,
-        }}
-      >
-        {items.map((coin, i) => {
-          const data = prices[coin.symbol];
-          const fl = flash[coin.symbol];
-          return (
-            <span
-              key={i}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "5px",
-                fontSize: "12px",
-                padding: "0 22px",
-                borderRight: "1px solid #1f1f1f",
-                flexShrink: 0,
-              }}
-            >
-              <img
-                src={coin.logo}
-                alt={coin.symbol}
-                style={{ width: "16px", height: "16px", borderRadius: "50%" }}
-              />
-              <span style={{ color: "#9ca3af", fontWeight: 600 }}>
-                {coin.symbol}
-              </span>
-              <span
-                style={{
-                  color:
-                    fl === "up"
-                      ? "#22c55e"
-                      : fl === "down"
-                        ? "#ef4444"
-                        : "#fff",
-                  fontWeight: 500,
-                  transition: "color 0.15s",
-                  minWidth: "68px",
-                  display: "inline-block",
-                }}
-              >
-                {data ? `$${fmt(data.price)}` : "—"}
-              </span>
-              {data && (
-                <span
-                  style={{
-                    color: data.change >= 0 ? "#22c55e" : "#ef4444",
-                    fontSize: "11px",
-                  }}
-                >
-                  {data.change >= 0 ? "▲" : "▼"}{" "}
-                  {Math.abs(data.change).toFixed(2)}%
-                </span>
-              )}
-            </span>
-          );
-        })}
-      </div>
-      <style>{`@keyframes dashTicker { 0%{transform:translateX(0)} 100%{transform:translateX(-33.333%)} }`}</style>
-    </div>
-  );
-};
-
 export default function Dashboard() {
   const [session, setSession] = useState(null);
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -339,7 +126,6 @@ export default function Dashboard() {
   const [profileSaved, setProfileSaved] = useState(false);
   const [profileError, setProfileError] = useState("");
   const fileInputRef = useRef(null);
-  // Add these states at the top of Dashboard component:
   const [profileLoading, setProfileLoading] = useState(true);
 
   useEffect(() => {
@@ -351,20 +137,15 @@ export default function Dashboard() {
 
       await user.reload();
       const freshUser = auth.currentUser;
-
       const s = { email: freshUser.email, uid: freshUser.uid };
       setSession(s);
 
-      const timeout = setTimeout(() => {
-        setProfileLoading(false);
-      }, 5000);
+      const timeout = setTimeout(() => setProfileLoading(false), 5000);
 
       try {
-        // ✅ Load from users collection (where signup saves data)
         const userDoc = await getDoc(doc(db, "users", freshUser.uid));
         const userData = userDoc.exists() ? userDoc.data() : {};
 
-        // ✅ Load from profiles collection (for picture + updated username)
         const profileDoc = await getDoc(doc(db, "profiles", freshUser.uid));
         const profileData = profileDoc.exists() ? profileDoc.data() : {};
 
@@ -373,8 +154,6 @@ export default function Dashboard() {
             userData.firstName || freshUser.displayName?.split(" ")[0] || "",
           lastName:
             userData.lastName || freshUser.displayName?.split(" ")[1] || "",
-          // ✅ profiles username takes priority (it's the editable one)
-          // then fall back to users collection (set during signup)
           username:
             profileData.username ||
             userData.username ||
@@ -383,7 +162,6 @@ export default function Dashboard() {
         });
 
         setProfilePic(profileData.picture || null);
-
         clearTimeout(timeout);
       } catch (err) {
         console.error("Profile load error:", err);
@@ -410,15 +188,14 @@ export default function Dashboard() {
   }, [sidebarOpen]);
 
   const handleLogout = async () => {
-    setLogoutMsg(true); // ← show overlay first
+    setLogoutMsg(true);
     setTimeout(async () => {
       await signOut(auth);
       localStorage.removeItem("omnidev_session");
       navigate("/");
-    }, 1800); // ← then sign out after 1.8s
+    }, 1800);
   };
 
-  // 🔥 AUTO-SAVE PROFILE PICTURE TO FIRESTORE
   const handleFileChange = (e) => {
     const file = e.target.files?.[0];
     if (!file || !session) return;
@@ -428,17 +205,13 @@ export default function Dashboard() {
       setProfilePic(pic);
       await setDoc(
         doc(db, "profiles", session.uid),
-        {
-          picture: pic,
-          username: profileForm.username,
-        },
+        { picture: pic, username: profileForm.username },
         { merge: true },
       );
     };
     reader.readAsDataURL(file);
   };
 
-  // 🔥 CHECK IF USERNAME IS TAKEN BY ANOTHER USER
   const isUsernameTakenByOther = async (username) => {
     const q = query(
       collection(db, "users"),
@@ -446,16 +219,14 @@ export default function Dashboard() {
     );
     const snapshot = await getDocs(q);
     if (snapshot.empty) return false;
-    // Check if the found user is the current user
-    const foundDoc = snapshot.docs[0];
-    return foundDoc.id !== session.uid;
+    return snapshot.docs[0].id !== session.uid;
   };
 
   const handleProfileSave = async () => {
     if (!session) return;
     setProfileError("");
     setProfileSaved(false);
-    setSavingProfile(true); // ← spinner starts
+    setSavingProfile(true);
 
     const newUsername = profileForm.username.toLowerCase().trim();
 
@@ -485,7 +256,6 @@ export default function Dashboard() {
         { username: newUsername, picture: profilePic },
         { merge: true },
       );
-
       await setDoc(
         doc(db, "users", session.uid),
         { username: newUsername },
@@ -493,13 +263,13 @@ export default function Dashboard() {
       );
 
       setProfileForm((prev) => ({ ...prev, username: newUsername }));
-      setSavingProfile(false); // ← spinner stops
-      setProfileSaved(true); // ← "Saved!" shows
+      setSavingProfile(false);
+      setProfileSaved(true);
       setTimeout(() => setProfileSaved(false), 2500);
     } catch (err) {
       console.error("Save error:", err);
       setProfileError("Failed to save. Check your connection and try again.");
-      setSavingProfile(false); // ← spinner stops on error too
+      setSavingProfile(false);
     }
   };
 
@@ -513,9 +283,9 @@ export default function Dashboard() {
   const transactions = account.transactions || [];
   const displayName =
     profileForm.username || session?.email?.split("@")[0] || "";
+
   return (
     <>
-      {/* Logout overlay */}
       {logoutMsg && (
         <div
           style={{
@@ -574,7 +344,7 @@ export default function Dashboard() {
           overflow: "hidden",
         }}
       >
-        {/* ── FIXED TOP HEADER ── */}
+        {/* HEADER */}
         <header
           style={{
             flexShrink: 0,
@@ -605,78 +375,79 @@ export default function Dashboard() {
             </span>
           </div>
 
-          <button
-            onClick={handleLogout}
-            className="dash-logout-desktop"
-            style={{
-              display: "none",
-              alignItems: "center",
-              gap: "8px",
-              padding: "9px 20px",
-              background: "rgba(0,0,0,0.22)",
-              border: "1.5px solid rgba(255,255,255,0.35)",
-              borderRadius: "10px",
-              color: "#fff",
-              fontSize: "14px",
-              fontWeight: 700,
-              cursor: "pointer",
-              transition: "background 0.2s",
-            }}
-            onMouseEnter={(e) =>
-              (e.currentTarget.style.background = "rgba(0,0,0,0.4)")
-            }
-            onMouseLeave={(e) =>
-              (e.currentTarget.style.background = "rgba(0,0,0,0.22)")
-            }
-          >
-            Logout
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <button
+              onClick={handleLogout}
+              className="dash-logout-desktop"
+              style={{
+                display: "none",
+                alignItems: "center",
+                gap: "8px",
+                padding: "9px 20px",
+                background: "rgba(0,0,0,0.22)",
+                border: "1.5px solid rgba(255,255,255,0.35)",
+                borderRadius: "10px",
+                color: "#fff",
+                fontSize: "14px",
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+              onMouseEnter={(e) =>
+                (e.currentTarget.style.background = "rgba(0,0,0,0.4)")
+              }
+              onMouseLeave={(e) =>
+                (e.currentTarget.style.background = "rgba(0,0,0,0.22)")
+              }
+            >
+              Logout
+            </button>
 
-          <button
-            onClick={() => setSidebarOpen(true)}
-            className="dash-hamburger"
-            style={{
-              background: "rgba(255,255,255,0.15)",
-              border: "1px solid rgba(255,255,255,0.2)",
-              borderRadius: "8px",
-              padding: "8px 10px",
-              cursor: "pointer",
-              display: "flex",
-              flexDirection: "column",
-              gap: "4px",
-            }}
-          >
-            <span
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="dash-hamburger"
               style={{
-                width: "18px",
-                height: "2px",
-                background: "#fff",
-                borderRadius: "2px",
-                display: "block",
+                background: "rgba(255,255,255,0.15)",
+                border: "1px solid rgba(255,255,255,0.2)",
+                borderRadius: "8px",
+                padding: "8px 10px",
+                cursor: "pointer",
+                display: "flex",
+                flexDirection: "column",
+                gap: "4px",
               }}
-            />
-            <span
-              style={{
-                width: "18px",
-                height: "2px",
-                background: "#fff",
-                borderRadius: "2px",
-                display: "block",
-              }}
-            />
-            <span
-              style={{
-                width: "12px",
-                height: "2px",
-                background: "rgba(255,255,255,0.7)",
-                borderRadius: "2px",
-                display: "block",
-              }}
-            />
-          </button>
+            >
+              <span
+                style={{
+                  width: "18px",
+                  height: "2px",
+                  background: "#fff",
+                  borderRadius: "2px",
+                  display: "block",
+                }}
+              />
+              <span
+                style={{
+                  width: "18px",
+                  height: "2px",
+                  background: "#fff",
+                  borderRadius: "2px",
+                  display: "block",
+                }}
+              />
+              <span
+                style={{
+                  width: "12px",
+                  height: "2px",
+                  background: "rgba(255,255,255,0.7)",
+                  borderRadius: "2px",
+                  display: "block",
+                }}
+              />
+            </button>
+          </div>
         </header>
 
-        {/* ── BODY ROW: sidebar + main ── */}
+        {/* BODY */}
         <div
           style={{
             flex: 1,
@@ -685,7 +456,6 @@ export default function Dashboard() {
             position: "relative",
           }}
         >
-          // Replace your aside/sidebar code with this:
           {sidebarOpen && (
             <div
               onClick={() => setSidebarOpen(false)}
@@ -697,6 +467,8 @@ export default function Dashboard() {
               }}
             />
           )}
+
+          {/* SIDEBAR — slides from RIGHT on mobile */}
           <aside
             className="dash-sidebar"
             style={{
@@ -707,16 +479,15 @@ export default function Dashboard() {
               display: "flex",
               flexDirection: "column",
               position: "fixed",
-              top: 0, // ← FIXED: Start from very top
-              left: 0, // ← FIXED: Position on LEFT (standard UX)
-              height: "100vh", // ← FIXED: Full viewport height
+              top: 0,
+              right: 0,
+              height: "100vh",
               zIndex: 45,
-              transform: sidebarOpen ? "translateX(0)" : "translateX(-100%)", // ← slide from left
+              transform: sidebarOpen ? "translateX(0)" : "translateX(100%)",
               transition: "transform 0.3s cubic-bezier(0.4,0,0.2,1)",
-              overflowY: "auto", // ← Ensures scroll if content overflows
+              overflowY: "auto",
             }}
           >
-            {/* Mobile sidebar header */}
             <div
               style={{
                 display: "flex",
@@ -749,9 +520,6 @@ export default function Dashboard() {
                   color: "#9ca3af",
                   cursor: "pointer",
                   padding: "4px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
                 }}
               >
                 <svg
@@ -783,7 +551,7 @@ export default function Dashboard() {
                       display: "flex",
                       alignItems: "center",
                       gap: "12px",
-                      padding: "14px 14px", // ← Reduced padding for mobile fit
+                      padding: "14px",
                       marginBottom: "3px",
                       borderRadius: "10px",
                       border: "none",
@@ -816,7 +584,6 @@ export default function Dashboard() {
               })}
             </nav>
 
-            {/* Logout at bottom - always visible */}
             <div
               style={{
                 padding: "14px",
@@ -840,7 +607,6 @@ export default function Dashboard() {
                   fontSize: "14px",
                   fontWeight: 600,
                   cursor: "pointer",
-                  transition: "color 0.2s, border-color 0.2s",
                 }}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.color = "#ef4444";
@@ -867,6 +633,8 @@ export default function Dashboard() {
               </button>
             </div>
           </aside>
+
+          {/* MAIN */}
           <main
             className="dash-main"
             style={{
@@ -894,8 +662,9 @@ export default function Dashboard() {
               }}
             />
 
+            {/* ✅ TICKER BAR — now using the imported component */}
             <div style={{ position: "relative", zIndex: 2, flexShrink: 0 }}>
-              <LiveTickerBar />
+              <TickerBar />
             </div>
 
             <div
@@ -913,7 +682,7 @@ export default function Dashboard() {
                   margin: "0 auto",
                 }}
               >
-                {/* ── DASHBOARD TAB ── */}
+                {/* DASHBOARD TAB */}
                 {activeTab === "dashboard" && (
                   <div>
                     <div style={{ marginBottom: "24px" }}>
@@ -959,10 +728,8 @@ export default function Dashboard() {
                               stroke="white"
                               strokeWidth="1.8"
                             >
-                              <rect x="3" y="3" width="7" height="7" />
-                              <rect x="14" y="3" width="7" height="7" />
-                              <rect x="3" y="14" width="7" height="7" />
-                              <rect x="14" y="14" width="7" height="7" />
+                              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                              <circle cx="12" cy="7" r="4" />
                             </svg>
                           )}
                         </div>
@@ -1131,7 +898,6 @@ export default function Dashboard() {
                               fontWeight: 700,
                               fontSize: "13px",
                               cursor: "pointer",
-                              transition: "background 0.2s",
                             }}
                             onMouseEnter={(e) =>
                               (e.currentTarget.style.background = "#0b7b72")
@@ -1153,7 +919,6 @@ export default function Dashboard() {
                               fontWeight: 700,
                               fontSize: "13px",
                               cursor: "pointer",
-                              transition: "all 0.2s",
                             }}
                             onMouseEnter={(e) => {
                               e.currentTarget.style.background = "#0d9488";
@@ -1337,7 +1102,7 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                {/* ── DEPOSIT TAB ── */}
+                {/* DEPOSIT TAB */}
                 {activeTab === "deposit" && (
                   <div
                     style={{
@@ -1405,7 +1170,7 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                {/* ── WITHDRAW TAB ── */}
+                {/* WITHDRAW TAB */}
                 {activeTab === "withdraw" && (
                   <div
                     style={{
@@ -1542,7 +1307,7 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                {/* ── TRANSACTIONS TAB ── */}
+                {/* TRANSACTIONS TAB */}
                 {activeTab === "transactions" && (
                   <div>
                     <h2
@@ -1694,7 +1459,7 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                {/* ── PROFILE TAB ── */}
+                {/* PROFILE TAB */}
                 {activeTab === "profile" && (
                   <div
                     style={{
@@ -1739,7 +1504,6 @@ export default function Dashboard() {
                       </div>
                     ) : (
                       <>
-                        {/* Profile Picture */}
                         <div
                           style={{ textAlign: "center", marginBottom: "28px" }}
                         >
@@ -1757,7 +1521,6 @@ export default function Dashboard() {
                               display: "flex",
                               alignItems: "center",
                               justifyContent: "center",
-                              position: "relative",
                             }}
                           >
                             {profilePic ? (
@@ -1804,7 +1567,6 @@ export default function Dashboard() {
                           />
                         </div>
 
-                        {/* Show message if data came from fallback */}
                         {!profileForm.firstName && !profileForm.lastName && (
                           <div
                             style={{
@@ -1846,7 +1608,6 @@ export default function Dashboard() {
                           </div>
                         )}
 
-                        {/* Form fields */}
                         <div
                           style={{
                             display: "flex",
@@ -1854,7 +1615,6 @@ export default function Dashboard() {
                             gap: "13px",
                           }}
                         >
-                          {/* First Name */}
                           <div>
                             <label
                               style={{
@@ -1901,7 +1661,6 @@ export default function Dashboard() {
                             )}
                           </div>
 
-                          {/* Last Name */}
                           <div>
                             <label
                               style={{
@@ -1936,7 +1695,6 @@ export default function Dashboard() {
                             />
                           </div>
 
-                          {/* Username — EDITABLE */}
                           <div>
                             <label
                               style={{
@@ -1980,7 +1738,6 @@ export default function Dashboard() {
                             />
                           </div>
 
-                          {/* Email — LOCKED */}
                           <div>
                             <label
                               style={{
@@ -2131,7 +1888,7 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* ── FOOTER ── */}
+            {/* FOOTER */}
             <div
               style={{
                 flexShrink: 0,
