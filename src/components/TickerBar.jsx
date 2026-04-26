@@ -100,9 +100,7 @@ export const TickerBar = () => {
 
     const fetchPrices = async () => {
       try {
-        const res = await fetch(
-          `https://api.coingecko.com/api/v3/simple/price?ids=${IDS}&vs_currencies=usd&include_24hr_change=true`,
-        );
+        const res = await fetch("/api/prices");
         if (!res.ok) return;
         const data = await res.json();
         if (!mounted) return;
@@ -176,7 +174,7 @@ export const TickerBar = () => {
   };
 
   const items = [...COINS, ...COINS, ...COINS];
-  
+
   return (
     <div
       style={{
