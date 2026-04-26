@@ -589,6 +589,9 @@ export default function Dashboard() {
                 padding: "14px",
                 borderTop: "1px solid #1a1a2e",
                 flexShrink: 0,
+                position: "sticky",
+                bottom: 0,
+                background: "#0f0f13",
               }}
             >
               <button
