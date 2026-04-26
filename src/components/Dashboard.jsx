@@ -475,17 +475,17 @@ export default function Dashboard() {
               width: "260px",
               flexShrink: 0,
               background: "#0f0f13",
-              borderRight: "1px solid #1a1a2e",
+              borderLeft: "1px solid #1a1a2e", // optional (looks better on right)
               display: "flex",
               flexDirection: "column",
+              justifyContent: "space-between",
               position: "fixed",
               top: 0,
-              right: 0,
+              right: 0, // ✅ moved to right
               height: "100vh",
               zIndex: 45,
-              transform: sidebarOpen ? "translateX(0)" : "translateX(100%)",
+              transform: sidebarOpen ? "translateX(0)" : "translateX(100%)", // ✅ slide from right
               transition: "transform 0.3s cubic-bezier(0.4,0,0.2,1)",
-              overflowY: "auto",
             }}
           >
             <div
