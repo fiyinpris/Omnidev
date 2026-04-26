@@ -3,17 +3,9 @@ import { Link, useNavigate } from "react-router-dom";
 import {
   createUserWithEmailAndPassword,
   updateProfile,
-  onAuthStateChanged,
   sendEmailVerification,
 } from "firebase/auth";
-import {
-  doc,
-  setDoc,
-  getDocs,
-  collection,
-  query,
-  where,
-} from "firebase/firestore";
+import { doc, setDoc, getDoc } from "firebase/firestore";
 import { auth, db } from "../firebase";
 import logo from "/src/images/omnidev logo.png";
 
@@ -36,44 +28,12 @@ export default function Signup() {
     setError("");
   };
 
+  // Queries the 'usernames' collection which has allow read: if true
+  // so it works before the user is authenticated
   const isUsernameTaken = async (username) => {
-    const q = query(
-      collection(db, "users"),
-      where("username", "==", username.toLowerCase().trim()),
-    );
-    const snapshot = await getDocs(q);
-    return !snapshot.empty;
-  };
-
-  const writeUserToFirestore = (user, data) => {
-    return new Promise((resolve, reject) => {
-      const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-        if (firebaseUser && firebaseUser.uid === user.uid) {
-          unsubscribe();
-          try {
-            await firebaseUser.getIdToken(true);
-            await setDoc(doc(db, "users", firebaseUser.uid), {
-              firstName: data.firstName,
-              lastName: data.lastName,
-              username: data.username,
-              email: data.email,
-              createdAt: new Date().toISOString(),
-            });
-            await setDoc(doc(db, "usernames", data.username), {
-              uid: firebaseUser.uid,
-              username: data.username,
-            });
-            resolve();
-          } catch (err) {
-            reject(err);
-          }
-        }
-      });
-      setTimeout(() => {
-        unsubscribe();
-        reject(new Error("timeout"));
-      }, 15000);
-    });
+    const ref = doc(db, "usernames", username.toLowerCase().trim());
+    const snap = await getDoc(ref);
+    return snap.exists();
   };
 
   const handleSubmit = async (e) => {
@@ -85,12 +45,12 @@ export default function Signup() {
       setError("Please fill in all fields.");
       return;
     }
-    if (password.length < 6) {
-      setError("Password must be at least 6 characters.");
-      return;
-    }
     if (!/\S+@\S+\.\S+/.test(email)) {
       setError("Please enter a valid email address.");
+      return;
+    }
+    if (password.length < 6) {
+      setError("Password must be at least 6 characters.");
       return;
     }
     if (username.length < 3) {
@@ -102,10 +62,12 @@ export default function Signup() {
       return;
     }
 
-    try {
-      setLoading(true);
-      setError("");
+    setLoading(true);
+    setError("");
 
+    try {
+      // Step 1: Check username availability BEFORE creating the account
+      // This works because usernames collection has allow read: if true
       const taken = await isUsernameTaken(username);
       if (taken) {
         setError("Username already taken. Please choose another.");
@@ -113,6 +75,7 @@ export default function Signup() {
         return;
       }
 
+      // Step 2: Create the Firebase Auth user
       const userCredential = await createUserWithEmailAndPassword(
         auth,
         email,
@@ -120,22 +83,38 @@ export default function Signup() {
       );
       const user = userCredential.user;
 
+      // Step 3: Force token refresh so Firestore recognizes the auth session
+      await user.getIdToken(true);
+
+      // Step 4: Update display name
       await updateProfile(user, {
         displayName: `${firstName} ${lastName}`,
       });
 
+      const cleanUsername = username.toLowerCase().trim();
+
+      // Step 5: Write user data to Firestore
+      // Now auth is confirmed so request.auth.uid == userId will pass
+      await setDoc(doc(db, "users", user.uid), {
+        firstName,
+        lastName,
+        username: cleanUsername,
+        email,
+        createdAt: new Date().toISOString(),
+      });
+
+      await setDoc(doc(db, "usernames", cleanUsername), {
+        uid: user.uid,
+        username: cleanUsername,
+      });
+
+      // Step 6: Send verification email
       await sendEmailVerification(user, {
-        url: `https://omnidev-two.vercel.app/login?verified=true`,
+        url: "https://omnidev-two.vercel.app/login?verified=true",
         handleCodeInApp: false,
       });
 
-      await writeUserToFirestore(user, {
-        firstName,
-        lastName,
-        username: username.toLowerCase().trim(),
-        email,
-      });
-
+      // Step 7: Done
       setVerificationSent(true);
     } catch (err) {
       console.error("SIGNUP ERROR:", err.code, err.message);
@@ -150,14 +129,10 @@ export default function Signup() {
         setError("Network error. Check your connection.");
       } else if (err.code === "auth/too-many-requests") {
         setError("Too many attempts. Please try later.");
-      } else if (err.message === "timeout") {
-        setError("Request timed out. Please try again.");
-      } else if (
-        err.code === "permission-denied" ||
-        err.message?.includes("permission") ||
-        err.message?.includes("Missing or insufficient")
-      ) {
-        setVerificationSent(true);
+      } else if (err.code === "permission-denied") {
+        setError(
+          "Permission error. Please check your connection and try again.",
+        );
       } else {
         setError(err.message || "Signup failed. Please try again.");
       }
@@ -227,7 +202,7 @@ export default function Signup() {
                 const user = auth.currentUser;
                 if (user) {
                   await sendEmailVerification(user, {
-                    url: `https://omnidev-two.vercel.app/login?verified=true`,
+                    url: "https://omnidev-two.vercel.app/login?verified=true",
                     handleCodeInApp: false,
                   });
                   alert("Verification email resent! Check your inbox.");
