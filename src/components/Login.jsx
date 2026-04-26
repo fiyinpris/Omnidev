@@ -38,7 +38,7 @@ export default function Login() {
       if (!userCredential.user.emailVerified) {
         await signOut(auth);
         setError(
-          "Please verify your email before logging in. Check your inbox or spam folder.",
+          "Please verify your email before logging in.",
         );
         return;
       }

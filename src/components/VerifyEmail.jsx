@@ -94,7 +94,7 @@ export default function VerifyEmail() {
               </svg>
             </div>
             <h1 className="text-white text-2xl font-bold mb-3">
-              Email Verified! 🎉
+              Email Verified!
             </h1>
             <p className="text-gray-400 text-sm leading-relaxed mb-8 px-4">
               Your email has been successfully verified. You can now log in to
