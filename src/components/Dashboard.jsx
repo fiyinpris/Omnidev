@@ -685,6 +685,7 @@ export default function Dashboard() {
             position: "relative",
           }}
         >
+          // Replace your aside/sidebar code with this:
           {sidebarOpen && (
             <div
               onClick={() => setSidebarOpen(false)}
@@ -696,26 +697,77 @@ export default function Dashboard() {
               }}
             />
           )}
-
           <aside
             className="dash-sidebar"
             style={{
-              width: "232px",
+              width: "260px",
               flexShrink: 0,
               background: "#0f0f13",
               borderRight: "1px solid #1a1a2e",
               display: "flex",
               flexDirection: "column",
               position: "fixed",
-              top: "58px",
-              right: 0,
-              height: "calc(100vh - 58px)",
+              top: 0, // ← FIXED: Start from very top
+              left: 0, // ← FIXED: Position on LEFT (standard UX)
+              height: "100vh", // ← FIXED: Full viewport height
               zIndex: 45,
-              transform: sidebarOpen ? "translateX(0)" : "translateX(100%)",
+              transform: sidebarOpen ? "translateX(0)" : "translateX(-100%)", // ← slide from left
               transition: "transform 0.3s cubic-bezier(0.4,0,0.2,1)",
-              overflowY: "auto",
+              overflowY: "auto", // ← Ensures scroll if content overflows
             }}
           >
+            {/* Mobile sidebar header */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "16px 14px",
+                borderBottom: "1px solid #1a1a2e",
+                flexShrink: 0,
+              }}
+            >
+              <div
+                style={{ display: "flex", alignItems: "center", gap: "10px" }}
+              >
+                <img
+                  src={logo}
+                  alt="OmniDev"
+                  style={{ width: "28px", height: "28px", borderRadius: "50%" }}
+                />
+                <span
+                  style={{ color: "#fff", fontWeight: 700, fontSize: "15px" }}
+                >
+                  Menu
+                </span>
+              </div>
+              <button
+                onClick={() => setSidebarOpen(false)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "#9ca3af",
+                  cursor: "pointer",
+                  padding: "4px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+
             <nav style={{ padding: "10px 8px", flex: 1 }}>
               {SIDEBAR_ITEMS.map((item) => {
                 const active = activeTab === item.path;
@@ -731,13 +783,13 @@ export default function Dashboard() {
                       display: "flex",
                       alignItems: "center",
                       gap: "12px",
-                      padding: "23px 14px",
+                      padding: "14px 14px", // ← Reduced padding for mobile fit
                       marginBottom: "3px",
                       borderRadius: "10px",
                       border: "none",
                       cursor: "pointer",
                       fontWeight: 600,
-                      fontSize: "16px",
+                      fontSize: "15px",
                       textAlign: "left",
                       background: active ? "#0d9488" : "transparent",
                       color: active ? "#fff" : "#9ca3af",
@@ -763,7 +815,15 @@ export default function Dashboard() {
                 );
               })}
             </nav>
-            <div style={{ padding: "14px", borderTop: "1px solid #1a1a2e" }}>
+
+            {/* Logout at bottom - always visible */}
+            <div
+              style={{
+                padding: "14px",
+                borderTop: "1px solid #1a1a2e",
+                flexShrink: 0,
+              }}
+            >
               <button
                 onClick={handleLogout}
                 style={{
@@ -772,12 +832,12 @@ export default function Dashboard() {
                   alignItems: "center",
                   justifyContent: "center",
                   gap: "8px",
-                  padding: "11px",
+                  padding: "12px",
                   background: "transparent",
                   border: "1px solid #333",
                   borderRadius: "10px",
                   color: "#9ca3af",
-                  fontSize: "11px",
+                  fontSize: "14px",
                   fontWeight: 600,
                   cursor: "pointer",
                   transition: "color 0.2s, border-color 0.2s",
@@ -792,8 +852,8 @@ export default function Dashboard() {
                 }}
               >
                 <svg
-                  width="15"
-                  height="15"
+                  width="16"
+                  height="16"
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
@@ -807,7 +867,6 @@ export default function Dashboard() {
               </button>
             </div>
           </aside>
-
           <main
             className="dash-main"
             style={{
@@ -2097,20 +2156,6 @@ export default function Dashboard() {
           </main>
         </div>
       </div>
-
-      <style>{`
-        @media (min-width: 768px) {
-          .dash-logout-desktop { display: flex !important; }
-          .dash-hamburger { display: none !important; }
-          .dash-sidebar {
-            position: relative !important;
-            top: auto !important;
-            right: auto !important;
-            transform: translateX(0) !important;
-            height: 100% !important;
-          }
-        }
-      `}</style>
     </>
   );
 }
