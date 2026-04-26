@@ -1,6 +1,11 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
+import {
+  createUserWithEmailAndPassword,
+  updateProfile,
+  onAuthStateChanged,
+  sendEmailVerification,
+} from "firebase/auth";
 import {
   doc,
   setDoc,
@@ -23,6 +28,7 @@ export default function Signup() {
 
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [verificationSent, setVerificationSent] = useState(false);
   const navigate = useNavigate();
 
   const handleChange = (e) => {
@@ -30,7 +36,6 @@ export default function Signup() {
     setError("");
   };
 
-  // 🔥 CHECK IF USERNAME IS ALREADY TAKEN
   const isUsernameTaken = async (username) => {
     const q = query(
       collection(db, "users"),
@@ -38,6 +43,37 @@ export default function Signup() {
     );
     const snapshot = await getDocs(q);
     return !snapshot.empty;
+  };
+
+  const writeUserToFirestore = (user, data) => {
+    return new Promise((resolve, reject) => {
+      const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+        if (firebaseUser && firebaseUser.uid === user.uid) {
+          unsubscribe();
+          try {
+            await firebaseUser.getIdToken(true);
+            await setDoc(doc(db, "users", firebaseUser.uid), {
+              firstName: data.firstName,
+              lastName: data.lastName,
+              username: data.username,
+              email: data.email,
+              createdAt: new Date().toISOString(),
+            });
+            await setDoc(doc(db, "usernames", data.username), {
+              uid: firebaseUser.uid,
+              username: data.username,
+            });
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+        }
+      });
+      setTimeout(() => {
+        unsubscribe();
+        reject(new Error("timeout"));
+      }, 15000);
+    });
   };
 
   const handleSubmit = async (e) => {
@@ -49,22 +85,18 @@ export default function Signup() {
       setError("Please fill in all fields.");
       return;
     }
-
     if (password.length < 6) {
       setError("Password must be at least 6 characters.");
       return;
     }
-
     if (!/\S+@\S+\.\S+/.test(email)) {
       setError("Please enter a valid email address.");
       return;
     }
-
     if (username.length < 3) {
       setError("Username must be at least 3 characters.");
       return;
     }
-
     if (!/^[a-zA-Z0-9_]+$/.test(username)) {
       setError("Username can only contain letters, numbers, and underscores.");
       return;
@@ -74,7 +106,6 @@ export default function Signup() {
       setLoading(true);
       setError("");
 
-      // 🔥 CHECK USERNAME UNIQUENESS
       const taken = await isUsernameTaken(username);
       if (taken) {
         setError("Username already taken. Please choose another.");
@@ -87,37 +118,138 @@ export default function Signup() {
         email,
         password,
       );
+      const user = userCredential.user;
 
-      await updateProfile(userCredential.user, {
+      await updateProfile(user, {
         displayName: `${firstName} ${lastName}`,
       });
 
-      // Save to Firestore
-      await setDoc(doc(db, "users", userCredential.user.uid), {
+      await sendEmailVerification(user, {
+        url: `https://omnidev-two.vercel.app/login?verified=true`,
+        handleCodeInApp: false,
+      });
+
+      await writeUserToFirestore(user, {
         firstName,
         lastName,
         username: username.toLowerCase().trim(),
         email,
-        createdAt: new Date().toISOString(),
       });
 
-      // Also save username in a separate collection for quick lookup
-      await setDoc(doc(db, "usernames", username.toLowerCase().trim()), {
-        uid: userCredential.user.uid,
-        username: username.toLowerCase().trim(),
-      });
-
-      navigate("/login?registered=true");
+      setVerificationSent(true);
     } catch (err) {
+      console.error("SIGNUP ERROR:", err.code, err.message);
+
       if (err.code === "auth/email-already-in-use") {
-        setError("Email already in use.");
+        setError("Email already in use. Try logging in instead.");
+      } else if (err.code === "auth/invalid-email") {
+        setError("Invalid email format.");
+      } else if (err.code === "auth/weak-password") {
+        setError("Password too weak. Use at least 6 characters.");
+      } else if (err.code === "auth/network-request-failed") {
+        setError("Network error. Check your connection.");
+      } else if (err.code === "auth/too-many-requests") {
+        setError("Too many attempts. Please try later.");
+      } else if (err.message === "timeout") {
+        setError("Request timed out. Please try again.");
+      } else if (
+        err.code === "permission-denied" ||
+        err.message?.includes("permission") ||
+        err.message?.includes("Missing or insufficient")
+      ) {
+        setVerificationSent(true);
       } else {
-        setError("Failed to create account.");
+        setError(err.message || "Signup failed. Please try again.");
       }
     } finally {
       setLoading(false);
     }
   };
+
+  if (verificationSent) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-[#0b0b0f] relative overflow-hidden px-4 py-8">
+        <div
+          className="absolute inset-0 pointer-events-none z-0"
+          style={{
+            backgroundImage:
+              "linear-gradient(rgba(13,148,136,0.28) 1px,transparent 1px),linear-gradient(90deg,rgba(13,148,136,0.28) 1px,transparent 1px)",
+            backgroundSize: "80px 80px",
+            maskImage:
+              "radial-gradient(ellipse 75% 75% at 50% 50%,transparent 35%,black 100%)",
+            WebkitMaskImage:
+              "radial-gradient(ellipse 75% 75% at 50% 50%,transparent 35%,black 70%)",
+          }}
+        />
+        <div className="relative z-10 flex flex-col items-center text-center w-full max-w-sm sm:max-w-md">
+          <img src={logo} alt="logo" className="w-16 sm:w-20 mb-6" />
+
+          <div className="w-20 h-20 rounded-full bg-teal-500/20 border border-teal-500/40 flex items-center justify-center mb-6">
+            <svg
+              width="36"
+              height="36"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="#0d9488"
+              strokeWidth="1.8"
+            >
+              <rect x="2" y="4" width="20" height="16" rx="2" />
+              <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+            </svg>
+          </div>
+
+          <h1 className="text-white text-2xl font-bold mb-3">
+            Check your email
+          </h1>
+          <p className="text-gray-400 text-sm leading-relaxed mb-2">
+            We sent a verification link to
+          </p>
+          <p className="text-teal-400 font-semibold text-sm mb-6">
+            {form.email}
+          </p>
+          <p className="text-gray-500 text-xs leading-relaxed mb-8 px-4">
+            Click the link in your email to verify your account. Once verified
+            you can log in. If you don't see it, check your spam folder.
+          </p>
+
+          <Link
+            to="/login"
+            className="w-full py-3.5 rounded-xl font-semibold text-white text-center block
+              bg-gradient-to-r from-teal-500 to-teal-600
+              hover:from-teal-400 hover:to-teal-500 transition-all duration-200"
+          >
+            Go to Login
+          </Link>
+
+          <button
+            onClick={async () => {
+              try {
+                const user = auth.currentUser;
+                if (user) {
+                  await sendEmailVerification(user, {
+                    url: `https://omnidev-two.vercel.app/login?verified=true`,
+                    handleCodeInApp: false,
+                  });
+                  alert("Verification email resent! Check your inbox.");
+                }
+              } catch {
+                setError("Too many requests. Wait a moment before resending.");
+              }
+            }}
+            className="mt-4 text-gray-500 text-xs hover:text-teal-400 transition-colors"
+          >
+            Didn't receive it? Resend email
+          </button>
+
+          {error && <p className="mt-3 text-red-400 text-xs">{error}</p>}
+
+          <Link to="/" className="mt-6 text-teal-400 text-sm hover:underline">
+            ← Back to Home
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-[#0b0b0f] relative overflow-hidden px-4 py-8">

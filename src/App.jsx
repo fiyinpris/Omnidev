@@ -7,30 +7,31 @@ import Login from "./components/Login";
 import Signup from "./components/Signup";
 import Dashboard from "./components/Dashboard";
 import ForgotPassword from "./components/ForgotPassword";
+import VerifyEmail from "./components/VerifyEmail";
 
 function LayoutWrapper() {
   const location = useLocation();
 
-  // ✅ Hide layout on auth pages AND dashboard (dashboard has its own)
-  const isAuthPage = ["/login", "/signup", "/forgot-password"].includes(
-    location.pathname,
-  );
+  const isAuthPage = [
+    "/login",
+    "/signup",
+    "/forgot-password",
+    "/verify-email",
+  ].includes(location.pathname);
   const isDashboard = location.pathname === "/dashboard";
 
   return (
     <>
       <CursorDot />
-
-      {/* Only show global TickerBar/Navbar on home page, not dashboard */}
       {!isAuthPage && !isDashboard && <TickerBar />}
       {!isAuthPage && !isDashboard && <Navbar />}
-
       <Routes>
         <Route index element={<Home />} />
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/verify-email" element={<VerifyEmail />} />
       </Routes>
     </>
   );
