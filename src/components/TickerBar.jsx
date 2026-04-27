@@ -54,7 +54,7 @@ const COINS = [
   {
     symbol: "POL",
     id: "polygon-ecosystem-token",
-    logo: "https://assets.coingecko.com/coins/images/32440/small/polygon-ecosystem-token.png",
+    logo: "https://assets.coingecko.com/coins/images/4713/small/matic-token-icon.png",
   },
   {
     symbol: "LTC",

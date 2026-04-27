@@ -308,6 +308,9 @@ export default function Dashboard() {
         }
         @media (max-width: 768px) {
           .dash-logout-mobile { display: flex !important; }
+          .dash-footer-desktop { display: none !important; }
+          .dash-email-desktop { display: none !important; }
+          .dash-sidebar-header-mobile { display: none !important; }
         }
         @keyframes popIn { from { transform: scale(0); opacity: 0; } to { transform: scale(1); opacity: 1; } }
         @keyframes spin { to { transform: rotate(360deg); } }
@@ -424,7 +427,7 @@ export default function Dashboard() {
             </button>
 
             <button
-              onClick={() => setSidebarOpen(true)}
+              onClick={() => setSidebarOpen((prev) => !prev)}
               className="dash-hamburger"
               style={{
                 background: "rgba(255,255,255,0.15)",
@@ -482,9 +485,12 @@ export default function Dashboard() {
               onClick={() => setSidebarOpen(false)}
               style={{
                 position: "fixed",
-                inset: 0,
+                top: "58px",
+                left: 0,
+                right: 0,
+                bottom: 0,
                 background: "rgba(0,0,0,0.72)",
-                zIndex: 40,
+                zIndex: 50,
               }}
             />
           )}
@@ -499,13 +505,13 @@ export default function Dashboard() {
               display: "flex",
               flexDirection: "column",
               position: "fixed",
-              top: 0,
+              top: "58px",
               right: 0,
               bottom: 0,
-              zIndex: 45,
+              zIndex: 55,
               transform: sidebarOpen ? "translateX(0)" : "translateX(100%)",
               transition: "transform 0.3s cubic-bezier(0.4,0,0.2,1)",
-              maxHeight: "100dvh",
+              height: "calc(100dvh - 58px)",
             }}
           >
             {/* Mobile Header - hidden on desktop */}
@@ -572,7 +578,7 @@ export default function Dashboard() {
               className="dash-welcome-mobile"
               style={{
                 flexShrink: 0,
-                padding: "18px 18px 14px",
+                padding: "38px 20px 17px",
                 borderBottom: "1px solid #1a1a2e",
               }}
             >
@@ -594,7 +600,7 @@ export default function Dashboard() {
                   margin: 0,
                 }}
               >
-                {displayName}
+                {displayName}!
               </p>
             </div>
 
@@ -622,7 +628,7 @@ export default function Dashboard() {
                       display: "flex",
                       alignItems: "center",
                       gap: "12px",
-                      padding: "14px 12px",
+                      padding: "20px 12px",
                       marginBottom: "4px",
                       borderRadius: "10px",
                       border: "none",
@@ -691,6 +697,7 @@ export default function Dashboard() {
 
             {/* User Email - Desktop Sidebar Bottom */}
             <div
+              className="dash-email-desktop"
               style={{
                 flexShrink: 0,
                 padding: "16px 18px",
@@ -854,7 +861,7 @@ export default function Dashboard() {
                         <div>
                           <h2
                             style={{
-                              fontSize: "clamp(30px,4vw,32px)",
+                              fontSize: "clamp(25px,4vw,32px)",
                               fontWeight: 800,
                               color: "#fff",
                               margin: "0 0 12px",
@@ -880,7 +887,7 @@ export default function Dashboard() {
                       <p
                         style={{
                           color: "#9ca3af",
-                          fontSize: "18px",
+                          fontSize: "16px",
                           margin: "8px 0 0",
                         }}
                       >
@@ -1029,12 +1036,14 @@ export default function Dashboard() {
                               flex: 1,
                               padding: "10px",
                               borderRadius: "9px",
-                              background: "#134e4a",
-                              border: "1px solid #0d9488",
-                              color: "#5eead4",
+                              background:
+                                "linear-gradient(135deg, #8b5cf6 0%, #7c3aed 55%, #6d28d9 100%)",
+                              border: "1px solid rgba(196, 181, 253, 0.35)",
+                              color: "#ffffff",
                               fontWeight: 700,
                               fontSize: "13px",
                               cursor: "pointer",
+                              transition: "all 0.25s ease",
                             }}
                           >
                             Connect Wallet
@@ -1983,6 +1992,7 @@ export default function Dashboard() {
 
             {/* FOOTER */}
             <div
+              className="dash-footer-desktop"
               style={{
                 flexShrink: 0,
                 borderTop: "1px solid #1a1a2e",
