@@ -3,85 +3,71 @@ import { useEffect, useRef, useState } from "react";
 const COINS = [
   {
     symbol: "BTC",
-    name: "Bitcoin",
     id: "bitcoin",
     logo: "https://assets.coingecko.com/coins/images/1/small/bitcoin.png",
   },
   {
     symbol: "ETH",
-    name: "Ethereum",
     id: "ethereum",
     logo: "https://assets.coingecko.com/coins/images/279/small/ethereum.png",
   },
   {
     symbol: "BNB",
-    name: "BNB",
     id: "binancecoin",
     logo: "https://assets.coingecko.com/coins/images/825/small/bnb-icon2_2x.png",
   },
   {
     symbol: "SOL",
-    name: "Solana",
     id: "solana",
     logo: "https://assets.coingecko.com/coins/images/4128/small/solana.png",
   },
   {
     symbol: "XRP",
-    name: "XRP",
     id: "ripple",
     logo: "https://assets.coingecko.com/coins/images/44/small/xrp-symbol-white-128.png",
   },
   {
     symbol: "ADA",
-    name: "Cardano",
     id: "cardano",
     logo: "https://assets.coingecko.com/coins/images/975/small/cardano.png",
   },
   {
     symbol: "DOGE",
-    name: "Dogecoin",
     id: "dogecoin",
     logo: "https://assets.coingecko.com/coins/images/5/small/dogecoin.png",
   },
   {
     symbol: "DOT",
-    name: "Polkadot",
     id: "polkadot",
     logo: "https://assets.coingecko.com/coins/images/12171/small/polkadot.png",
   },
   {
     symbol: "LINK",
-    name: "Chainlink",
     id: "chainlink",
     logo: "https://assets.coingecko.com/coins/images/877/small/chainlink-new-logo.png",
   },
   {
     symbol: "AVAX",
-    name: "Avalanche",
     id: "avalanche-2",
     logo: "https://assets.coingecko.com/coins/images/12559/small/Avalanche_Circle_RedWhite_Trans.png",
   },
   {
     symbol: "POL",
-    name: "Polygon",
     id: "polygon-ecosystem-token",
     logo: "https://assets.coingecko.com/coins/images/32440/small/polygon-ecosystem-token.png",
   },
   {
     symbol: "LTC",
-    name: "Litecoin",
     id: "litecoin",
     logo: "https://assets.coingecko.com/coins/images/2/small/litecoin.png",
   },
   {
     symbol: "TRX",
-    name: "TRON",
     id: "tron",
     logo: "https://assets.coingecko.com/coins/images/1094/small/tron-logo.png",
   },
   {
     symbol: "UNI",
-    name: "Uniswap",
     id: "uniswap",
     logo: "https://assets.coingecko.com/coins/images/12504/small/uni.jpg",
   },
@@ -89,20 +75,42 @@ const COINS = [
 
 const IDS = COINS.map((c) => c.id).join(",");
 
+// 30s in dev, 60s in prod — stays well under CoinGecko free tier limits
+const POLL_INTERVAL = import.meta.env.DEV ? 30_000 : 60_000;
+
 export const TickerBar = () => {
   const [prices, setPrices] = useState({});
   const [flash, setFlash] = useState({});
   const prevRef = useRef({});
   const timers = useRef({});
+  const retryTimer = useRef(null);
 
   useEffect(() => {
     let mounted = true;
 
-    const fetchPrices = async () => {
+    const fetchPrices = async (retryDelay = 0) => {
+      if (retryDelay > 0) {
+        retryTimer.current = setTimeout(() => fetchPrices(0), retryDelay);
+        return;
+      }
+
       try {
-        const res = await fetch(
-          `https://api.coingecko.com/api/v3/simple/price?ids=${IDS}&vs_currencies=usd&include_24hr_change=true`,
-        );
+        // Using the public CoinGecko demo endpoint — add your API key here if you have one
+        const url = `https://api.coingecko.com/api/v3/simple/price?ids=${IDS}&vs_currencies=usd&include_24hr_change=true`;
+        const res = await fetch(url, {
+          headers: {
+            Accept: "application/json",
+            // Uncomment and add your key if you have a CoinGecko API key:
+            // "x-cg-demo-api-key": "YOUR_KEY_HERE",
+          },
+        });
+
+        if (res.status === 429) {
+          // Back off 60s on rate limit — don't spam console
+          if (mounted) fetchPrices(60_000);
+          return;
+        }
+
         if (!res.ok) return;
         const data = await res.json();
         if (!mounted) return;
@@ -113,12 +121,10 @@ export const TickerBar = () => {
         for (const coin of COINS) {
           const val = data[coin.id];
           if (!val) continue;
-
           const newPrice = val.usd;
           if (newPrice == null || isNaN(newPrice)) continue;
 
           const prevPrice = prevRef.current[coin.symbol]?.price;
-
           newPrices[coin.symbol] = {
             price: newPrice,
             change: val.usd_24h_change ?? 0,
@@ -131,14 +137,11 @@ export const TickerBar = () => {
                 : newPrice < prevPrice
                   ? "down"
                   : null;
-
             if (dir) {
               newFlashes[coin.symbol] = dir;
               clearTimeout(timers.current[coin.symbol]);
               timers.current[coin.symbol] = setTimeout(() => {
-                if (mounted) {
-                  setFlash((f) => ({ ...f, [coin.symbol]: null }));
-                }
+                if (mounted) setFlash((f) => ({ ...f, [coin.symbol]: null }));
               }, 800);
             }
           }
@@ -147,20 +150,22 @@ export const TickerBar = () => {
         }
 
         setPrices(newPrices);
-        if (Object.keys(newFlashes).length > 0) {
+        if (Object.keys(newFlashes).length > 0)
           setFlash((f) => ({ ...f, ...newFlashes }));
-        }
       } catch (err) {
-        console.error("Ticker fetch error:", err);
+        // Only log non-CORS/network errors to reduce noise
+        if (err?.name !== "TypeError")
+          console.error("Ticker fetch error:", err);
       }
     };
 
     fetchPrices();
-    const interval = setInterval(fetchPrices, 3000);
+    const interval = setInterval(fetchPrices, POLL_INTERVAL);
 
     return () => {
       mounted = false;
       clearInterval(interval);
+      clearTimeout(retryTimer.current);
       Object.values(timers.current).forEach(clearTimeout);
     };
   }, []);

@@ -27,10 +27,10 @@ const SIDEBAR_ITEMS = [
         stroke="currentColor"
         strokeWidth="2"
       >
-        <rect x="3" y="3" width="7" height="7" />
-        <rect x="14" y="3" width="7" height="7" />
-        <rect x="3" y="14" width="7" height="7" />
-        <rect x="14" y="14" width="7" height="7" />
+        <rect x="3" y="3" width="7" height="7" rx="1" />
+        <rect x="14" y="3" width="7" height="7" rx="1" />
+        <rect x="3" y="14" width="7" height="7" rx="1" />
+        <rect x="14" y="14" width="7" height="7" rx="1" />
       </svg>
     ),
   },
@@ -135,6 +135,7 @@ export default function Dashboard() {
         return;
       }
 
+      window.history.replaceState(null, "", "/dashboard");
       await user.reload();
       const freshUser = auth.currentUser;
       const s = { email: freshUser.email, uid: freshUser.uid };
@@ -145,7 +146,6 @@ export default function Dashboard() {
       try {
         const userDoc = await getDoc(doc(db, "users", freshUser.uid));
         const userData = userDoc.exists() ? userDoc.data() : {};
-
         const profileDoc = await getDoc(doc(db, "profiles", freshUser.uid));
         const profileData = profileDoc.exists() ? profileDoc.data() : {};
 
@@ -229,7 +229,6 @@ export default function Dashboard() {
     setSavingProfile(true);
 
     const newUsername = profileForm.username.toLowerCase().trim();
-
     if (newUsername.length < 3) {
       setProfileError("Username must be at least 3 characters.");
       setSavingProfile(false);
@@ -286,6 +285,34 @@ export default function Dashboard() {
 
   return (
     <>
+      <style>{`
+        @media (max-width: 768px) {
+          .mobile-bottom-nav { display: flex !important; }
+          .dash-main { padding-bottom: 68px !important; }
+          .dash-sidebar { width: 280px !important; }
+          .dash-logout-desktop { display: none !important; }
+        }
+        @media (min-width: 769px) {
+          .mobile-bottom-nav { display: none !important; }
+          .dash-hamburger { display: none !important; }
+          .dash-logout-desktop { display: flex !important; }
+          .dash-sidebar {
+            position: relative !important;
+            transform: none !important;
+            height: auto !important;
+            width: 260px !important;
+          }
+          .dash-sidebar-header-mobile { display: none !important; }
+          .dash-welcome-mobile { display: none !important; }
+          .dash-logout-mobile { display: none !important; }
+        }
+        @media (max-width: 768px) {
+          .dash-logout-mobile { display: flex !important; }
+        }
+        @keyframes popIn { from { transform: scale(0); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        @keyframes spin { to { transform: rotate(360deg); } }
+      `}</style>
+
       {logoutMsg && (
         <div
           style={{
@@ -330,7 +357,6 @@ export default function Dashboard() {
           <p style={{ color: "#9ca3af", fontSize: "14px" }}>
             Redirecting you to home…
           </p>
-          <style>{`@keyframes popIn{from{transform:scale(0);opacity:0}to{transform:scale(1);opacity:1}}`}</style>
         </div>
       )}
 
@@ -376,6 +402,7 @@ export default function Dashboard() {
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            {/* Desktop Logout - only in header */}
             <button
               onClick={handleLogout}
               className="dash-logout-desktop"
@@ -392,12 +419,6 @@ export default function Dashboard() {
                 fontWeight: 700,
                 cursor: "pointer",
               }}
-              onMouseEnter={(e) =>
-                (e.currentTarget.style.background = "rgba(0,0,0,0.4)")
-              }
-              onMouseLeave={(e) =>
-                (e.currentTarget.style.background = "rgba(0,0,0,0.22)")
-              }
             >
               Logout
             </button>
@@ -468,34 +489,35 @@ export default function Dashboard() {
             />
           )}
 
-          {/* SIDEBAR — slides from RIGHT on mobile */}
+          {/* SIDEBAR */}
           <aside
             className="dash-sidebar"
             style={{
               width: "260px",
-              flexShrink: 0,
               background: "#0f0f13",
-              borderLeft: "1px solid #1a1a2e", // optional (looks better on right)
+              borderLeft: "1px solid #1a1a2e",
               display: "flex",
               flexDirection: "column",
-              justifyContent: "space-between",
               position: "fixed",
               top: 0,
-              right: 0, // ✅ moved to right
-              height: "100vh",
+              right: 0,
+              bottom: 0,
               zIndex: 45,
-              transform: sidebarOpen ? "translateX(0)" : "translateX(100%)", // ✅ slide from right
+              transform: sidebarOpen ? "translateX(0)" : "translateX(100%)",
               transition: "transform 0.3s cubic-bezier(0.4,0,0.2,1)",
+              maxHeight: "100dvh",
             }}
           >
+            {/* Mobile Header - hidden on desktop */}
             <div
+              className="dash-sidebar-header-mobile"
               style={{
+                flexShrink: 0,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
-                padding: "16px 14px",
+                padding: "16px 18px",
                 borderBottom: "1px solid #1a1a2e",
-                flexShrink: 0,
               }}
             >
               <div
@@ -507,9 +529,14 @@ export default function Dashboard() {
                   style={{ width: "28px", height: "28px", borderRadius: "50%" }}
                 />
                 <span
-                  style={{ color: "#fff", fontWeight: 700, fontSize: "15px" }}
+                  style={{
+                    color: "#0d9488",
+                    fontWeight: 800,
+                    fontSize: "16px",
+                    letterSpacing: "0.03em",
+                  }}
                 >
-                  Menu
+                  OmniDev
                 </span>
               </div>
               <button
@@ -517,9 +544,12 @@ export default function Dashboard() {
                 style={{
                   background: "none",
                   border: "none",
-                  color: "#9ca3af",
+                  color: "#6b7280",
                   cursor: "pointer",
                   padding: "4px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
                 }}
               >
                 <svg
@@ -528,7 +558,8 @@ export default function Dashboard() {
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
-                  strokeWidth="2"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
                 >
                   <line x1="18" y1="6" x2="6" y2="18" />
                   <line x1="6" y1="6" x2="18" y2="18" />
@@ -536,7 +567,47 @@ export default function Dashboard() {
               </button>
             </div>
 
-            <nav style={{ padding: "10px 8px", flex: 1 }}>
+            {/* Welcome - Mobile Only */}
+            <div
+              className="dash-welcome-mobile"
+              style={{
+                flexShrink: 0,
+                padding: "18px 18px 14px",
+                borderBottom: "1px solid #1a1a2e",
+              }}
+            >
+              <p
+                style={{
+                  color: "#6b7280",
+                  fontSize: "12px",
+                  margin: "0 0 3px",
+                  fontWeight: 500,
+                }}
+              >
+                Welcome back,
+              </p>
+              <p
+                style={{
+                  color: "#fff",
+                  fontSize: "17px",
+                  fontWeight: 800,
+                  margin: 0,
+                }}
+              >
+                {displayName}
+              </p>
+            </div>
+
+            {/* Nav Items - Scrollable */}
+            <nav
+              style={{
+                flex: 1,
+                overflowY: "auto",
+                overflowX: "hidden",
+                padding: "10px 10px",
+                minHeight: 0,
+              }}
+            >
               {SIDEBAR_ITEMS.map((item) => {
                 const active = activeTab === item.path;
                 return (
@@ -551,8 +622,8 @@ export default function Dashboard() {
                       display: "flex",
                       alignItems: "center",
                       gap: "12px",
-                      padding: "14px",
-                      marginBottom: "3px",
+                      padding: "14px 12px",
+                      marginBottom: "4px",
                       borderRadius: "10px",
                       border: "none",
                       cursor: "pointer",
@@ -563,19 +634,6 @@ export default function Dashboard() {
                       color: active ? "#fff" : "#9ca3af",
                       transition: "background 0.2s, color 0.2s",
                     }}
-                    onMouseEnter={(e) => {
-                      if (!active) {
-                        e.currentTarget.style.background =
-                          "rgba(13,148,136,0.1)";
-                        e.currentTarget.style.color = "#e5e7eb";
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!active) {
-                        e.currentTarget.style.background = "transparent";
-                        e.currentTarget.style.color = "#9ca3af";
-                      }
-                    }}
                   >
                     <span style={{ flexShrink: 0 }}>{item.icon}</span>
                     {item.label}
@@ -584,40 +642,33 @@ export default function Dashboard() {
               })}
             </nav>
 
+            {/* Logout - Mobile Sidebar Only */}
             <div
+              className="dash-logout-mobile"
               style={{
-                padding: "14px",
-                borderTop: "1px solid #1a1a2e",
                 flexShrink: 0,
-                position: "sticky",
-                bottom: 0,
+                padding: "12px 18px",
+                borderTop: "1px solid #1a1a2e",
                 background: "#0f0f13",
+                display: "none",
               }}
             >
               <button
                 onClick={handleLogout}
                 style={{
                   width: "100%",
+                  padding: "12px",
+                  background: "#0d9488",
+                  border: "none",
+                  borderRadius: "10px",
+                  color: "#fff",
+                  fontWeight: 700,
+                  fontSize: "14px",
+                  cursor: "pointer",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
                   gap: "8px",
-                  padding: "12px",
-                  background: "transparent",
-                  border: "1px solid #333",
-                  borderRadius: "10px",
-                  color: "#9ca3af",
-                  fontSize: "14px",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.color = "#ef4444";
-                  e.currentTarget.style.borderColor = "#ef4444";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.color = "#9ca3af";
-                  e.currentTarget.style.borderColor = "#333";
                 }}
               >
                 <svg
@@ -627,6 +678,8 @@ export default function Dashboard() {
                   fill="none"
                   stroke="currentColor"
                   strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
                 >
                   <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
                   <polyline points="16 17 21 12 16 7" />
@@ -634,6 +687,51 @@ export default function Dashboard() {
                 </svg>
                 Logout
               </button>
+            </div>
+
+            {/* User Email - Desktop Sidebar Bottom */}
+            <div
+              style={{
+                flexShrink: 0,
+                padding: "16px 18px",
+                borderTop: "1px solid #1a1a2e",
+                background: "#0f0f13",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "10px",
+                  padding: "10px 12px",
+                  background: "#1a1a1a",
+                  borderRadius: "10px",
+                }}
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="#6b7280"
+                  strokeWidth="2"
+                >
+                  <rect x="2" y="4" width="20" height="16" rx="2" />
+                  <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+                </svg>
+                <span
+                  style={{
+                    color: "#9ca3af",
+                    fontSize: "13px",
+                    fontWeight: 500,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {session?.email}
+                </span>
+              </div>
             </div>
           </aside>
 
@@ -665,7 +763,6 @@ export default function Dashboard() {
               }}
             />
 
-            {/* ✅ TICKER BAR — now using the imported component */}
             <div style={{ position: "relative", zIndex: 2, flexShrink: 0 }}>
               <TickerBar />
             </div>
@@ -724,15 +821,33 @@ export default function Dashboard() {
                             />
                           ) : (
                             <svg
-                              width="32"
-                              height="32"
+                              width="30"
+                              height="30"
                               viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="white"
-                              strokeWidth="1.8"
+                              fill="white"
                             >
-                              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                              <circle cx="12" cy="7" r="4" />
+                              <rect x="3" y="3" width="7" height="7" rx="1.5" />
+                              <rect
+                                x="14"
+                                y="3"
+                                width="7"
+                                height="7"
+                                rx="1.5"
+                              />
+                              <rect
+                                x="3"
+                                y="14"
+                                width="7"
+                                height="7"
+                                rx="1.5"
+                              />
+                              <rect
+                                x="14"
+                                y="14"
+                                width="7"
+                                height="7"
+                                rx="1.5"
+                              />
                             </svg>
                           )}
                         </div>
@@ -783,6 +898,7 @@ export default function Dashboard() {
                         marginBottom: "28px",
                       }}
                     >
+                      {/* USD BALANCE CARD */}
                       <div
                         style={{
                           background: "#111",
@@ -810,9 +926,12 @@ export default function Dashboard() {
                             fill="none"
                             stroke="white"
                             strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
                           >
-                            <rect x="1" y="4" width="22" height="16" rx="2" />
-                            <line x1="1" y1="10" x2="23" y2="10" />
+                            <rect x="2" y="6" width="20" height="12" rx="2" />
+                            <circle cx="12" cy="12" r="2.5" />
+                            <path d="M6 10h.01M6 14h.01M18 10h.01M18 14h.01" />
                           </svg>
                         </div>
                         <p
@@ -902,12 +1021,6 @@ export default function Dashboard() {
                               fontSize: "13px",
                               cursor: "pointer",
                             }}
-                            onMouseEnter={(e) =>
-                              (e.currentTarget.style.background = "#0b7b72")
-                            }
-                            onMouseLeave={(e) =>
-                              (e.currentTarget.style.background = "#0d9488")
-                            }
                           >
                             Deposit
                           </button>
@@ -922,14 +1035,6 @@ export default function Dashboard() {
                               fontWeight: 700,
                               fontSize: "13px",
                               cursor: "pointer",
-                            }}
-                            onMouseEnter={(e) => {
-                              e.currentTarget.style.background = "#0d9488";
-                              e.currentTarget.style.color = "#fff";
-                            }}
-                            onMouseLeave={(e) => {
-                              e.currentTarget.style.background = "#134e4a";
-                              e.currentTarget.style.color = "#5eead4";
                             }}
                           >
                             Connect Wallet
@@ -968,6 +1073,7 @@ export default function Dashboard() {
                         </div>
                       </div>
 
+                      {/* TOTAL TRANSACTIONS CARD */}
                       <div
                         style={{
                           background: "#111",
@@ -995,13 +1101,11 @@ export default function Dashboard() {
                             fill="none"
                             stroke="white"
                             strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
                           >
-                            <line x1="8" y1="6" x2="21" y2="6" />
-                            <line x1="8" y1="12" x2="21" y2="12" />
-                            <line x1="8" y1="18" x2="21" y2="18" />
-                            <line x1="3" y1="6" x2="3.01" y2="6" />
-                            <line x1="3" y1="12" x2="3.01" y2="12" />
-                            <line x1="3" y1="18" x2="3.01" y2="18" />
+                            <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
+                            <polyline points="17 6 23 6 23 12" />
                           </svg>
                         </div>
                         <p
@@ -1150,12 +1254,6 @@ export default function Dashboard() {
                         fontSize: "15px",
                         cursor: "pointer",
                       }}
-                      onMouseEnter={(e) =>
-                        (e.currentTarget.style.background = "#0f766e")
-                      }
-                      onMouseLeave={(e) =>
-                        (e.currentTarget.style.background = "#0d9488")
-                      }
                     >
                       <svg
                         width="18"
@@ -1248,10 +1346,6 @@ export default function Dashboard() {
                             fontSize: "16px",
                             outline: "none",
                           }}
-                          onFocus={(e) =>
-                            (e.target.style.borderColor = "#0d9488")
-                          }
-                          onBlur={(e) => (e.target.style.borderColor = "#333")}
                         />
                       </div>
                       <div>
@@ -1280,10 +1374,6 @@ export default function Dashboard() {
                             outline: "none",
                             resize: "none",
                           }}
-                          onFocus={(e) =>
-                            (e.target.style.borderColor = "#0d9488")
-                          }
-                          onBlur={(e) => (e.target.style.borderColor = "#333")}
                         />
                       </div>
                       <button
@@ -1297,12 +1387,6 @@ export default function Dashboard() {
                           fontSize: "16px",
                           cursor: "pointer",
                         }}
-                        onMouseEnter={(e) =>
-                          (e.currentTarget.style.background = "#0f766e")
-                        }
-                        onMouseLeave={(e) =>
-                          (e.currentTarget.style.background = "#0d9488")
-                        }
                       >
                         Withdraw
                       </button>
@@ -1482,7 +1566,6 @@ export default function Dashboard() {
                     >
                       Profile
                     </h2>
-
                     {profileLoading ? (
                       <div
                         style={{
@@ -1503,7 +1586,6 @@ export default function Dashboard() {
                           }}
                         />
                         <p style={{ fontSize: "14px" }}>Loading profile...</p>
-                        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
                       </div>
                     ) : (
                       <>
@@ -1516,7 +1598,8 @@ export default function Dashboard() {
                               width: "84px",
                               height: "84px",
                               borderRadius: "50%",
-                              background: "#0d9488",
+                              background:
+                                "linear-gradient(135deg,#0d9488,#065f46)",
                               margin: "0 auto 10px",
                               cursor: "pointer",
                               overflow: "hidden",
@@ -1538,15 +1621,39 @@ export default function Dashboard() {
                               />
                             ) : (
                               <svg
-                                width="32"
-                                height="32"
+                                width="38"
+                                height="38"
                                 viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="white"
-                                strokeWidth="1.5"
+                                fill="white"
                               >
-                                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                                <circle cx="12" cy="7" r="4" />
+                                <rect
+                                  x="3"
+                                  y="3"
+                                  width="7"
+                                  height="7"
+                                  rx="1.5"
+                                />
+                                <rect
+                                  x="14"
+                                  y="3"
+                                  width="7"
+                                  height="7"
+                                  rx="1.5"
+                                />
+                                <rect
+                                  x="3"
+                                  y="14"
+                                  width="7"
+                                  height="7"
+                                  rx="1.5"
+                                />
+                                <rect
+                                  x="14"
+                                  y="14"
+                                  width="7"
+                                  height="7"
+                                  rx="1.5"
+                                />
                               </svg>
                             )}
                           </div>
@@ -1732,12 +1839,6 @@ export default function Dashboard() {
                                 fontSize: "16px",
                                 outline: "none",
                               }}
-                              onFocus={(e) =>
-                                (e.target.style.borderColor = "#0d9488")
-                              }
-                              onBlur={(e) =>
-                                (e.target.style.borderColor = "#333")
-                              }
                             />
                           </div>
 
@@ -1837,16 +1938,6 @@ export default function Dashboard() {
                               justifyContent: "center",
                               gap: "8px",
                             }}
-                            onMouseEnter={(e) => {
-                              if (!profileSaved)
-                                e.currentTarget.style.background = "#0f766e";
-                            }}
-                            onMouseLeave={(e) => {
-                              if (!profileSaved)
-                                e.currentTarget.style.background = profileSaved
-                                  ? "#065f46"
-                                  : "#0d9488";
-                            }}
                           >
                             {profileSaved ? (
                               <>
@@ -1881,7 +1972,6 @@ export default function Dashboard() {
                             ) : (
                               "Save Changes"
                             )}
-                            <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
                           </button>
                         </div>
                       </>
@@ -1915,6 +2005,143 @@ export default function Dashboard() {
             </div>
           </main>
         </div>
+      </div>
+
+      {/* BOTTOM NAVBAR — Mobile Only */}
+      <div
+        className="mobile-bottom-nav"
+        style={{
+          display: "none",
+          position: "fixed",
+          bottom: 0,
+          left: 0,
+          right: 0,
+          background: "#0f0f13",
+          borderTop: "1px solid #1a1a2e",
+          padding: "8px 0 12px",
+          zIndex: 50,
+          justifyContent: "space-around",
+          alignItems: "center",
+        }}
+      >
+        {[
+          {
+            label: "Home",
+            path: "dashboard",
+            icon: (
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <rect x="3" y="3" width="7" height="7" />
+                <rect x="14" y="3" width="7" height="7" />
+                <rect x="3" y="14" width="7" height="7" />
+                <rect x="14" y="14" width="7" height="7" />
+              </svg>
+            ),
+          },
+          {
+            label: "Deposit",
+            path: "deposit",
+            icon: (
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8" x2="12" y2="16" />
+                <line x1="8" y1="12" x2="16" y2="12" />
+              </svg>
+            ),
+          },
+          {
+            label: "Withdraw",
+            path: "withdraw",
+            icon: (
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+            ),
+          },
+          {
+            label: "History",
+            path: "transactions",
+            icon: (
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <line x1="8" y1="6" x2="21" y2="6" />
+                <line x1="8" y1="12" x2="21" y2="12" />
+                <line x1="8" y1="18" x2="21" y2="18" />
+                <line x1="3" y1="6" x2="3.01" y2="6" />
+                <line x1="3" y1="12" x2="3.01" y2="12" />
+                <line x1="3" y1="18" x2="3.01" y2="18" />
+              </svg>
+            ),
+          },
+          {
+            label: "Profile",
+            path: "profile",
+            icon: (
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                <circle cx="12" cy="7" r="4" />
+              </svg>
+            ),
+          },
+        ].map((item) => {
+          const active = activeTab === item.path;
+          return (
+            <button
+              key={item.path}
+              onClick={() => setActiveTab(item.path)}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: "4px",
+                background: "none",
+                border: "none",
+                color: active ? "#0d9488" : "#6b7280",
+                fontSize: "11px",
+                fontWeight: 600,
+                cursor: "pointer",
+                padding: "4px 8px",
+                transition: "color 0.2s",
+              }}
+            >
+              {item.icon}
+              {item.label}
+            </button>
+          );
+        })}
       </div>
     </>
   );
