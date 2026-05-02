@@ -4,12 +4,13 @@ import { Link, useNavigate, useLocation } from "react-router-dom";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { auth } from "../firebase";
 
-// Nav links — each has a scrollKey that maps to window.__scrollTo*
+const ADMIN_EMAIL = "fiyinolaleke@gmail.com";
+
 const NAV_LINKS = [
   { label: "How It Works", scrollKey: "__scrollToHowItWorks" },
   { label: "About Us", scrollKey: "__scrollToAboutUs" },
   { label: "FAQ", scrollKey: "__scrollToFAQ" },
-  { label: "Contact", scrollKey: null }, // no section yet
+  { label: "Contact", scrollKey: null },
 ];
 
 const SIDEBAR_LINKS = [
@@ -99,7 +100,6 @@ export const Navbar = () => {
     return () => unsub();
   }, []);
 
-  // 🔒 Lock body scroll when sidebar is open
   useEffect(() => {
     if (sidebarOpen) {
       document.body.style.overflow = "hidden";
@@ -132,9 +132,7 @@ export const Navbar = () => {
   const handleNavClick = (scrollKey) => {
     window.dispatchEvent(new Event("cursor-expand"));
     setSidebarOpen(false);
-
     if (!scrollKey) return;
-
     if (isHome) {
       setTimeout(() => {
         window[scrollKey]?.();
@@ -148,10 +146,10 @@ export const Navbar = () => {
   };
 
   const isLoggedIn = !!user;
+  const isAdmin = user?.email === ADMIN_EMAIL;
 
   return (
     <>
-      {/* ── Top banner ── */}
       <div className="bg-[#0d9488] px-4 py-2.5 sm:py-3 flex flex-col sm:flex-row justify-between items-center text-xs sm:text-sm text-white gap-1 text-center">
         <span>
           Join now and get <strong>free $100 credits</strong> on the first
@@ -173,7 +171,6 @@ export const Navbar = () => {
         </span>
       </div>
 
-      {/* ── Main nav — sticky ── */}
       <nav className="sticky top-0 z-50 backdrop-blur-md bg-[#0a0a0a]/85 border-b border-[#1a1a1a] h-16 flex items-center justify-between px-4">
         <Link
           to="/"
@@ -199,7 +196,6 @@ export const Navbar = () => {
           </span>
         </Link>
 
-        {/* Desktop links */}
         <div
           className="hidden md:flex"
           style={{ alignItems: "center", gap: "32px" }}
@@ -228,6 +224,32 @@ export const Navbar = () => {
               {l.label}
             </button>
           ))}
+
+          {isAdmin && (
+            <Link to="/admin">
+              <button
+                style={{
+                  background: "#dc2626",
+                  color: "#fff",
+                  fontWeight: 600,
+                  fontSize: "14px",
+                  padding: "9px 22px",
+                  borderRadius: "8px",
+                  border: "none",
+                  cursor: "pointer",
+                  transition: "background 0.2s",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "#b91c1c";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "#dc2626";
+                }}
+              >
+                Admin
+              </button>
+            </Link>
+          )}
 
           {isLoggedIn ? (
             <Link to="/dashboard">
@@ -280,7 +302,6 @@ export const Navbar = () => {
           )}
         </div>
 
-        {/* Hamburger — mobile only */}
         <button
           className="md:hidden flex flex-col items-end gap-1.5 p-1"
           onClick={() => setSidebarOpen(true)}
@@ -292,7 +313,6 @@ export const Navbar = () => {
         </button>
       </nav>
 
-      {/* ── Overlay — clicking closes sidebar ── */}
       <div
         onClick={() => setSidebarOpen(false)}
         style={{
@@ -306,7 +326,6 @@ export const Navbar = () => {
         }}
       />
 
-      {/* ── Sidebar ── */}
       <aside
         style={{
           position: "fixed",
@@ -323,7 +342,6 @@ export const Navbar = () => {
           transition: "transform 0.35s cubic-bezier(0.4,0,0.2,1)",
         }}
       >
-        {/* Sidebar header — logo + X close button */}
         <div
           style={{
             display: "flex",
@@ -355,8 +373,6 @@ export const Navbar = () => {
               OmniDev
             </span>
           </div>
-
-          {/* X close button */}
           <button
             onClick={() => setSidebarOpen(false)}
             style={{
@@ -397,7 +413,6 @@ export const Navbar = () => {
           </button>
         </div>
 
-        {/* Sidebar nav links — with spacing */}
         <nav style={{ padding: "16px 0", flex: 1, overflowY: "auto" }}>
           {SIDEBAR_LINKS.map((item, i) => (
             <button
@@ -439,13 +454,56 @@ export const Navbar = () => {
               {item.label}
             </button>
           ))}
+
+          {isAdmin && (
+            <Link to="/admin" onClick={() => setSidebarOpen(false)}>
+              <button
+                style={{
+                  width: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "14px",
+                  padding: "16px 24px",
+                  marginBottom: "8px",
+                  color: "#ef4444",
+                  background: "transparent",
+                  border: "none",
+                  fontSize: "15px",
+                  fontWeight: 600,
+                  borderLeft: "3px solid transparent",
+                  cursor: "pointer",
+                  textAlign: "left",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "rgba(239,68,68,0.07)";
+                  e.currentTarget.style.borderLeftColor = "#ef4444";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "transparent";
+                  e.currentTarget.style.borderLeftColor = "transparent";
+                }}
+              >
+                <span style={{ color: "#ef4444", flexShrink: 0 }}>
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                  </svg>
+                </span>
+                Admin Dashboard
+              </button>
+            </Link>
+          )}
         </nav>
 
-        {/* Sidebar bottom — Signed in info + CTA */}
         <div style={{ padding: "20px", borderTop: "1px solid #1e1e1e" }}>
           {isLoggedIn ? (
             <>
-              {/* Signed in as — moved to bottom */}
               <div
                 style={{
                   padding: "12px 0",
@@ -475,7 +533,6 @@ export const Navbar = () => {
                   {user?.email}
                 </p>
               </div>
-
               <Link to="/dashboard" onClick={() => setSidebarOpen(false)}>
                 <button
                   style={{

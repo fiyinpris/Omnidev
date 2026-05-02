@@ -6,8 +6,10 @@ import { Home } from "./components/Home";
 import Login from "./components/Login";
 import Signup from "./components/Signup";
 import Dashboard from "./components/Dashboard";
+import AdminDashboard from "./components/AdminDashboard";
 import ForgotPassword from "./components/ForgotPassword";
 import VerifyEmail from "./components/VerifyEmail";
+import WithdrawalSupport from "./components/WithdrawalSupport";
 
 function LayoutWrapper() {
   const location = useLocation();
@@ -19,19 +21,27 @@ function LayoutWrapper() {
     "/verify-email",
   ].includes(location.pathname);
   const isDashboard = location.pathname === "/dashboard";
+  const isAdmin = location.pathname === "/admin";
+  const isWithdrawalSupport = location.pathname === "/withdrawal-support";
 
   return (
     <>
       <CursorDot />
-      {!isAuthPage && !isDashboard && <TickerBar />}
-      {!isAuthPage && !isDashboard && <Navbar />}
+      {!isAuthPage && !isDashboard && !isAdmin && !isWithdrawalSupport && (
+        <TickerBar />
+      )}
+      {!isAuthPage && !isDashboard && !isAdmin && !isWithdrawalSupport && (
+        <Navbar />
+      )}
       <Routes>
         <Route index element={<Home />} />
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/admin" element={<AdminDashboard />} />
         <Route path="/verify-email" element={<VerifyEmail />} />
+        <Route path="/withdrawal-support" element={<WithdrawalSupport />} />
       </Routes>
     </>
   );

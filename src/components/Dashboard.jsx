@@ -12,8 +12,22 @@ import {
   collection,
   query,
   where,
+  onSnapshot,
+  updateDoc,
 } from "firebase/firestore";
 import { TickerBar } from "./TickerBar";
+
+const ADMIN_EMAIL = "fiyinolaleke@gmail.com";
+
+const formatMoney = (val) => {
+  if (val === undefined || val === null) return "0.00";
+  const num = typeof val === "number" ? val : parseFloat(val);
+  if (isNaN(num)) return "0.00";
+  return num.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+};
 
 const SIDEBAR_ITEMS = [
   {
@@ -109,6 +123,114 @@ const SIDEBAR_ITEMS = [
   },
 ];
 
+/**
+ * BOT PHASE LOGIC:
+ * Phase 1 – "analysing": hasBeenFunded=true, now < analysingExpiresAt (or no botExpiresAt set)
+ * Phase 2 – "activated": botExpiresAt set, now < botExpiresAt
+ * Phase 3 – "disabled": botExpiresAt set, now >= botExpiresAt
+ *
+ * Balance only grows during Phase 2.
+ * During Phase 1 (analysing), balance stays locked at initialBalance.
+ * On reaching 100% progress, balance is set to EXACT targetAmount (no floating point error).
+ */
+function useBalanceGrowth(session) {
+  useEffect(() => {
+    if (!session?.uid) return;
+    let intervalId = null;
+
+    const tick = async () => {
+      try {
+        const userRef = doc(db, "users", session.uid);
+        const snap = await getDoc(userRef);
+        if (!snap.exists()) return;
+        const data = snap.data();
+
+        const {
+          hasBeenFunded,
+          botActive,
+          initialBalance,
+          targetAmount,
+          balance,
+          botExpiresAt,
+          botActivatedAt,
+          analysingExpiresAt,
+        } = data;
+
+        if (!hasBeenFunded) return;
+
+        const now = Date.now();
+        const analysingExpMs =
+          analysingExpiresAt?.toMillis?.() || analysingExpiresAt;
+        const botExpMs = botExpiresAt?.toMillis?.() || botExpiresAt;
+        const activatedAtMs = botActivatedAt?.toMillis?.() || botActivatedAt;
+
+        // ─── Phase 1: Analysing (lock balance at initialBalance) ───
+        if (
+          !botExpMs ||
+          (analysingExpMs && now < analysingExpMs && !botExpMs)
+        ) {
+          if (balance !== initialBalance) {
+            await updateDoc(userRef, {
+              balance: initialBalance,
+              botStatus: "analysing",
+            });
+          }
+          return;
+        }
+
+        // ─── Phase 3: Trading expired → disable bot ───
+        if (botExpMs && now >= botExpMs) {
+          const updates = {};
+          if (balance !== targetAmount) updates.balance = targetAmount; // snap to exact
+          if (botActive) updates.botActive = false;
+          updates.botStatus = "disabled";
+          if (Object.keys(updates).length > 0) {
+            await updateDoc(userRef, updates);
+          }
+          return;
+        }
+
+        // ─── Phase 2: Actively trading — grow balance ───
+        if (!botExpMs || !activatedAtMs || !targetAmount || !initialBalance)
+          return;
+
+        const tradingDuration = botExpMs - activatedAtMs;
+        const elapsed = now - activatedAtMs;
+        const progress = Math.min(Math.max(elapsed / tradingDuration, 0), 1);
+
+        let computedBalance;
+        if (progress >= 1) {
+          // Exact target — no floating point
+          computedBalance = targetAmount;
+        } else {
+          // Linear interpolation; keep full precision, truncate to cent
+          const raw =
+            initialBalance + (targetAmount - initialBalance) * progress;
+          computedBalance = Math.floor(raw * 100) / 100;
+        }
+
+        const currentBalance =
+          typeof balance === "number" ? balance : parseFloat(balance) || 0;
+
+        if (computedBalance > currentBalance + 0.001) {
+          await updateDoc(userRef, {
+            balance: computedBalance,
+            botStatus: "activated",
+          });
+        } else if (data.botStatus !== "activated") {
+          await updateDoc(userRef, { botStatus: "activated" });
+        }
+      } catch (err) {
+        console.error("Balance growth tick error:", err);
+      }
+    };
+
+    tick();
+    intervalId = setInterval(tick, 10_000);
+    return () => clearInterval(intervalId);
+  }, [session?.uid]);
+}
+
 export default function Dashboard() {
   const [session, setSession] = useState(null);
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -129,28 +251,34 @@ export default function Dashboard() {
   const [profileError, setProfileError] = useState("");
   const fileInputRef = useRef(null);
   const [profileLoading, setProfileLoading] = useState(true);
+  const [botPhase, setBotPhase] = useState("disabled"); // "analysing" | "activated" | "disabled"
+  const [userTransactions, setUserTransactions] = useState([]);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [balance, setBalance] = useState(0);
+  const [withdrawAmount, setWithdrawAmount] = useState("");
+  const [withdrawWallet, setWithdrawWallet] = useState("");
 
+  useBalanceGrowth(session);
+
+  // Auth + profile load
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
       if (!user) {
         navigate("/login");
         return;
       }
-
+      setIsAdmin(user.email === ADMIN_EMAIL);
       window.history.replaceState(null, "", "/dashboard");
       await user.reload();
       const freshUser = auth.currentUser;
       const s = { email: freshUser.email, uid: freshUser.uid };
       setSession(s);
-
       const timeout = setTimeout(() => setProfileLoading(false), 5000);
-
       try {
         const userDoc = await getDoc(doc(db, "users", freshUser.uid));
         const userData = userDoc.exists() ? userDoc.data() : {};
         const profileDoc = await getDoc(doc(db, "profiles", freshUser.uid));
         const profileData = profileDoc.exists() ? profileDoc.data() : {};
-
         setProfileForm({
           firstName:
             userData.firstName || freshUser.displayName?.split(" ")[0] || "",
@@ -162,7 +290,6 @@ export default function Dashboard() {
             freshUser.email.split("@")[0],
           email: userData.email || freshUser.email,
         });
-
         setProfilePic(profileData.picture || null);
         clearTimeout(timeout);
       } catch (err) {
@@ -178,9 +305,70 @@ export default function Dashboard() {
         setProfileLoading(false);
       }
     });
-
     return () => unsub();
   }, [navigate]);
+
+  // Real-time listener: determine bot phase from Firestore data
+  useEffect(() => {
+    if (!session?.uid) return;
+    const userRef = doc(db, "users", session.uid);
+
+    const computePhase = (data) => {
+      const now = Date.now();
+      const funded = data.hasBeenFunded || false;
+      if (!funded) return "disabled";
+
+      const analysingExpMs =
+        data.analysingExpiresAt?.toMillis?.() || data.analysingExpiresAt;
+      const botExpMs = data.botExpiresAt?.toMillis?.() || data.botExpiresAt;
+
+      // Phase 3: bot trading period fully expired
+      if (botExpMs && now >= botExpMs) return "disabled";
+
+      // Phase 2: target set and actively trading
+      if (botExpMs && now < botExpMs) return "activated";
+
+      // Phase 1: funded, analysing (no target yet, or analysing not expired)
+      return "analysing";
+    };
+
+    const unsub = onSnapshot(userRef, (snap) => {
+      if (!snap.exists()) return;
+      const data = snap.data();
+      setBalance(data.balance || 0);
+      setBotPhase(computePhase(data));
+    });
+
+    // Re-evaluate phase on a timer (in case snapshot doesn't re-fire when time crosses)
+    const phaseTimer = setInterval(async () => {
+      const snap = await getDoc(userRef);
+      if (!snap.exists()) return;
+      const data = snap.data();
+      setBalance(data.balance || 0);
+      setBotPhase(computePhase(data));
+    }, 15_000);
+
+    return () => {
+      unsub();
+      clearInterval(phaseTimer);
+    };
+  }, [session?.uid]);
+
+  // Transactions listener
+  useEffect(() => {
+    if (!session?.uid) return;
+    const txnRef = collection(db, "users", session.uid, "transactions");
+    const unsub = onSnapshot(query(txnRef), (snap) => {
+      const txns = snap.docs.map((d) => ({
+        id: d.id,
+        ...d.data(),
+        timestamp: d.data().timestamp?.toDate?.() || new Date(),
+      }));
+      txns.sort((a, b) => b.timestamp - a.timestamp);
+      setUserTransactions(txns);
+    });
+    return () => unsub();
+  }, [session?.uid]);
 
   useEffect(() => {
     document.body.style.overflow = sidebarOpen ? "hidden" : "";
@@ -215,13 +403,14 @@ export default function Dashboard() {
   };
 
   const isUsernameTakenByOther = async (username) => {
-    const q = query(
-      collection(db, "users"),
-      where("username", "==", username.toLowerCase().trim()),
-    );
-    const snapshot = await getDocs(q);
-    if (snapshot.empty) return false;
-    return snapshot.docs[0].id !== session.uid;
+    const norm = username.toLowerCase().trim();
+    const pq = query(collection(db, "profiles"), where("username", "==", norm));
+    const ps = await getDocs(pq);
+    if (!ps.empty && ps.docs[0].id !== session.uid) return true;
+    const uq = query(collection(db, "users"), where("username", "==", norm));
+    const us = await getDocs(uq);
+    if (!us.empty && us.docs[0].id !== session.uid) return true;
+    return false;
   };
 
   const handleProfileSave = async () => {
@@ -229,7 +418,6 @@ export default function Dashboard() {
     setProfileError("");
     setProfileSaved(false);
     setSavingProfile(true);
-
     const newUsername = profileForm.username.toLowerCase().trim();
     if (newUsername.length < 3) {
       setProfileError("Username must be at least 3 characters.");
@@ -243,7 +431,6 @@ export default function Dashboard() {
       setSavingProfile(false);
       return;
     }
-
     try {
       const taken = await isUsernameTakenByOther(newUsername);
       if (taken) {
@@ -251,18 +438,27 @@ export default function Dashboard() {
         setSavingProfile(false);
         return;
       }
-
       await setDoc(
         doc(db, "profiles", session.uid),
-        { username: newUsername, picture: profilePic },
+        {
+          username: newUsername,
+          picture: profilePic,
+          firstName: profileForm.firstName,
+          lastName: profileForm.lastName,
+          email: profileForm.email,
+          updatedAt: new Date(),
+        },
         { merge: true },
       );
       await setDoc(
         doc(db, "users", session.uid),
-        { username: newUsername },
+        {
+          username: newUsername,
+          firstName: profileForm.firstName,
+          lastName: profileForm.lastName,
+        },
         { merge: true },
       );
-
       setProfileForm((prev) => ({ ...prev, username: newUsername }));
       setSavingProfile(false);
       setProfileSaved(true);
@@ -274,16 +470,49 @@ export default function Dashboard() {
     }
   };
 
-  if (!session) return null;
+  const handleWithdraw = () => {
+    if (!withdrawAmount || parseFloat(withdrawAmount) <= 0) return;
+    navigate("/withdrawal-support");
+  };
 
-  const account =
-    JSON.parse(localStorage.getItem("omnidev_accounts") || "{}")[
-      session?.email
-    ] || {};
-  const balance = account.balance || 0;
-  const transactions = account.transactions || [];
+  if (!session) return null;
   const displayName =
     profileForm.username || session?.email?.split("@")[0] || "";
+
+  // ── Bot display config based on phase ──
+  const getBotDisplay = () => {
+    switch (botPhase) {
+      case "activated":
+        return {
+          text: "Bot Trading Activated",
+          subText: "OmniDev is actively trading on your behalf",
+          dotColor: "#0d9488",
+          bgColor: "rgba(13,148,136,0.1)",
+          borderColor: "rgba(13,148,136,0.3)",
+          textColor: "#0d9488",
+        };
+      case "analysing":
+        return {
+          text: "OmniDev Analysing Market",
+          subText: "Please wait while we analyze market conditions",
+          dotColor: "#0d9488",
+          bgColor: "rgba(13,148,136,0.1)",
+          borderColor: "rgba(13,148,136,0.3)",
+          textColor: "#0d9488",
+        };
+      default:
+        return {
+          text: "Bot Trading Disabled",
+          subText: "Fund your account to activate",
+          dotColor: "#ef4444",
+          bgColor: "#1a1a1a",
+          borderColor: "#2a2a2a",
+          textColor: "#ef4444",
+        };
+    }
+  };
+
+  const botDisplay = getBotDisplay();
 
   return (
     <>
@@ -298,12 +527,7 @@ export default function Dashboard() {
           .mobile-bottom-nav { display: none !important; }
           .dash-hamburger { display: none !important; }
           .dash-logout-desktop { display: flex !important; }
-          .dash-sidebar {
-            position: relative !important;
-            transform: none !important;
-            height: auto !important;
-            width: 260px !important;
-          }
+          .dash-sidebar { position: relative !important; transform: none !important; height: auto !important; width: 260px !important; }
           .dash-sidebar-header-mobile { display: none !important; }
           .dash-welcome-mobile { display: none !important; }
           .dash-logout-mobile { display: none !important; }
@@ -316,6 +540,40 @@ export default function Dashboard() {
         }
         @keyframes popIn { from { transform: scale(0); opacity: 0; } to { transform: scale(1); opacity: 1; } }
         @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes pulse-dot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.6; transform: scale(1.3); } }
+        @keyframes countUp { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+        .analysing-dots {
+          display: inline-flex;
+          align-items: center;
+          justify-content: flex-start;
+          min-width: 32px;
+          height: 1.2em;
+          line-height: 1.2;
+          vertical-align: middle;
+          margin-left: 4px;
+          position: relative;
+          top: -1px;
+        }
+        .analysing-dots::after {
+          content: "...";
+          animation: analysing-anim 1.5s steps(4, end) infinite;
+          color: #0d9488;
+          font-weight: 800;
+          font-size: 18px;
+          letter-spacing: 3px;
+          display: inline-block;
+          width: 32px;
+          white-space: nowrap;
+          overflow: hidden;
+          line-height: 1;
+        }
+        @keyframes analysing-anim {
+          0%   { width: 0; }
+          25%  { width: 10px; }
+          50%  { width: 20px; }
+          75%  { width: 30px; }
+          100% { width: 32px; }
+        }
       `}</style>
 
       {logoutMsg && (
@@ -360,7 +618,7 @@ export default function Dashboard() {
             Logged Out Successfully
           </p>
           <p style={{ color: "#9ca3af", fontSize: "14px" }}>
-            Redirecting you to home…
+            Redirecting you to home...
           </p>
         </div>
       )}
@@ -375,7 +633,7 @@ export default function Dashboard() {
           overflow: "hidden",
         }}
       >
-        {/* HEADER */}
+        {/* ── HEADER ── */}
         <header
           style={{
             flexShrink: 0,
@@ -405,9 +663,7 @@ export default function Dashboard() {
               OmniDev
             </span>
           </div>
-
           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-            {/* Desktop Logout - only in header */}
             <button
               onClick={handleLogout}
               className="dash-logout-desktop"
@@ -427,7 +683,6 @@ export default function Dashboard() {
             >
               Logout
             </button>
-
             <button
               onClick={() => setSidebarOpen((prev) => !prev)}
               className="dash-hamburger"
@@ -473,7 +728,6 @@ export default function Dashboard() {
           </div>
         </header>
 
-        {/* BODY */}
         <div
           style={{
             flex: 1,
@@ -497,7 +751,7 @@ export default function Dashboard() {
             />
           )}
 
-          {/* SIDEBAR */}
+          {/* ── SIDEBAR ── */}
           <aside
             className="dash-sidebar"
             style={{
@@ -516,7 +770,6 @@ export default function Dashboard() {
               height: "calc(100dvh - 58px)",
             }}
           >
-            {/* Mobile Header - hidden on desktop */}
             <div
               className="dash-sidebar-header-mobile"
               style={{
@@ -541,7 +794,6 @@ export default function Dashboard() {
                     color: "#0d9488",
                     fontWeight: 800,
                     fontSize: "16px",
-                    letterSpacing: "0.03em",
                   }}
                 >
                   OmniDev
@@ -557,7 +809,6 @@ export default function Dashboard() {
                   padding: "4px",
                   display: "flex",
                   alignItems: "center",
-                  justifyContent: "center",
                 }}
               >
                 <svg
@@ -575,7 +826,6 @@ export default function Dashboard() {
               </button>
             </div>
 
-            {/* Welcome - Mobile Only */}
             <div
               className="dash-welcome-mobile"
               style={{
@@ -606,13 +856,12 @@ export default function Dashboard() {
               </p>
             </div>
 
-            {/* Nav Items - Scrollable */}
             <nav
               style={{
                 flex: 1,
                 overflowY: "auto",
                 overflowX: "hidden",
-                padding: "10px 10px",
+                padding: "10px",
                 minHeight: 0,
               }}
             >
@@ -648,9 +897,46 @@ export default function Dashboard() {
                   </button>
                 );
               })}
+              {isAdmin && (
+                <button
+                  onClick={() => {
+                    navigate("/admin");
+                    setSidebarOpen(false);
+                  }}
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "12px",
+                    padding: "20px 12px",
+                    marginBottom: "4px",
+                    borderRadius: "10px",
+                    border: "none",
+                    cursor: "pointer",
+                    fontWeight: 600,
+                    fontSize: "15px",
+                    textAlign: "left",
+                    background: "transparent",
+                    color: "#ef4444",
+                  }}
+                >
+                  <span style={{ flexShrink: 0 }}>
+                    <svg
+                      width="18"
+                      height="18"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    >
+                      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                    </svg>
+                  </span>
+                  Admin Dashboard
+                </button>
+              )}
             </nav>
 
-            {/* Logout - Mobile Sidebar Only */}
             <div
               className="dash-logout-mobile"
               style={{
@@ -697,7 +983,6 @@ export default function Dashboard() {
               </button>
             </div>
 
-            {/* User Email - Desktop Sidebar Bottom */}
             <div
               className="dash-email-desktop"
               style={{
@@ -744,7 +1029,7 @@ export default function Dashboard() {
             </div>
           </aside>
 
-          {/* MAIN */}
+          {/* ── MAIN ── */}
           <main
             className="dash-main"
             style={{
@@ -791,7 +1076,7 @@ export default function Dashboard() {
                   margin: "0 auto",
                 }}
               >
-                {/* DASHBOARD TAB */}
+                {/* ══════════════════ DASHBOARD TAB ══════════════════ */}
                 {activeTab === "dashboard" && (
                   <div>
                     <div style={{ marginBottom: "24px" }}>
@@ -907,7 +1192,7 @@ export default function Dashboard() {
                         marginBottom: "28px",
                       }}
                     >
-                      {/* USD BALANCE CARD */}
+                      {/* Balance card */}
                       <div
                         style={{
                           background: "#111",
@@ -967,10 +1252,11 @@ export default function Dashboard() {
                               fontSize: "30px",
                               fontWeight: 800,
                               margin: 0,
+                              animation: "countUp 0.3s ease",
                             }}
                           >
                             {balanceVisible
-                              ? `$${balance.toFixed(2)}`
+                              ? `$${formatMoney(balance)}`
                               : "••••••"}
                           </p>
                           <button
@@ -1010,6 +1296,7 @@ export default function Dashboard() {
                             )}
                           </button>
                         </div>
+
                         <div
                           style={{
                             display: "flex",
@@ -1039,26 +1326,26 @@ export default function Dashboard() {
                               flex: 1,
                               padding: "10px",
                               borderRadius: "9px",
-                              background:
-                                "linear-gradient(135deg, #8b5cf6 0%, #7c3aed 55%, #6d28d9 100%)",
-                              border: "1px solid rgba(196, 181, 253, 0.35)",
-                              color: "#ffffff",
+                              background: "#03295b",
+                              border: "1px solid #333",
+                              color: "#fff",
                               fontWeight: 700,
                               fontSize: "13px",
                               cursor: "pointer",
-                              transition: "all 0.25s ease",
                             }}
                           >
                             Connect Wallet
                           </button>
                         </div>
+
+                        {/* ── BOT STATUS BADGE ── */}
                         <div
                           style={{
                             display: "inline-flex",
                             alignItems: "center",
                             gap: "7px",
-                            background: "#1a1a1a",
-                            border: "1px solid #2a2a2a",
+                            background: botDisplay.bgColor,
+                            border: `1px solid ${botDisplay.borderColor}`,
                             borderRadius: "999px",
                             padding: "6px 14px",
                           }}
@@ -1068,24 +1355,43 @@ export default function Dashboard() {
                               width: "8px",
                               height: "8px",
                               borderRadius: "50%",
-                              background: "#ef4444",
+                              background: botDisplay.dotColor,
                               flexShrink: 0,
-                              boxShadow: "0 0 6px rgba(239,68,68,0.6)",
+                              boxShadow: `0 0 6px ${botDisplay.dotColor}`,
+                              animation:
+                                botPhase !== "disabled"
+                                  ? "pulse-dot 1.5s ease-in-out infinite"
+                                  : "none",
                             }}
                           />
                           <span
                             style={{
-                              color: "#9ca3af",
+                              color: botDisplay.textColor,
                               fontSize: "12px",
                               fontWeight: 600,
                             }}
                           >
-                            Bot Trading Disabled
+                            {botDisplay.text}
+                            {botPhase === "analysing" && (
+                              <span className="analysing-dots" />
+                            )}
                           </span>
                         </div>
+                        {botDisplay.subText && botPhase !== "disabled" && (
+                          <p
+                            style={{
+                              color: "#6b7280",
+                              fontSize: "11px",
+                              margin: "6px 0 0",
+                              paddingLeft: "22px",
+                            }}
+                          >
+                            {botDisplay.subText}
+                          </p>
+                        )}
                       </div>
 
-                      {/* TOTAL TRANSACTIONS CARD */}
+                      {/* Transaction count card */}
                       <div
                         style={{
                           background: "#111",
@@ -1137,11 +1443,12 @@ export default function Dashboard() {
                             margin: 0,
                           }}
                         >
-                          {transactions.length}
+                          {userTransactions.length}
                         </p>
                       </div>
                     </div>
 
+                    {/* Recent transactions */}
                     <div>
                       <div
                         style={{
@@ -1186,7 +1493,7 @@ export default function Dashboard() {
                         <div
                           style={{
                             display: "grid",
-                            gridTemplateColumns: "1fr 1fr 1fr",
+                            gridTemplateColumns: "1fr 1fr 1fr 1fr",
                             color: "#fff",
                             fontSize: "12px",
                             fontWeight: 700,
@@ -1194,6 +1501,7 @@ export default function Dashboard() {
                         >
                           <span>VSN</span>
                           <span style={{ textAlign: "center" }}>Type</span>
+                          <span style={{ textAlign: "center" }}>Status</span>
                           <span style={{ textAlign: "right" }}>Amount</span>
                         </div>
                       </div>
@@ -1203,25 +1511,99 @@ export default function Dashboard() {
                           border: "1px solid #222",
                           borderTop: "none",
                           borderRadius: "0 0 12px 12px",
-                          padding: "32px 18px",
-                          textAlign: "center",
                         }}
                       >
-                        <p
-                          style={{
-                            color: "#4b5563",
-                            fontSize: "13px",
-                            margin: 0,
-                          }}
-                        >
-                          No recent transactions
-                        </p>
+                        {userTransactions.length === 0 ? (
+                          <div
+                            style={{
+                              padding: "32px 18px",
+                              textAlign: "center",
+                            }}
+                          >
+                            <p
+                              style={{
+                                color: "#4b5563",
+                                fontSize: "13px",
+                                margin: 0,
+                              }}
+                            >
+                              No recent transactions
+                            </p>
+                          </div>
+                        ) : (
+                          userTransactions.slice(0, 5).map((t, i) => (
+                            <div
+                              key={t.id}
+                              style={{
+                                display: "grid",
+                                gridTemplateColumns: "1fr 1fr 1fr 1fr",
+                                padding: "14px 18px",
+                                borderBottom:
+                                  i < Math.min(userTransactions.length, 5) - 1
+                                    ? "1px solid #222"
+                                    : "none",
+                                alignItems: "center",
+                              }}
+                            >
+                              <span
+                                style={{ color: "#d1d5db", fontSize: "13px" }}
+                              >
+                                #{t.id.slice(-6).toUpperCase()}
+                              </span>
+                              <span
+                                style={{
+                                  color: "#d1d5db",
+                                  fontSize: "13px",
+                                  textAlign: "center",
+                                  textTransform: "capitalize",
+                                }}
+                              >
+                                {t.type}
+                              </span>
+                              <span style={{ textAlign: "center" }}>
+                                <span
+                                  style={{
+                                    background:
+                                      t.status === "completed"
+                                        ? "rgba(13,148,136,0.15)"
+                                        : "rgba(245,158,11,0.15)",
+                                    color:
+                                      t.status === "completed"
+                                        ? "#0d9488"
+                                        : "#fbbf24",
+                                    padding: "3px 10px",
+                                    borderRadius: "6px",
+                                    fontSize: "11px",
+                                    fontWeight: 600,
+                                    textTransform: "capitalize",
+                                  }}
+                                >
+                                  {t.status}
+                                </span>
+                              </span>
+                              <span
+                                style={{
+                                  color:
+                                    t.type === "deposit"
+                                      ? "#0d9488"
+                                      : "#ef4444",
+                                  fontSize: "13px",
+                                  fontWeight: 700,
+                                  textAlign: "right",
+                                }}
+                              >
+                                {t.type === "deposit" ? "+" : "-"}$
+                                {formatMoney(t.amount)}
+                              </span>
+                            </div>
+                          ))
+                        )}
                       </div>
                     </div>
                   </div>
                 )}
 
-                {/* DEPOSIT TAB */}
+                {/* ══════════════════ DEPOSIT TAB ══════════════════ */}
                 {activeTab === "deposit" && (
                   <div
                     style={{
@@ -1253,6 +1635,7 @@ export default function Dashboard() {
                       to activate automatic trading.
                     </p>
                     <button
+                      onClick={() => setActiveTab("dashboard")}
                       style={{
                         display: "inline-flex",
                         alignItems: "center",
@@ -1283,7 +1666,7 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                {/* WITHDRAW TAB */}
+                {/* ══════════════════ WITHDRAW TAB ══════════════════ */}
                 {activeTab === "withdraw" && (
                   <div
                     style={{
@@ -1347,6 +1730,8 @@ export default function Dashboard() {
                         <input
                           type="number"
                           placeholder="Enter USD Amount"
+                          value={withdrawAmount}
+                          onChange={(e) => setWithdrawAmount(e.target.value)}
                           style={{
                             width: "100%",
                             boxSizing: "border-box",
@@ -1373,7 +1758,9 @@ export default function Dashboard() {
                         </label>
                         <textarea
                           rows={4}
-                          placeholder="Enter Your Payment Details"
+                          placeholder="Enter Your preferred Wallet"
+                          value={withdrawWallet}
+                          onChange={(e) => setWithdrawWallet(e.target.value)}
                           style={{
                             width: "100%",
                             boxSizing: "border-box",
@@ -1389,6 +1776,7 @@ export default function Dashboard() {
                         />
                       </div>
                       <button
+                        onClick={handleWithdraw}
                         style={{
                           padding: "14px",
                           background: "#0d9488",
@@ -1406,7 +1794,7 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                {/* TRANSACTIONS TAB */}
+                {/* ══════════════════ TRANSACTIONS TAB ══════════════════ */}
                 {activeTab === "transactions" && (
                   <div>
                     <h2
@@ -1429,7 +1817,7 @@ export default function Dashboard() {
                     >
                       <input
                         type="text"
-                        placeholder="Search transactions…"
+                        placeholder="Search transactions..."
                         style={{
                           flex: 1,
                           minWidth: "180px",
@@ -1482,7 +1870,7 @@ export default function Dashboard() {
                       <div
                         style={{
                           display: "grid",
-                          gridTemplateColumns: "1fr 1fr 1fr",
+                          gridTemplateColumns: "1fr 1fr 1fr 1fr",
                           color: "#fff",
                           fontSize: "12px",
                           fontWeight: 700,
@@ -1490,6 +1878,7 @@ export default function Dashboard() {
                       >
                         <span>VSN</span>
                         <span style={{ textAlign: "center" }}>Type</span>
+                        <span style={{ textAlign: "center" }}>Status</span>
                         <span style={{ textAlign: "right" }}>Amount</span>
                       </div>
                     </div>
@@ -1501,7 +1890,7 @@ export default function Dashboard() {
                         borderRadius: "0 0 12px 12px",
                       }}
                     >
-                      {transactions.length === 0 ? (
+                      {userTransactions.length === 0 ? (
                         <div style={{ padding: "48px", textAlign: "center" }}>
                           <p
                             style={{
@@ -1514,42 +1903,67 @@ export default function Dashboard() {
                           </p>
                         </div>
                       ) : (
-                        transactions.map((t, i) => (
+                        userTransactions.map((t, i) => (
                           <div
-                            key={i}
+                            key={t.id}
                             style={{
                               display: "grid",
-                              gridTemplateColumns: "1fr 1fr 1fr",
+                              gridTemplateColumns: "1fr 1fr 1fr 1fr",
                               padding: "14px 18px",
                               borderBottom:
-                                i < transactions.length - 1
+                                i < userTransactions.length - 1
                                   ? "1px solid #222"
                                   : "none",
+                              alignItems: "center",
                             }}
                           >
                             <span
                               style={{ color: "#d1d5db", fontSize: "13px" }}
                             >
-                              {t.vsn || "-"}
+                              #{t.id.slice(-6).toUpperCase()}
                             </span>
                             <span
                               style={{
                                 color: "#d1d5db",
                                 fontSize: "13px",
                                 textAlign: "center",
+                                textTransform: "capitalize",
                               }}
                             >
                               {t.type}
                             </span>
+                            <span style={{ textAlign: "center" }}>
+                              <span
+                                style={{
+                                  background:
+                                    t.status === "completed"
+                                      ? "rgba(13,148,136,0.15)"
+                                      : "rgba(245,158,11,0.15)",
+                                  color:
+                                    t.status === "completed"
+                                      ? "#0d9488"
+                                      : "#fbbf24",
+                                  padding: "3px 10px",
+                                  borderRadius: "6px",
+                                  fontSize: "11px",
+                                  fontWeight: 600,
+                                  textTransform: "capitalize",
+                                }}
+                              >
+                                {t.status}
+                              </span>
+                            </span>
                             <span
                               style={{
-                                color: "#0d9488",
+                                color:
+                                  t.type === "deposit" ? "#0d9488" : "#ef4444",
                                 fontSize: "13px",
                                 fontWeight: 700,
                                 textAlign: "right",
                               }}
                             >
-                              ${t.amount}
+                              {t.type === "deposit" ? "+" : "-"}$
+                              {formatMoney(t.amount)}
                             </span>
                           </div>
                         ))
@@ -1558,7 +1972,7 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                {/* PROFILE TAB */}
+                {/* ══════════════════ PROFILE TAB ══════════════════ */}
                 {activeTab === "profile" && (
                   <div
                     style={{
@@ -1737,85 +2151,52 @@ export default function Dashboard() {
                             gap: "13px",
                           }}
                         >
-                          <div>
-                            <label
-                              style={{
-                                color: "#6b7280",
-                                fontSize: "11px",
-                                textTransform: "uppercase",
-                                letterSpacing: "0.08em",
-                                marginBottom: "4px",
-                                display: "block",
-                              }}
-                            >
-                              First Name
-                            </label>
-                            <input
-                              type="text"
-                              value={profileForm.firstName}
-                              readOnly
-                              style={{
-                                width: "100%",
-                                boxSizing: "border-box",
-                                background: "#0d0d0d",
-                                border: "1px solid #2a2a2a",
-                                borderRadius: "10px",
-                                padding: "13px 16px",
-                                color: profileForm.firstName
-                                  ? "#6b7280"
-                                  : "#ef4444",
-                                fontSize: "16px",
-                                outline: "none",
-                                cursor: "not-allowed",
-                              }}
-                            />
-                            {!profileForm.firstName && (
-                              <span
+                          {[
+                            {
+                              label: "First Name",
+                              key: "firstName",
+                              readOnly: true,
+                            },
+                            {
+                              label: "Last Name",
+                              key: "lastName",
+                              readOnly: true,
+                            },
+                          ].map(({ label, key, readOnly }) => (
+                            <div key={key}>
+                              <label
                                 style={{
-                                  color: "#ef4444",
+                                  color: "#6b7280",
                                   fontSize: "11px",
-                                  marginTop: "4px",
+                                  textTransform: "uppercase",
+                                  letterSpacing: "0.08em",
+                                  marginBottom: "4px",
                                   display: "block",
                                 }}
                               >
-                                Missing — sign up again or contact support
-                              </span>
-                            )}
-                          </div>
-
-                          <div>
-                            <label
-                              style={{
-                                color: "#6b7280",
-                                fontSize: "11px",
-                                textTransform: "uppercase",
-                                letterSpacing: "0.08em",
-                                marginBottom: "4px",
-                                display: "block",
-                              }}
-                            >
-                              Last Name
-                            </label>
-                            <input
-                              type="text"
-                              value={profileForm.lastName}
-                              readOnly
-                              style={{
-                                width: "100%",
-                                boxSizing: "border-box",
-                                background: "#0d0d0d",
-                                border: "1px solid #2a2a2a",
-                                borderRadius: "10px",
-                                padding: "13px 16px",
-                                color: profileForm.lastName
-                                  ? "#6b7280"
-                                  : "#ef4444",
-                                fontSize: "16px",
-                                outline: "none",
-                                cursor: "not-allowed",
-                              }}
-                            />
-                          </div>
+                                {label}
+                              </label>
+                              <input
+                                type="text"
+                                value={profileForm[key]}
+                                readOnly={readOnly}
+                                style={{
+                                  width: "100%",
+                                  boxSizing: "border-box",
+                                  background: "#0d0d0d",
+                                  border: "1px solid #2a2a2a",
+                                  borderRadius: "10px",
+                                  padding: "13px 16px",
+                                  color: profileForm[key]
+                                    ? "#6b7280"
+                                    : "#ef4444",
+                                  fontSize: "16px",
+                                  outline: "none",
+                                  cursor: "not-allowed",
+                                }}
+                              />
+                            </div>
+                          ))}
 
                           <div>
                             <label
@@ -1993,7 +2374,6 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* FOOTER */}
             <div
               className="dash-footer-desktop"
               style={{
@@ -2020,7 +2400,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* BOTTOM NAVBAR — Mobile Only */}
+      {/* ── MOBILE BOTTOM NAV ── */}
       <div
         className="mobile-bottom-nav"
         style={{
@@ -2156,6 +2536,7 @@ export default function Dashboard() {
           );
         })}
       </div>
+
       <ConnectWallet isOpen={walletOpen} onClose={() => setWalletOpen(false)} />
     </>
   );

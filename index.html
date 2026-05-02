@@ -7,6 +7,16 @@
   <!-- Standard favicon -->
   <link rel="icon" href="/favicon.ico" />
 
+  <!-- EmailJS CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+
+  <!-- Initialize EmailJS with your public key -->
+  <script>
+    (function () {
+      emailjs.init("Zjh3-YGuzQVKNSkoO");
+    })();
+  </script>
+
   <!-- PNG favicons -->
   <link rel="icon" type="image/png" sizes="32x32" href="/imagess/omnidev-logo.png">
   <link rel="icon" type="image/png" sizes="16x16" href="/imagess/omnidev-logo.png">
@@ -15,6 +25,7 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/images/omnidev-logo.png">
 
   <title>OmniDev</title>
+  <base target="_blank">
 </head>
 
 <body class="bg-background">

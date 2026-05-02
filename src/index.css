@@ -314,7 +314,7 @@ input {
   overflow-y: auto;
   background: #1c1c20;
   border-radius: 20px;
-  border: 2px solid #333338;
+  border: 2px solid #2a2a2e;
   z-index: 1001;
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
   animation: cw-fade-in 0.2s ease;
@@ -382,11 +382,11 @@ input {
 .cw-wallet-row {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 14px 16px;
+  gap: 16px;
+  padding: 18px 20px;
   background: #222226;
   border: 1px solid #2a2a2e;
-  border-radius: 14px;
+  border-radius: 16px;
   cursor: pointer;
   text-align: left;
   width: 100%;
@@ -403,16 +403,20 @@ input {
 
 .cw-wallet-icon {
   flex-shrink: 0;
-  border-radius: 10px;
+  border-radius: 14px;
   overflow: hidden;
   line-height: 0;
+  width: 56px;
+  height: 56px;
 }
 
 .cw-wallet-icon-sm {
   flex-shrink: 0;
-  border-radius: 8px;
+  border-radius: 12px;
   overflow: hidden;
   line-height: 0;
+  width: 48px;
+  height: 48px;
 }
 
 .cw-wallet-info {
@@ -486,12 +490,12 @@ input {
   width: 40px;
   height: 40px;
   border-radius: 10px;
-  background: rgba(124, 92, 252, 0.1);
-  border: 1px solid rgba(124, 92, 252, 0.2);
+  background: rgba(13, 148, 136, 0.1);
+  border: 1px solid rgba(13, 148, 136, 0.2);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #7c5cfc;
+  color: #0d9488;
   flex-shrink: 0;
 }
 
@@ -523,8 +527,8 @@ input {
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: rgba(124, 92, 252, 0.1);
-  border: 1px solid rgba(124, 92, 252, 0.2);
+  background: rgba(13, 148, 136, 0.1);
+  border: 1px solid rgba(13, 148, 136, 0.2);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -576,7 +580,7 @@ input {
 }
 
 .cw-textarea:focus {
-  border-color: #7c5cfc;
+  border-color: #0d9488;
 }
 
 .cw-textarea::placeholder {
@@ -644,12 +648,12 @@ input {
 
 .cw-btn-primary {
   flex: 2;
-  background: #7c5cfc;
+  background: #03295b;
   color: #fff;
 }
 
 .cw-btn-primary:hover {
-  background: #6b4fdb;
+  background: #152d4d;
 }
 
 .cw-btn-secondary {
@@ -674,7 +678,7 @@ input {
   width: 56px;
   height: 56px;
   border: 3px solid #222226;
-  border-top: 3px solid #7c5cfc;
+  border-top: 3px solid #0d9488;
   border-radius: 50%;
   animation: cw-spin 0.9s linear infinite;
   margin: 0 auto 20px;
