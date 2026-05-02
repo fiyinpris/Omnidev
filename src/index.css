@@ -390,6 +390,7 @@ input {
   cursor: pointer;
   text-align: left;
   width: 100%;
+  margin-bottom: 12px;
   transition:
     background 0.2s ease,
     border-color 0.2s ease;
@@ -822,9 +823,6 @@ input {
   }
 }
 
-.cw-wallet-row {
-  margin-bottom: 12px;
-}
 .cw-error-msg {
   color: #ef4444;
   font-size: 13px;
