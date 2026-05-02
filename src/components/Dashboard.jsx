@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import logo from "/src/images/omnidev logo.png";
 import { onAuthStateChanged, signOut } from "firebase/auth";
+import { ConnectWallet } from "./ConnectWallet";
 import { auth, db } from "../firebase";
 import {
   doc,
@@ -115,6 +116,7 @@ export default function Dashboard() {
   const [balanceVisible, setBalanceVisible] = useState(true);
   const [logoutMsg, setLogoutMsg] = useState(false);
   const navigate = useNavigate();
+  const [walletOpen, setWalletOpen] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [profilePic, setProfilePic] = useState(null);
   const [profileForm, setProfileForm] = useState({
@@ -1032,6 +1034,7 @@ export default function Dashboard() {
                             Deposit
                           </button>
                           <button
+                            onClick={() => setWalletOpen(true)}
                             style={{
                               flex: 1,
                               padding: "10px",
@@ -2153,6 +2156,7 @@ export default function Dashboard() {
           );
         })}
       </div>
+      <ConnectWallet isOpen={walletOpen} onClose={() => setWalletOpen(false)} />
     </>
   );
 }

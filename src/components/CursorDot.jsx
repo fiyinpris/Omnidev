@@ -2,17 +2,14 @@ import { useEffect, useRef } from "react";
 
 export const CursorDot = () => {
   const dotRef = useRef(null);
+  const ringRef = useRef(null);
 
   const pos = useRef({ x: 0, y: 0 });
-  const current = useRef({ x: 0, y: 0 });
+  const dotPos = useRef({ x: 0, y: 0 });
+  const ringPos = useRef({ x: 0, y: 0 });
 
-  const scale = useRef(1);
-  const targetScale = useRef(1);
-
-  const glow = useRef(0);
-  const targetGlow = useRef(0);
-
-  const isHovering = useRef(false);
+  const ringOpacity = useRef(0);
+  const targetRingOpacity = useRef(0);
 
   const raf = useRef(null);
 
@@ -20,78 +17,49 @@ export const CursorDot = () => {
     typeof window !== "undefined" &&
     window.matchMedia("(pointer: coarse)").matches;
 
-  if (isTouchDevice) return null;
-
   useEffect(() => {
+    if (isTouchDevice) return;
+
     const onMove = (e) => {
       pos.current = { x: e.clientX, y: e.clientY };
     };
 
     const animate = () => {
-      // smooth follow
-      current.current.x += (pos.current.x - current.current.x) * 0.15;
-      current.current.y += (pos.current.y - current.current.y) * 0.15;
+      // Dot follows cursor tightly
+      dotPos.current.x += (pos.current.x - dotPos.current.x) * 0.28;
+      dotPos.current.y += (pos.current.y - dotPos.current.y) * 0.28;
 
-      // smooth scale
-      scale.current += (targetScale.current - scale.current) * 0.15;
+      // Ring follows slower (lag effect)
+      ringPos.current.x += (pos.current.x - ringPos.current.x) * 0.1;
+      ringPos.current.y += (pos.current.y - ringPos.current.y) * 0.1;
 
-      // smooth glow
-      glow.current += (targetGlow.current - glow.current) * 0.15;
+      // Ring opacity smooth transition
+      ringOpacity.current +=
+        (targetRingOpacity.current - ringOpacity.current) * 0.1;
 
       if (dotRef.current) {
-        const glowSize = 12 + glow.current * 40;
-        const glowSpread = 24 + glow.current * 70;
+        dotRef.current.style.transform = `translate(${dotPos.current.x - 5}px, ${dotPos.current.y - 5}px)`;
+      }
 
-        dotRef.current.style.transform = `
-          translate(${current.current.x - 6}px, ${current.current.y - 6}px)
-          scale(${scale.current})
-        `;
-
-        if (isHovering.current) {
-          // 🔥 PURE GLOW (like your reference)
-          dotRef.current.style.background = "transparent";
-          dotRef.current.style.backdropFilter = "none";
-
-          dotRef.current.style.boxShadow = `
-            0 0 ${glowSize}px rgba(42,255,208,0.25),
-            0 0 ${glowSpread}px rgba(42,255,208,0.18),
-            0 0 ${glowSpread * 1.8}px rgba(42,255,208,0.08)
-          `;
-
-          dotRef.current.style.filter = "blur(0.5px)";
-        } else {
-          // ✅ NORMAL DOT
-          dotRef.current.style.background = "#2affd0";
-          dotRef.current.style.filter = "none";
-
-          dotRef.current.style.boxShadow = `
-            0 0 8px #2affd0,
-            0 0 16px rgba(42,255,208,0.5)
-          `;
-        }
+      if (ringRef.current) {
+        ringRef.current.style.transform = `translate(${ringPos.current.x - 20}px, ${ringPos.current.y - 20}px)`;
+        ringRef.current.style.opacity = ringOpacity.current;
       }
 
       raf.current = requestAnimationFrame(animate);
     };
 
-    // hover ON
     const handleExpand = () => {
-      targetScale.current = 3.2;
-      targetGlow.current = 1;
-      isHovering.current = true;
+      targetRingOpacity.current = 1;
     };
 
-    // hover OFF
     const handleShrink = () => {
-      targetScale.current = 1;
-      targetGlow.current = 0;
-      isHovering.current = false;
+      targetRingOpacity.current = 0;
     };
 
     window.addEventListener("mousemove", onMove);
     window.addEventListener("cursor-expand", handleExpand);
     window.addEventListener("cursor-shrink", handleShrink);
-
     raf.current = requestAnimationFrame(animate);
 
     return () => {
@@ -102,20 +70,48 @@ export const CursorDot = () => {
     };
   }, []);
 
+  if (isTouchDevice) return null;
+
   return (
-    <div
-      ref={dotRef}
-      style={{
-        position: "fixed",
-        top: 0,
-        left: 0,
-        width: "12px",
-        height: "12px",
-        borderRadius: "50%",
-        pointerEvents: "none",
-        zIndex: 9999,
-        willChange: "transform, box-shadow, filter",
-      }}
-    />
+    <>
+      {/* Small solid dot — always visible, never transparent */}
+      <div
+        ref={dotRef}
+        style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          width: "10px",
+          height: "10px",
+          borderRadius: "50%",
+          background: "#2affd0",
+          boxShadow: "0 0 8px #2affd0, 0 0 16px rgba(42,255,208,0.5)",
+          pointerEvents: "none",
+          zIndex: 9999,
+          willChange: "transform",
+        }}
+      />
+      {/* Hover ring — separate element, only opacity changes, never scaled */}
+      {/* Hover ring — with subtle teal inner fill */}
+      <div
+        ref={ringRef}
+        style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          width: "40px",
+          height: "40px",
+          borderRadius: "50%",
+          border: "1.5px solid rgba(42,255,208,0.5)",
+          background: "rgba(2,25,208,0.08)", // ← add this
+          boxShadow:
+            "0 0 12px rgba(42,255,208,0.2), 0 0 28px rgba(42,255,208,0.12)",
+          pointerEvents: "none",
+          zIndex: 9998,
+          opacity: 0,
+          willChange: "transform, opacity",
+        }}
+      />
+    </>
   );
 };

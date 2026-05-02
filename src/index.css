@@ -276,3 +276,560 @@ input {
     display: none !important;
   }
 }
+@keyframes cw-fade-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -48%) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@keyframes cw-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ─── Backdrop ─── */
+.cw-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 1000;
+}
+
+/* ─── Modal Container ─── */
+.cw-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(420px, calc(100vw - 24px));
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
+  background: #1c1c20;
+  border-radius: 20px;
+  border: 2px solid #333338;
+  z-index: 1001;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+  animation: cw-fade-in 0.2s ease;
+}
+
+/* Scrollbar styling */
+.cw-modal::-webkit-scrollbar {
+  width: 6px;
+}
+.cw-modal::-webkit-scrollbar-track {
+  background: transparent;
+}
+.cw-modal::-webkit-scrollbar-thumb {
+  background: #333338;
+  border-radius: 3px;
+}
+
+/* ─── Content Padding ─── */
+.cw-content {
+  padding: 24px;
+}
+
+/* ─── Header ─── */
+.cw-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+
+.cw-title {
+  color: #fff;
+  font-size: 18px;
+  font-weight: 700;
+  margin: 0;
+  flex: 1;
+  letter-spacing: -0.01em;
+}
+
+/* ─── Icon Buttons (Close / Back) ─── */
+.cw-icon-btn {
+  background: none;
+  border: none;
+  color: #6b7280;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  border-radius: 8px;
+  flex-shrink: 0;
+  transition: color 0.15s ease;
+}
+
+.cw-icon-btn:hover {
+  color: #fff;
+}
+
+/* ─── Wallet List ─── */
+.cw-wallet-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cw-wallet-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  background: #222226;
+  border: 1px solid #2a2a2e;
+  border-radius: 14px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.cw-wallet-row:hover {
+  background: #25252a;
+  border-color: #3a3a40;
+}
+
+.cw-wallet-icon {
+  flex-shrink: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  line-height: 0;
+}
+
+.cw-wallet-icon-sm {
+  flex-shrink: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  line-height: 0;
+}
+
+.cw-wallet-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.cw-wallet-name {
+  color: #f3f4f6;
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 3px;
+}
+
+.cw-wallet-sub {
+  color: #6b7280;
+  font-size: 13px;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ─── Wallet Badge (Import screen) ─── */
+.cw-wallet-badge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: #222226;
+  border: 1px solid #2a2a2e;
+  border-radius: 12px;
+  margin-bottom: 20px;
+}
+
+.cw-wallet-badge-name {
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* ─── Import Options ─── */
+.cw-import-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cw-import-option {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  background: #222226;
+  border: 1px solid #2a2a2e;
+  border-radius: 14px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.cw-import-option:hover {
+  background: #25252a;
+  border-color: #3a3a40;
+}
+
+.cw-import-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: rgba(124, 92, 252, 0.1);
+  border: 1px solid rgba(124, 92, 252, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #7c5cfc;
+  flex-shrink: 0;
+}
+
+.cw-import-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.cw-import-label {
+  color: #f3f4f6;
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 3px;
+}
+
+.cw-import-sub {
+  color: #6b7280;
+  font-size: 12px;
+  margin: 0;
+}
+
+/* ─── Center Block (Shield + Title) ─── */
+.cw-center-block {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.cw-shield {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: rgba(124, 92, 252, 0.1);
+  border: 1px solid rgba(124, 92, 252, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 10px;
+}
+
+.cw-center-title {
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0 0 4px;
+}
+
+.cw-center-sub {
+  color: #6b7280;
+  font-size: 13px;
+  margin: 0;
+}
+
+/* ─── Labels ─── */
+.cw-label {
+  color: #9ca3af;
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 8px;
+  display: block;
+}
+
+/* ─── Inputs ─── */
+.cw-input-wrap {
+  position: relative;
+  margin-bottom: 10px;
+}
+
+.cw-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: #1a1a1e;
+  border: 1px solid #2a2a2e;
+  border-radius: 12px;
+  padding: 14px 44px 14px 16px;
+  color: #fff;
+  font-size: 15px;
+  resize: none;
+  outline: none;
+  font-family: inherit;
+  line-height: 1.6;
+  transition: border-color 0.2s ease;
+}
+
+.cw-textarea:focus {
+  border-color: #7c5cfc;
+}
+
+.cw-textarea::placeholder {
+  color: #4b5563;
+}
+
+.cw-textarea-hidden {
+  -webkit-text-security: disc;
+}
+
+.cw-textarea-mono {
+  font-family:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+.cw-eye-btn {
+  position: absolute;
+  right: 12px;
+  top: 14px;
+  background: none;
+  border: none;
+  color: #6b7280;
+  cursor: pointer;
+  padding: 2px;
+  transition: color 0.15s ease;
+}
+
+.cw-eye-btn:hover {
+  color: #9ca3af;
+}
+
+/* ─── Hints ─── */
+.cw-hint {
+  color: #4b5563;
+  font-size: 12px;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ─── Buttons ─── */
+.cw-btn-group {
+  display: flex;
+  gap: 10px;
+}
+
+.cw-btn {
+  padding: 14px;
+  border-radius: 12px;
+  font-weight: 600;
+  font-size: 15px;
+  cursor: pointer;
+  transition:
+    background 0.2s ease,
+    transform 0.1s ease,
+    border-color 0.2s ease,
+    color 0.2s ease;
+  border: none;
+}
+
+.cw-btn:active {
+  transform: scale(0.98);
+}
+
+.cw-btn-primary {
+  flex: 2;
+  background: #7c5cfc;
+  color: #fff;
+}
+
+.cw-btn-primary:hover {
+  background: #6b4fdb;
+}
+
+.cw-btn-secondary {
+  flex: 1;
+  background: transparent;
+  border: 1px solid #2a2a2e;
+  color: #9ca3af;
+}
+
+.cw-btn-secondary:hover {
+  border-color: #4b5563;
+  color: #fff;
+}
+
+/* ─── State Screens (Connecting / Failed) ─── */
+.cw-state-wrap {
+  padding: 56px 24px;
+  text-align: center;
+}
+
+.cw-spinner {
+  width: 56px;
+  height: 56px;
+  border: 3px solid #222226;
+  border-top: 3px solid #7c5cfc;
+  border-radius: 50%;
+  animation: cw-spin 0.9s linear infinite;
+  margin: 0 auto 20px;
+}
+
+.cw-error-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 20px;
+}
+
+.cw-state-title {
+  color: #fff;
+  font-size: 18px;
+  font-weight: 700;
+  margin: 0 0 6px;
+}
+
+.cw-state-sub {
+  color: #6b7280;
+  font-size: 14px;
+  margin: 0 0 24px;
+}
+
+.cw-state-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.cw-state-actions .cw-btn {
+  padding: 12px 24px;
+  font-size: 14px;
+}
+
+/* ═══════════════════════════════════════════
+   RESPONSIVE BREAKPOINTS
+   ═══════════════════════════════════════════ */
+
+/* Small phones */
+@media (max-width: 380px) {
+  .cw-content {
+    padding: 16px;
+  }
+
+  .cw-title {
+    font-size: 16px;
+  }
+
+  .cw-wallet-row {
+    padding: 12px 14px;
+    gap: 12px;
+  }
+
+  .cw-wallet-name {
+    font-size: 14px;
+  }
+
+  .cw-wallet-sub {
+    font-size: 12px;
+  }
+
+  .cw-import-option {
+    padding: 14px;
+  }
+
+  .cw-import-label {
+    font-size: 13px;
+  }
+
+  .cw-center-title {
+    font-size: 15px;
+  }
+
+  .cw-center-sub {
+    font-size: 12px;
+  }
+
+  .cw-textarea {
+    padding: 12px 40px 12px 14px;
+    font-size: 14px;
+  }
+
+  .cw-btn {
+    padding: 12px;
+    font-size: 14px;
+  }
+
+  .cw-state-wrap {
+    padding: 44px 16px;
+  }
+
+  .cw-state-title {
+    font-size: 16px;
+  }
+
+  .cw-state-sub {
+    font-size: 13px;
+  }
+}
+
+/* Landscape / short screens */
+@media (max-height: 600px) {
+  .cw-modal {
+    max-height: calc(100dvh - 20px);
+    border-radius: 16px;
+  }
+
+  .cw-content {
+    padding: 20px;
+  }
+
+  .cw-state-wrap {
+    padding: 36px 20px;
+  }
+}
+
+/* Large screens */
+@media (min-width: 640px) {
+  .cw-modal {
+    width: 540px;
+  }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .cw-modal {
+    animation: none;
+  }
+
+  .cw-spinner {
+    animation: none;
+  }
+
+  .cw-wallet-row,
+  .cw-import-option,
+  .cw-btn,
+  .cw-icon-btn {
+    transition: none;
+  }
+}
+
+.cw-wallet-row {
+  margin-bottom: 12px;
+}
+.cw-error-msg {
+  color: #ef4444;
+  font-size: 13px;
+  margin: -6px 0 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}

@@ -74,8 +74,6 @@ const COINS = [
 ];
 
 const IDS = COINS.map((c) => c.id).join(",");
-
-// 30s in dev, 60s in prod — stays well under CoinGecko free tier limits
 const POLL_INTERVAL = import.meta.env.DEV ? 30_000 : 60_000;
 
 export const TickerBar = () => {
@@ -93,24 +91,16 @@ export const TickerBar = () => {
         retryTimer.current = setTimeout(() => fetchPrices(0), retryDelay);
         return;
       }
-
       try {
-        // Using the public CoinGecko demo endpoint — add your API key here if you have one
         const url = `https://api.coingecko.com/api/v3/simple/price?ids=${IDS}&vs_currencies=usd&include_24hr_change=true`;
         const res = await fetch(url, {
-          headers: {
-            Accept: "application/json",
-            // Uncomment and add your key if you have a CoinGecko API key:
-            // "x-cg-demo-api-key": "YOUR_KEY_HERE",
-          },
+          headers: { Accept: "application/json" },
         });
 
         if (res.status === 429) {
-          // Back off 60s on rate limit — don't spam console
           if (mounted) fetchPrices(60_000);
           return;
         }
-
         if (!res.ok) return;
         const data = await res.json();
         if (!mounted) return;
@@ -145,7 +135,6 @@ export const TickerBar = () => {
               }, 800);
             }
           }
-
           prevRef.current[coin.symbol] = { price: newPrice };
         }
 
@@ -153,7 +142,6 @@ export const TickerBar = () => {
         if (Object.keys(newFlashes).length > 0)
           setFlash((f) => ({ ...f, ...newFlashes }));
       } catch (err) {
-        // Only log non-CORS/network errors to reduce noise
         if (err?.name !== "TypeError")
           console.error("Ticker fetch error:", err);
       }
@@ -171,7 +159,7 @@ export const TickerBar = () => {
   }, []);
 
   const fmt = (p) => {
-    if (p == null || isNaN(p)) return "—";
+    if (p == null || isNaN(p)) return null; // return null so we can show shimmer
     return p < 1
       ? p.toFixed(4)
       : p.toLocaleString("en-US", {
@@ -180,7 +168,8 @@ export const TickerBar = () => {
         });
   };
 
-  const items = [...COINS, ...COINS, ...COINS];
+  // 2 copies — pairs with -50% keyframe for seamless loop
+  const items = [...COINS, ...COINS];
 
   return (
     <div
@@ -193,6 +182,17 @@ export const TickerBar = () => {
         alignItems: "center",
       }}
     >
+      <style>{`
+        @keyframes tickerScroll {
+          0%   { transform: translateX(0); }
+          100% { transform: translateX(-50%); }
+        }
+        @keyframes shimmerPulse {
+          0%, 100% { opacity: 0.25; }
+          50%       { opacity: 0.6; }
+        }
+      `}</style>
+
       <div
         style={{
           display: "flex",
@@ -207,6 +207,9 @@ export const TickerBar = () => {
         {items.map((coin, i) => {
           const data = prices[coin.symbol];
           const fl = flash[coin.symbol];
+          const formattedPrice = fmt(data?.price);
+          const isLoaded = formattedPrice !== null;
+
           return (
             <span
               key={i}
@@ -233,23 +236,34 @@ export const TickerBar = () => {
               <span style={{ color: "#ccc", fontWeight: 600 }}>
                 {coin.symbol}
               </span>
+
+              {/* Price — shimmer pulse while loading, real value once loaded */}
               <span
                 style={{
-                  color:
-                    fl === "up"
+                  color: isLoaded
+                    ? fl === "up"
                       ? "#22c55e"
                       : fl === "down"
                         ? "#ef4444"
-                        : "#fff",
+                        : "#fff"
+                    : "#333",
                   fontWeight: 500,
                   transition: "color 0.15s",
                   minWidth: "72px",
                   display: "inline-block",
+                  borderRadius: isLoaded ? 0 : "4px",
+                  background: isLoaded ? "transparent" : "#222",
+                  animation: isLoaded
+                    ? "none"
+                    : "shimmerPulse 1.2s ease-in-out infinite",
+                  height: isLoaded ? "auto" : "14px",
                 }}
               >
-                {data?.price != null ? `$${fmt(data.price)}` : "—"}
+                {isLoaded ? `$${formattedPrice}` : ""}
               </span>
-              {data?.price != null && (
+
+              {/* Change % — only show when loaded */}
+              {isLoaded && data?.price != null && (
                 <span
                   style={{
                     color: data.change >= 0 ? "#22c55e" : "#ef4444",
@@ -264,7 +278,6 @@ export const TickerBar = () => {
           );
         })}
       </div>
-      <style>{`@keyframes tickerScroll { 0% { transform: translateX(0) } 100% { transform: translateX(-33.333%) } }`}</style>
     </div>
   );
 };
