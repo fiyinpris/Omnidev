@@ -3,7 +3,7 @@ import main3 from "/src/images/main3.jpg";
 import main2 from "/src/images/main2.jpg";
 import traderPhoto from "/src/images/main7.jpg";
 import geminiLogo from "/src/assets/gemini.jpg";
-import invitaeLogo from "/src/assets/invitae.jpg";
+import invitaeLogo from "/src/assets/Invitae.jpg";
 import { useNavigate } from "react-router-dom";
 import { getAuth, onAuthStateChanged } from "firebase/auth";
 import { useCryptoPrices, fmtPrice } from "../api/crypto";
