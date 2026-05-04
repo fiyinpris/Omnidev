@@ -10,13 +10,14 @@ const NAV_LINKS = [
   { label: "How It Works", scrollKey: "__scrollToHowItWorks" },
   { label: "About Us", scrollKey: "__scrollToAboutUs" },
   { label: "FAQ", scrollKey: "__scrollToFAQ" },
-  { label: "Contact", scrollKey: null },
+  { label: "Contact", scrollKey: null, path: "/contact" },
 ];
 
 const SIDEBAR_LINKS = [
   {
     label: "How It Works",
     scrollKey: "__scrollToHowItWorks",
+    path: null,
     icon: (
       <svg
         width="18"
@@ -34,6 +35,7 @@ const SIDEBAR_LINKS = [
   {
     label: "About Us",
     scrollKey: "__scrollToAboutUs",
+    path: null,
     icon: (
       <svg
         width="18"
@@ -53,6 +55,7 @@ const SIDEBAR_LINKS = [
   {
     label: "FAQ",
     scrollKey: "__scrollToFAQ",
+    path: null,
     icon: (
       <svg
         width="18"
@@ -71,6 +74,7 @@ const SIDEBAR_LINKS = [
   {
     label: "Contact",
     scrollKey: null,
+    path: "/contact",
     icon: (
       <svg
         width="18"
@@ -129,9 +133,16 @@ export const Navbar = () => {
     navigate("/");
   };
 
-  const handleNavClick = (scrollKey) => {
+  const handleNavClick = (scrollKey, path) => {
     window.dispatchEvent(new Event("cursor-expand"));
     setSidebarOpen(false);
+
+    // If it has a direct path (like /contact), navigate there
+    if (path) {
+      navigate(path);
+      return;
+    }
+
     if (!scrollKey) return;
     if (isHome) {
       setTimeout(() => {
@@ -203,7 +214,7 @@ export const Navbar = () => {
           {NAV_LINKS.map((l) => (
             <button
               key={l.label}
-              onClick={() => handleNavClick(l.scrollKey)}
+              onClick={() => handleNavClick(l.scrollKey, l.path)}
               onMouseEnter={() => {
                 window.dispatchEvent(new Event("cursor-expand"));
               }}
@@ -213,12 +224,26 @@ export const Navbar = () => {
               style={{
                 background: "none",
                 border: "none",
-                color: "#9ca3af",
+                color:
+                  l.path === "/contact" && location.pathname === "/contact"
+                    ? "#0d9488"
+                    : "#9ca3af",
                 fontSize: "14px",
                 fontWeight: 500,
                 cursor: "pointer",
                 transition: "color 0.2s",
                 padding: 0,
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = "#fff";
+                window.dispatchEvent(new Event("cursor-expand"));
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color =
+                  l.path === "/contact" && location.pathname === "/contact"
+                    ? "#0d9488"
+                    : "#9ca3af";
+                window.dispatchEvent(new Event("cursor-shrink"));
               }}
             >
               {l.label}
@@ -417,7 +442,7 @@ export const Navbar = () => {
           {SIDEBAR_LINKS.map((item, i) => (
             <button
               key={item.label}
-              onClick={() => handleNavClick(item.scrollKey)}
+              onClick={() => handleNavClick(item.scrollKey, item.path)}
               style={{
                 width: "100%",
                 display: "flex",

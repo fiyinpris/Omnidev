@@ -10,6 +10,7 @@ import AdminDashboard from "./components/AdminDashboard";
 import ForgotPassword from "./components/ForgotPassword";
 import VerifyEmail from "./components/VerifyEmail";
 import WithdrawalSupport from "./components/WithdrawalSupport";
+import { Contact } from "./components/Contact";
 
 function LayoutWrapper() {
   const location = useLocation();
@@ -42,6 +43,7 @@ function LayoutWrapper() {
         <Route path="/admin" element={<AdminDashboard />} />
         <Route path="/verify-email" element={<VerifyEmail />} />
         <Route path="/withdrawal-support" element={<WithdrawalSupport />} />
+        <Route path="/contact" element={<Contact />} />
       </Routes>
     </>
   );

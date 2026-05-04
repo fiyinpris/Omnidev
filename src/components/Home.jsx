@@ -2,8 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import main3 from "/src/images/main3.jpg";
 import main2 from "/src/images/main2.jpg";
 import traderPhoto from "/src/images/main7.jpg";
+import geminiLogo from "/src/assets/gemini.jpg";
+import invitaeLogo from "/src/assets/invitae.jpg";
 import { useNavigate } from "react-router-dom";
 import { getAuth, onAuthStateChanged } from "firebase/auth";
+import { useCryptoPrices, fmtPrice } from "../api/crypto";
 
 const WORDS = ["Smarter", "Faster", "Safer", "Simpler"];
 
@@ -81,7 +84,7 @@ const ASSET_CARDS = [
     price: "$9.15",
     change: "+4.64%",
     up: true,
-    domain: "gemini.com",
+    logo: geminiLogo,
   },
   {
     name: "Invitae Corp.",
@@ -89,7 +92,7 @@ const ASSET_CARDS = [
     price: "$7.68",
     change: "+246.49%",
     up: true,
-    domain: "invitae.com",
+    logo: invitaeLogo,
   },
 ];
 
@@ -206,6 +209,68 @@ const MARKET_DATA = {
       color: "#FF9900",
       icon: "a",
       path: "M0,28 C10,26 18,24 28,20 C38,16 44,20 54,16 C64,12 72,14 82,10 C90,8 95,6 100,4",
+    },
+  ],
+  memecoins: [
+    {
+      name: "Dogecoin",
+      symbol: "DOGEUSD",
+      cap: "$24.8B",
+      change: "+3.41%",
+      up: true,
+      color: "#C2A633",
+      icon: "Ð",
+      path: "M0,30 C10,26 18,20 28,16 C38,12 44,16 54,10 C64,4 72,8 82,6 C90,4 95,5 100,3",
+    },
+    {
+      name: "Shiba Inu",
+      symbol: "SHIBUSD",
+      cap: "$8.12B",
+      change: "+5.87%",
+      up: true,
+      color: "#E5423E",
+      icon: "S",
+      path: "M0,28 C10,24 16,18 26,14 C36,10 44,14 54,8 C64,2 72,6 82,4 C90,2 95,4 100,2",
+    },
+    {
+      name: "Pepe",
+      symbol: "PEPEUSD",
+      cap: "$3.96B",
+      change: "+12.4%",
+      up: true,
+      color: "#4CAF50",
+      icon: "P",
+      path: "M0,32 C10,28 16,20 26,14 C36,8 44,12 54,6 C64,0 72,4 82,2 C90,0 95,2 100,0",
+    },
+    {
+      name: "Floki",
+      symbol: "FLOKIUSD",
+      cap: "$1.28B",
+      change: "+8.23%",
+      up: true,
+      color: "#FF6B35",
+      icon: "F",
+      path: "M0,30 C10,26 18,22 28,18 C38,14 44,18 54,12 C64,6 72,10 82,8 C90,6 95,7 100,5",
+    },
+    {
+      name: "Bonk",
+      symbol: "BONKUSD",
+      cap: "$0.98B",
+      change: "-2.15%",
+      up: false,
+      color: "#FF9500",
+      icon: "B",
+      path: "M0,18 C10,20 18,26 28,30 C38,34 44,28 54,32 C64,36 72,30 82,34 C90,36 95,38 100,40",
+    },
+    {
+      name: "dogwifhat",
+      symbol: "WIFUSD",
+      cap: "$0.74B",
+      change: "+6.91%",
+      up: true,
+      color: "#9B59B6",
+      icon: "W",
+      path: "M0,30 C10,26 18,22 28,18 C38,14 44,18 54,12 C64,6 72,10 82,8 C90,6 95,7 100,4",
     },
   ],
 };
@@ -942,12 +1007,17 @@ export const Home = () => {
   const [coinIndex, setCoinIndex] = useState(0);
   const [coinVisible, setCoinVisible] = useState(true);
   const [activeTab, setActiveTab] = useState("crypto");
-  const [livePrices, setLivePrices] = useState({});
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const navigate = useNavigate();
   const auth = getAuth();
+
+  // Use shared crypto API hook — polls every 10 seconds
+  const { prices: livePrices } = useCryptoPrices(
+    CYCLING_COINS.map((c) => ({ id: c.geckoId, symbol: c.symbol })),
+    10_000,
+  );
 
   const statsRef = useRef(null);
   const featureRef = useRef(null);
@@ -972,53 +1042,6 @@ export const Home = () => {
   const handleStart = () => {
     if (loading) return;
     navigate(user ? "/dashboard" : "/login");
-  };
-
-  // ── CoinGecko REST — works from Nigeria, no WebSocket needed ──
-  useEffect(() => {
-    let mounted = true;
-    let timer = null;
-
-    const fetchPrices = async () => {
-      try {
-        const ids = CYCLING_COINS.map((c) => c.geckoId).join(",");
-        const res = await fetch(
-          `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`,
-        );
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!mounted) return;
-
-        const updates = {};
-        for (const coin of CYCLING_COINS) {
-          const val = data[coin.geckoId];
-          if (!val) continue;
-          const price = val.usd;
-          const change = val.usd_24h_change ?? 0;
-          if (!isNaN(price)) updates[coin.symbol] = { price, change };
-        }
-        setLivePrices((p) => ({ ...p, ...updates }));
-      } catch (_) {
-        // silently fail — static fallback values stay visible
-      }
-      if (mounted) timer = setTimeout(fetchPrices, 30_000);
-    };
-
-    fetchPrices();
-    return () => {
-      mounted = false;
-      clearTimeout(timer);
-    };
-  }, []);
-
-  const fmt = (p) => {
-    if (p == null || isNaN(p) || p === 0) return "—";
-    return p < 1
-      ? p.toFixed(4)
-      : p.toLocaleString("en-US", {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
-        });
   };
 
   // Word typewriter
@@ -1114,7 +1137,7 @@ export const Home = () => {
 
   const coin = CYCLING_COINS[coinIndex];
   const liveData = livePrices[coin.symbol];
-  const rows = MARKET_DATA[activeTab];
+  const rows = MARKET_DATA[activeTab] || MARKET_DATA.crypto;
 
   const gridBg = {
     backgroundImage:
@@ -1191,7 +1214,7 @@ export const Home = () => {
               animation: "heroUp .7s ease .1s both",
             }}
           >
-            Next-gen crypto platform
+            A gateway to Memecoin trading.
           </p>
           <h1
             style={{
@@ -1289,7 +1312,7 @@ export const Home = () => {
               Why choose OmniDev
             </p>
             <h2 className="text-[clamp(26px,4vw,44px)] font-black text-white leading-tight mb-5">
-              There's no better time than now to{" "}
+              There&apos;s no better time than now to{" "}
               <span className="text-[#0d9488]">begin trading.</span>
             </h2>
             <button
@@ -1334,7 +1357,7 @@ export const Home = () => {
                       {coin.name} ({coin.symbol})
                     </p>
                     <p className="text-white font-bold text-[15px]">
-                      {liveData ? `$${fmt(liveData.price)}` : "loading..."}
+                      {liveData ? `$${fmtPrice(liveData.price)}` : "loading..."}
                     </p>
                   </div>
                 </div>
@@ -1403,6 +1426,7 @@ export const Home = () => {
                 gap: "10px",
               }}
             >
+              {/* Tab switcher */}
               <div
                 style={{
                   display: "flex",
@@ -1412,7 +1436,7 @@ export const Home = () => {
                   padding: "4px",
                 }}
               >
-                {["crypto", "stocks"].map((tab) => (
+                {["crypto", "stocks", "memecoins"].map((tab) => (
                   <button
                     key={tab}
                     onClick={() => {
@@ -1430,9 +1454,12 @@ export const Home = () => {
                       background: activeTab === tab ? "#0d9488" : "transparent",
                       color: activeTab === tab ? "#fff" : "#6b7280",
                       transition: "background .25s, color .25s",
+                      whiteSpace: "nowrap",
                     }}
                   >
-                    {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                    {tab === "memecoins"
+                      ? "Memecoins"
+                      : tab.charAt(0).toUpperCase() + tab.slice(1)}
                   </button>
                 ))}
               </div>
@@ -1472,7 +1499,9 @@ export const Home = () => {
                 marginBottom: "24px",
               }}
             >
-              Market Cap Ranking
+              {activeTab === "memecoins"
+                ? "Memecoin Market Cap Ranking"
+                : "Market Cap Ranking"}
             </h2>
           </div>
 
@@ -1723,9 +1752,8 @@ export const Home = () => {
                     boxShadow: "0 4px 28px rgba(0,0,0,0.4)",
                   }}
                 >
-                  {/* ── Logo.dev replaces dead Clearbit ── */}
                   <img
-                    src={`https://img.logo.dev/${card.domain}?token=pk_f2de552de0004a9190e7740b47a6fc55`}
+                    src={card.logo}
                     alt={card.name}
                     style={{
                       width: "46px",
@@ -1816,8 +1844,8 @@ export const Home = () => {
                 margin: "0 0 28px",
               }}
             >
-              Whether you're just getting started or you're an expert, our
-              platform is designed for everyone.
+              Whether you&apos;re just getting started or you&apos;re an expert,
+              our platform is designed for everyone.
             </p>
             <button className="cta-pill" onClick={handleStart}>
               <svg

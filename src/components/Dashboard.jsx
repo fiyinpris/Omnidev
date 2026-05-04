@@ -125,13 +125,9 @@ const SIDEBAR_ITEMS = [
 
 /**
  * BOT PHASE LOGIC:
- * Phase 1 – "analysing": hasBeenFunded=true, now < analysingExpiresAt (or no botExpiresAt set)
- * Phase 2 – "activated": botExpiresAt set, now < botExpiresAt
- * Phase 3 – "disabled": botExpiresAt set, now >= botExpiresAt
- *
- * Balance only grows during Phase 2.
- * During Phase 1 (analysing), balance stays locked at initialBalance.
- * On reaching 100% progress, balance is set to EXACT targetAmount (no floating point error).
+ * Phase 1 - "analysing": hasBeenFunded=true, now < analysingExpiresAt
+ * Phase 2 - "activated": botExpiresAt set, now < botExpiresAt
+ * Phase 3 - "disabled": botExpiresAt set, now >= botExpiresAt
  */
 function useBalanceGrowth(session) {
   useEffect(() => {
@@ -154,6 +150,8 @@ function useBalanceGrowth(session) {
           botExpiresAt,
           botActivatedAt,
           analysingExpiresAt,
+          pendingTarget,
+          botHours,
         } = data;
 
         if (!hasBeenFunded) return;
@@ -164,11 +162,33 @@ function useBalanceGrowth(session) {
         const botExpMs = botExpiresAt?.toMillis?.() || botExpiresAt;
         const activatedAtMs = botActivatedAt?.toMillis?.() || botActivatedAt;
 
-        // ─── Phase 1: Analysing (lock balance at initialBalance) ───
+        // Phase 1: Analysing (lock balance at initialBalance)
         if (
           !botExpMs ||
           (analysingExpMs && now < analysingExpMs && !botExpMs)
         ) {
+          // Check if pending target exists - if analysing is done, activate it
+          if (
+            analysingExpMs &&
+            now >= analysingExpMs &&
+            pendingTarget &&
+            targetAmount &&
+            botHours
+          ) {
+            const tradingMs = botHours * 60 * 60 * 1000;
+            const newBotExpiresAt = Timestamp.fromMillis(now + tradingMs);
+            const newBotActivatedAt = Timestamp.fromMillis(now);
+            await updateDoc(userRef, {
+              botActive: true,
+              botStatus: "activated",
+              botActivatedAt: newBotActivatedAt,
+              botExpiresAt: newBotExpiresAt,
+              pendingTarget: false,
+              lastTargetSetAt: newBotActivatedAt,
+            });
+            return;
+          }
+
           if (balance !== initialBalance) {
             await updateDoc(userRef, {
               balance: initialBalance,
@@ -178,10 +198,11 @@ function useBalanceGrowth(session) {
           return;
         }
 
-        // ─── Phase 3: Trading expired → disable bot ───
+        // Phase 3: Trading expired
         if (botExpMs && now >= botExpMs) {
+          const finalBalance = initialBalance + targetAmount;
           const updates = {};
-          if (balance !== targetAmount) updates.balance = targetAmount; // snap to exact
+          if (balance !== finalBalance) updates.balance = finalBalance;
           if (botActive) updates.botActive = false;
           updates.botStatus = "disabled";
           if (Object.keys(updates).length > 0) {
@@ -190,7 +211,7 @@ function useBalanceGrowth(session) {
           return;
         }
 
-        // ─── Phase 2: Actively trading — grow balance ───
+        // Phase 2: Actively trading - grow balance
         if (!botExpMs || !activatedAtMs || !targetAmount || !initialBalance)
           return;
 
@@ -200,12 +221,9 @@ function useBalanceGrowth(session) {
 
         let computedBalance;
         if (progress >= 1) {
-          // Exact target — no floating point
-          computedBalance = targetAmount;
+          computedBalance = initialBalance + targetAmount;
         } else {
-          // Linear interpolation; keep full precision, truncate to cent
-          const raw =
-            initialBalance + (targetAmount - initialBalance) * progress;
+          const raw = initialBalance + targetAmount * progress;
           computedBalance = Math.floor(raw * 100) / 100;
         }
 
@@ -217,6 +235,8 @@ function useBalanceGrowth(session) {
             balance: computedBalance,
             botStatus: "activated",
           });
+          // Create growth transaction for user's dashboard history
+          await createGrowthTransaction(session.uid, computedBalance, data);
         } else if (data.botStatus !== "activated") {
           await updateDoc(userRef, { botStatus: "activated" });
         }
@@ -226,9 +246,26 @@ function useBalanceGrowth(session) {
     };
 
     tick();
-    intervalId = setInterval(tick, 10_000);
+    intervalId = setInterval(tick, 300_000);
     return () => clearInterval(intervalId);
   }, [session?.uid]);
+}
+
+// Helper: Create growth transaction in user's dashboard history (NOT admin)
+async function createGrowthTransaction(uid, newBalance, userData) {
+  try {
+    const txnRef = doc(collection(db, "users", uid, "transactions"));
+    await setDoc(txnRef, {
+      type: "growth",
+      amount: newBalance,
+      source: "bot_trading",
+      status: "completed",
+      timestamp: new Date(),
+      description: `OmniDev trading growth - Balance updated to $${formatMoney(newBalance)}`,
+    });
+  } catch (err) {
+    console.error("Growth transaction error:", err);
+  }
 }
 
 export default function Dashboard() {
@@ -251,12 +288,13 @@ export default function Dashboard() {
   const [profileError, setProfileError] = useState("");
   const fileInputRef = useRef(null);
   const [profileLoading, setProfileLoading] = useState(true);
-  const [botPhase, setBotPhase] = useState("disabled"); // "analysing" | "activated" | "disabled"
+  const [botPhase, setBotPhase] = useState("disabled");
   const [userTransactions, setUserTransactions] = useState([]);
   const [isAdmin, setIsAdmin] = useState(false);
   const [balance, setBalance] = useState(0);
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [withdrawWallet, setWithdrawWallet] = useState("");
+  const [withdrawError, setWithdrawError] = useState("");
 
   useBalanceGrowth(session);
 
@@ -308,7 +346,7 @@ export default function Dashboard() {
     return () => unsub();
   }, [navigate]);
 
-  // Real-time listener: determine bot phase from Firestore data
+  // Real-time listener: bot phase
   useEffect(() => {
     if (!session?.uid) return;
     const userRef = doc(db, "users", session.uid);
@@ -317,18 +355,12 @@ export default function Dashboard() {
       const now = Date.now();
       const funded = data.hasBeenFunded || false;
       if (!funded) return "disabled";
-
       const analysingExpMs =
         data.analysingExpiresAt?.toMillis?.() || data.analysingExpiresAt;
       const botExpMs = data.botExpiresAt?.toMillis?.() || data.botExpiresAt;
-
-      // Phase 3: bot trading period fully expired
       if (botExpMs && now >= botExpMs) return "disabled";
-
-      // Phase 2: target set and actively trading
       if (botExpMs && now < botExpMs) return "activated";
-
-      // Phase 1: funded, analysing (no target yet, or analysing not expired)
+      // If pending target exists but no bot expiry yet, still show as analysing
       return "analysing";
     };
 
@@ -339,7 +371,6 @@ export default function Dashboard() {
       setBotPhase(computePhase(data));
     });
 
-    // Re-evaluate phase on a timer (in case snapshot doesn't re-fire when time crosses)
     const phaseTimer = setInterval(async () => {
       const snap = await getDoc(userRef);
       if (!snap.exists()) return;
@@ -386,19 +417,41 @@ export default function Dashboard() {
     }, 1800);
   };
 
+  // FIXED #1: Profile image save - immediate Firestore write with current state
   const handleFileChange = (e) => {
     const file = e.target.files?.[0];
     if (!file || !session) return;
+    if (file.size > 2 * 1024 * 1024) {
+      setProfileError("Image must be less than 2MB");
+      return;
+    }
     const reader = new FileReader();
     reader.onload = async (ev) => {
       const pic = ev.target.result;
       setProfilePic(pic);
-      await setDoc(
-        doc(db, "profiles", session.uid),
-        { picture: pic, username: profileForm.username },
-        { merge: true },
-      );
+      setProfileError("");
+      try {
+        const currentUsername =
+          profileForm.username?.toLowerCase().trim() ||
+          session.email.split("@")[0];
+        await setDoc(
+          doc(db, "profiles", session.uid),
+          { picture: pic, username: currentUsername, updatedAt: new Date() },
+          { merge: true },
+        );
+        await setDoc(
+          doc(db, "users", session.uid),
+          { picture: pic, updatedAt: new Date() },
+          { merge: true },
+        );
+        setProfileSaved(true);
+        setTimeout(() => setProfileSaved(false), 2500);
+      } catch (err) {
+        console.error("Image save error:", err);
+        setProfileError("Failed to save image. Please try again.");
+      }
     };
+    reader.onerror = () => setProfileError("Failed to read image file.");
     reader.readAsDataURL(file);
   };
 
@@ -470,26 +523,74 @@ export default function Dashboard() {
     }
   };
 
+  // FIXED #2: Withdraw validation with popup error
   const handleWithdraw = () => {
-    if (!withdrawAmount || parseFloat(withdrawAmount) <= 0) return;
+    setWithdrawError("");
+    if (!withdrawAmount || parseFloat(withdrawAmount) <= 0) {
+      setWithdrawError("Please enter a valid withdrawal amount.");
+      return;
+    }
+    if (!withdrawWallet || withdrawWallet.trim().length < 5) {
+      setWithdrawError("Please enter your preferred wallet/payment details.");
+      return;
+    }
+    if (parseFloat(withdrawAmount) > balance) {
+      setWithdrawError("Withdrawal amount exceeds your available balance.");
+      return;
+    }
     navigate("/withdrawal-support");
+  };
+
+  // FIXED #3: Export transactions to CSV
+  const handleExportTransactions = () => {
+    if (userTransactions.length === 0) {
+      setWithdrawError("No transactions to export.");
+      return;
+    }
+    const headers = ["VSN", "Type", "Status", "Amount", "Date", "Description"];
+    const rows = userTransactions.map((t) => [
+      t.id.slice(-6).toUpperCase(),
+      t.type || "",
+      t.status || "",
+      (t.type === "deposit" || t.type === "growth" ? "+" : "-") +
+        "$" +
+        formatMoney(t.amount),
+      t.timestamp ? t.timestamp.toLocaleString() : "",
+      t.description || "",
+    ]);
+    const csvContent = [
+      headers.join(","),
+      ...rows.map((row) =>
+        row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","),
+      ),
+    ].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute(
+      "download",
+      `omnidev_transactions_${new Date().toISOString().split("T")[0]}.csv`,
+    );
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   if (!session) return null;
   const displayName =
     profileForm.username || session?.email?.split("@")[0] || "";
 
-  // ── Bot display config based on phase ──
   const getBotDisplay = () => {
     switch (botPhase) {
       case "activated":
         return {
           text: "Bot Trading Activated",
           subText: "OmniDev is actively trading on your behalf",
-          dotColor: "#0d9488",
-          bgColor: "rgba(13,148,136,0.1)",
-          borderColor: "rgba(13,148,136,0.3)",
-          textColor: "#0d9488",
+          dotColor: "#8b5cf6",
+          bgColor: "rgba(139,92,246,0.1)",
+          borderColor: "rgba(139,92,246,0.3)",
+          textColor: "#8b5cf6",
         };
       case "analysing":
         return {
@@ -517,6 +618,11 @@ export default function Dashboard() {
   return (
     <>
       <style>{`
+        .txn-scroll { scrollbar-width: thin; scrollbar-color: #333 #111; }
+        .txn-scroll::-webkit-scrollbar { width: 6px; }
+        .txn-scroll::-webkit-scrollbar-track { background: #111; }
+        .txn-scroll::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+        .txn-scroll::-webkit-scrollbar-thumb:hover { background: #0d9488; }
         @media (max-width: 768px) {
           .mobile-bottom-nav { display: flex !important; }
           .dash-main { padding-bottom: 68px !important; }
@@ -633,7 +739,6 @@ export default function Dashboard() {
           overflow: "hidden",
         }}
       >
-        {/* ── HEADER ── */}
         <header
           style={{
             flexShrink: 0,
@@ -751,7 +856,6 @@ export default function Dashboard() {
             />
           )}
 
-          {/* ── SIDEBAR ── */}
           <aside
             className="dash-sidebar"
             style={{
@@ -1029,7 +1133,6 @@ export default function Dashboard() {
             </div>
           </aside>
 
-          {/* ── MAIN ── */}
           <main
             className="dash-main"
             style={{
@@ -1056,11 +1159,9 @@ export default function Dashboard() {
                   "radial-gradient(ellipse 75% 75% at 50% 50%,transparent 35%,black 150%)",
               }}
             />
-
             <div style={{ position: "relative", zIndex: 2, flexShrink: 0 }}>
               <TickerBar />
             </div>
-
             <div
               style={{
                 flex: 1,
@@ -1076,7 +1177,7 @@ export default function Dashboard() {
                   margin: "0 auto",
                 }}
               >
-                {/* ══════════════════ DASHBOARD TAB ══════════════════ */}
+                {/* DASHBOARD TAB */}
                 {activeTab === "dashboard" && (
                   <div>
                     <div style={{ marginBottom: "24px" }}>
@@ -1192,7 +1293,6 @@ export default function Dashboard() {
                         marginBottom: "28px",
                       }}
                     >
-                      {/* Balance card */}
                       <div
                         style={{
                           background: "#111",
@@ -1296,7 +1396,6 @@ export default function Dashboard() {
                             )}
                           </button>
                         </div>
-
                         <div
                           style={{
                             display: "flex",
@@ -1337,8 +1436,6 @@ export default function Dashboard() {
                             Connect Wallet
                           </button>
                         </div>
-
-                        {/* ── BOT STATUS BADGE ── */}
                         <div
                           style={{
                             display: "inline-flex",
@@ -1391,7 +1488,6 @@ export default function Dashboard() {
                         )}
                       </div>
 
-                      {/* Transaction count card */}
                       <div
                         style={{
                           background: "#111",
@@ -1448,7 +1544,7 @@ export default function Dashboard() {
                       </div>
                     </div>
 
-                    {/* Recent transactions */}
+                    {/* Recent transactions - FIXED: increased header height */}
                     <div>
                       <div
                         style={{
@@ -1487,7 +1583,7 @@ export default function Dashboard() {
                         style={{
                           background: "#0d9488",
                           borderRadius: "12px 12px 0 0",
-                          padding: "11px 18px",
+                          padding: "16px 18px",
                         }}
                       >
                         <div
@@ -1511,7 +1607,10 @@ export default function Dashboard() {
                           border: "1px solid #222",
                           borderTop: "none",
                           borderRadius: "0 0 12px 12px",
+                          maxHeight: "420px",
+                          overflowY: "auto",
                         }}
+                        className="txn-scroll"
                       >
                         {userTransactions.length === 0 ? (
                           <div
@@ -1584,7 +1683,7 @@ export default function Dashboard() {
                               <span
                                 style={{
                                   color:
-                                    t.type === "deposit"
+                                    t.type === "deposit" || t.type === "growth"
                                       ? "#0d9488"
                                       : "#ef4444",
                                   fontSize: "13px",
@@ -1592,8 +1691,10 @@ export default function Dashboard() {
                                   textAlign: "right",
                                 }}
                               >
-                                {t.type === "deposit" ? "+" : "-"}$
-                                {formatMoney(t.amount)}
+                                {t.type === "deposit" || t.type === "growth"
+                                  ? "+"
+                                  : "-"}
+                                ${formatMoney(t.amount)}
                               </span>
                             </div>
                           ))
@@ -1603,7 +1704,7 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                {/* ══════════════════ DEPOSIT TAB ══════════════════ */}
+                {/* DEPOSIT TAB */}
                 {activeTab === "deposit" && (
                   <div
                     style={{
@@ -1666,7 +1767,7 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                {/* ══════════════════ WITHDRAW TAB ══════════════════ */}
+                {/* WITHDRAW TAB */}
                 {activeTab === "withdraw" && (
                   <div
                     style={{
@@ -1697,6 +1798,46 @@ export default function Dashboard() {
                       Withdraw your USD into your bank account or preferred
                       payment method
                     </p>
+
+                    {/* FIXED: Withdraw error popup */}
+                    {withdrawError && (
+                      <div
+                        style={{
+                          background: "rgba(239,68,68,0.1)",
+                          border: "1px solid rgba(239,68,68,0.3)",
+                          borderRadius: "12px",
+                          padding: "14px 16px",
+                          marginBottom: "20px",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "10px",
+                          animation: "popIn 0.3s ease",
+                        }}
+                      >
+                        <svg
+                          width="20"
+                          height="20"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="#ef4444"
+                          strokeWidth="2"
+                        >
+                          <circle cx="12" cy="12" r="10" />
+                          <line x1="12" y1="8" x2="12" y2="12" />
+                          <line x1="12" y1="16" x2="12.01" y2="16" />
+                        </svg>
+                        <span
+                          style={{
+                            color: "#f87171",
+                            fontSize: "14px",
+                            fontWeight: 600,
+                          }}
+                        >
+                          {withdrawError}
+                        </span>
+                      </div>
+                    )}
+
                     <div
                       style={{
                         display: "flex",
@@ -1722,7 +1863,9 @@ export default function Dashboard() {
                               background: "rgba(13,148,136,0.1)",
                               padding: "2px 8px",
                               borderRadius: "6px",
+                              cursor: "pointer",
                             }}
+                            onClick={() => setWithdrawAmount(String(balance))}
                           >
                             Max
                           </span>
@@ -1731,7 +1874,10 @@ export default function Dashboard() {
                           type="number"
                           placeholder="Enter USD Amount"
                           value={withdrawAmount}
-                          onChange={(e) => setWithdrawAmount(e.target.value)}
+                          onChange={(e) => {
+                            setWithdrawAmount(e.target.value);
+                            setWithdrawError("");
+                          }}
                           style={{
                             width: "100%",
                             boxSizing: "border-box",
@@ -1760,7 +1906,10 @@ export default function Dashboard() {
                           rows={4}
                           placeholder="Enter Your preferred Wallet"
                           value={withdrawWallet}
-                          onChange={(e) => setWithdrawWallet(e.target.value)}
+                          onChange={(e) => {
+                            setWithdrawWallet(e.target.value);
+                            setWithdrawError("");
+                          }}
                           style={{
                             width: "100%",
                             boxSizing: "border-box",
@@ -1794,7 +1943,7 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                {/* ══════════════════ TRANSACTIONS TAB ══════════════════ */}
+                {/* TRANSACTIONS TAB */}
                 {activeTab === "transactions" && (
                   <div>
                     <h2
@@ -1844,8 +1993,10 @@ export default function Dashboard() {
                         <option>All Types</option>
                         <option>Deposit</option>
                         <option>Withdrawal</option>
+                        <option>Growth</option>
                       </select>
                       <button
+                        onClick={handleExportTransactions}
                         style={{
                           padding: "10px 20px",
                           background: "#0d9488",
@@ -1855,8 +2006,23 @@ export default function Dashboard() {
                           fontSize: "13px",
                           fontWeight: 600,
                           cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "6px",
                         }}
                       >
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                        >
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                          <polyline points="7 10 12 15 17 10" />
+                          <line x1="12" y1="15" x2="12" y2="3" />
+                        </svg>
                         Export
                       </button>
                     </div>
@@ -1864,7 +2030,7 @@ export default function Dashboard() {
                       style={{
                         background: "#0d9488",
                         borderRadius: "12px 12px 0 0",
-                        padding: "11px 18px",
+                        padding: "16px 18px",
                       }}
                     >
                       <div
@@ -1888,7 +2054,10 @@ export default function Dashboard() {
                         border: "1px solid #222",
                         borderTop: "none",
                         borderRadius: "0 0 12px 12px",
+                        maxHeight: "520px",
+                        overflowY: "auto",
                       }}
+                      className="txn-scroll"
                     >
                       {userTransactions.length === 0 ? (
                         <div style={{ padding: "48px", textAlign: "center" }}>
@@ -1956,14 +2125,18 @@ export default function Dashboard() {
                             <span
                               style={{
                                 color:
-                                  t.type === "deposit" ? "#0d9488" : "#ef4444",
+                                  t.type === "deposit" || t.type === "growth"
+                                    ? "#0d9488"
+                                    : "#ef4444",
                                 fontSize: "13px",
                                 fontWeight: 700,
                                 textAlign: "right",
                               }}
                             >
-                              {t.type === "deposit" ? "+" : "-"}$
-                              {formatMoney(t.amount)}
+                              {t.type === "deposit" || t.type === "growth"
+                                ? "+"
+                                : "-"}
+                              ${formatMoney(t.amount)}
                             </span>
                           </div>
                         ))
@@ -1972,7 +2145,7 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                {/* ══════════════════ PROFILE TAB ══════════════════ */}
+                {/* PROFILE TAB */}
                 {activeTab === "profile" && (
                   <div
                     style={{
@@ -2400,7 +2573,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* ── MOBILE BOTTOM NAV ── */}
+      {/* MOBILE BOTTOM NAV */}
       <div
         className="mobile-bottom-nav"
         style={{

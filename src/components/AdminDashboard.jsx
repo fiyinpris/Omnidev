@@ -15,14 +15,17 @@ import {
 
 const ADMIN_EMAIL = "fiyinolaleke@gmail.com";
 
+// FIXED: Truncate to 2 decimals without floating point errors - NO ROUNDING
 const formatMoney = (val) => {
   if (val === undefined || val === null) return "0.00";
   const num = typeof val === "number" ? val : parseFloat(val);
   if (isNaN(num)) return "0.00";
-  return num.toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  if (Object.is(num, -0)) return "0.00";
+  const str = num.toFixed(10);
+  const [intPart, decPart] = str.split(".");
+  const truncatedDec = decPart ? decPart.substring(0, 2) : "00";
+  const withCommas = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return `${withCommas}.${truncatedDec}`;
 };
 
 export default function AdminDashboard() {
@@ -30,20 +33,17 @@ export default function AdminDashboard() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedUser, setSelectedUser] = useState(null);
-
   const [fundAmount, setFundAmount] = useState("");
   const [analysingHours, setAnalysingHours] = useState("0");
   const [analysingMins, setAnalysingMins] = useState("45");
   const [fundLoading, setFundLoading] = useState(false);
   const [fundSuccess, setFundSuccess] = useState("");
   const [fundError, setFundError] = useState("");
-
   const [targetAmount, setTargetAmount] = useState("");
   const [botHours, setBotHours] = useState("1");
   const [targetLoading, setTargetLoading] = useState(false);
   const [targetSuccess, setTargetSuccess] = useState("");
   const [targetError, setTargetError] = useState("");
-
   const [transactions, setTransactions] = useState([]);
   const navigate = useNavigate();
 
@@ -132,33 +132,26 @@ export default function AdminDashboard() {
   };
 
   const handleFundUser = async () => {
-    // Parse exact value — no rounding
     const rawAmount = fundAmount.trim();
     const amount = parseFloat(rawAmount);
-
     if (!selectedUser || !rawAmount || isNaN(amount) || amount <= 0) {
       setFundError("Please select a user and enter a valid deposit amount.");
       return;
     }
-
     const now = Timestamp.now();
     const totalAnalysingMs =
       (parseInt(analysingHours) || 0) * 60 * 60 * 1000 +
       (parseInt(analysingMins) || 0) * 60 * 1000;
-    // Default to 45 min if both are 0
     const analysingMs =
       totalAnalysingMs > 0 ? totalAnalysingMs : 45 * 60 * 1000;
     const analysingExpiresAt = Timestamp.fromMillis(
       now.toMillis() + analysingMs,
     );
-
     setFundLoading(true);
     setFundError("");
     setFundSuccess("");
-
     try {
       const userRef = doc(db, "users", selectedUser.uid);
-
       await updateDoc(userRef, {
         balance: amount,
         initialBalance: amount,
@@ -173,8 +166,6 @@ export default function AdminDashboard() {
         lastFundedAt: now,
         lastFundedAmount: amount,
       });
-
-      // Admin transaction — status starts as "analysing"
       const txnRef = doc(collection(db, "adminTransactions"));
       await setDoc(txnRef, {
         userId: selectedUser.uid,
@@ -189,8 +180,6 @@ export default function AdminDashboard() {
         adminEmail: adminUser.email,
         analysingExpiresAt: analysingExpiresAt,
       });
-
-      // User-facing transaction
       const userTxnRef = doc(
         collection(db, "users", selectedUser.uid, "transactions"),
       );
@@ -200,9 +189,8 @@ export default function AdminDashboard() {
         source: "admin",
         status: "completed",
         timestamp: now,
-        description: `Admin funded $${formatMoney(amount)} — Initial deposit`,
+        description: `Admin funded $${formatMoney(amount)} - Initial deposit`,
       });
-
       setFundSuccess(
         `Successfully funded $${formatMoney(amount)} to ${selectedUser.email}. OmniDev is now analysing the market.`,
       );
@@ -223,64 +211,98 @@ export default function AdminDashboard() {
     const rawTarget = targetAmount.trim();
     const target = parseFloat(rawTarget);
     const hours = parseInt(botHours) || 1;
-
     if (!selectedUser) {
       setTargetError("Please select a user.");
       return;
     }
     if (!selectedUser.hasBeenFunded) {
-      setTargetError("This user hasn't been funded yet. Fund them first.");
+      setTargetError("This user has not been funded yet. Fund them first.");
       return;
     }
-    if (!rawTarget || isNaN(target) || target <= selectedUser.initialBalance) {
-      setTargetError(
-        `Target must be greater than initial deposit ($${formatMoney(selectedUser.initialBalance)}).`,
-      );
+    if (!rawTarget || isNaN(target) || target <= 0) {
+      setTargetError(`Target amount must be greater than 0.`);
       return;
     }
-
     const now = Timestamp.now();
     const tradingMs = hours * 60 * 60 * 1000;
-    const botExpiresAt = Timestamp.fromMillis(now.toMillis() + tradingMs);
+
+    // Check if user is still in analysing phase
+    const analysingExpMs =
+      selectedUser.analysingExpiresAt?.toMillis?.() ||
+      selectedUser.analysingExpiresAt;
+    const isAnalysing =
+      !selectedUser.botExpiresAt &&
+      (selectedUser.botStatus === "analysing" ||
+        (analysingExpMs && Date.now() < analysingExpMs));
 
     setTargetLoading(true);
     setTargetError("");
     setTargetSuccess("");
-
     try {
       const userRef = doc(db, "users", selectedUser.uid);
 
-      await updateDoc(userRef, {
-        targetAmount: target,
-        botActive: true,
-        botStatus: "activated",
-        botActivatedAt: now,
-        botExpiresAt: botExpiresAt,
-        botHours: hours,
-        lastTargetSetAt: now,
-      });
+      if (isAnalysing) {
+        // Store as pending - will activate after analysing ends
+        await updateDoc(userRef, {
+          targetAmount: target,
+          botHours: hours,
+          pendingTarget: true,
+          pendingTargetSetAt: now,
+          botStatus: "analysing",
+        });
+        const txnRef = doc(collection(db, "adminTransactions"));
+        await setDoc(txnRef, {
+          userId: selectedUser.uid,
+          userEmail: selectedUser.email,
+          userName:
+            `${selectedUser.firstName} ${selectedUser.lastName}`.trim() ||
+            selectedUser.username,
+          initialAmount: selectedUser.initialBalance,
+          targetAmount: target,
+          botHours: hours,
+          type: "target_set",
+          timestamp: now,
+          status: "scheduled",
+          adminEmail: adminUser.email,
+          note: "Will activate after analysing completes",
+        });
+        setTargetSuccess(
+          `Target scheduled! $${formatMoney(selectedUser.initialBalance)} → $${formatMoney(selectedUser.initialBalance + target)} over ${hours}h. Will activate after OmniDev finishes analysing.`,
+        );
+      } else {
+        // Activate immediately
+        const botExpiresAt = Timestamp.fromMillis(now.toMillis() + tradingMs);
+        await updateDoc(userRef, {
+          targetAmount: target,
+          botActive: true,
+          botStatus: "activated",
+          botActivatedAt: now,
+          botExpiresAt: botExpiresAt,
+          botHours: hours,
+          pendingTarget: false,
+          lastTargetSetAt: now,
+        });
+        const txnRef = doc(collection(db, "adminTransactions"));
+        await setDoc(txnRef, {
+          userId: selectedUser.uid,
+          userEmail: selectedUser.email,
+          userName:
+            `${selectedUser.firstName} ${selectedUser.lastName}`.trim() ||
+            selectedUser.username,
+          initialAmount: selectedUser.initialBalance,
+          targetAmount: target,
+          botHours: hours,
+          type: "target_set",
+          timestamp: now,
+          status: "trading",
+          botExpiresAt: botExpiresAt,
+          adminEmail: adminUser.email,
+        });
+        setTargetSuccess(
+          `Target set! $${formatMoney(selectedUser.initialBalance)} → $${formatMoney(selectedUser.initialBalance + target)} over ${hours}h. Bot Trading Activated.`,
+        );
+      }
 
-      // Admin transaction — status starts as "trading"
-      const txnRef = doc(collection(db, "adminTransactions"));
-      await setDoc(txnRef, {
-        userId: selectedUser.uid,
-        userEmail: selectedUser.email,
-        userName:
-          `${selectedUser.firstName} ${selectedUser.lastName}`.trim() ||
-          selectedUser.username,
-        initialAmount: selectedUser.initialBalance,
-        targetAmount: target,
-        botHours: hours,
-        type: "target_set",
-        timestamp: now,
-        status: "trading",
-        botExpiresAt: botExpiresAt,
-        adminEmail: adminUser.email,
-      });
-
-      setTargetSuccess(
-        `Target set! $${formatMoney(selectedUser.initialBalance)} → $${formatMoney(target)} over ${hours}h. Bot Trading Activated.`,
-      );
       setTargetAmount("");
       setBotHours("1");
       setSelectedUser(null);
@@ -299,13 +321,20 @@ export default function AdminDashboard() {
     if (!user.hasBeenFunded) {
       return { text: "Not Funded", color: "#6b7280", dotColor: "#6b7280" };
     }
-
     const now = Date.now();
     const expiresAt = user.botExpiresAt?.toMillis?.() || user.botExpiresAt;
     const analysingExpiresAt =
       user.analysingExpiresAt?.toMillis?.() || user.analysingExpiresAt;
 
-    // Phase 3: everything expired
+    // Check if target is scheduled (set during analysing)
+    if (user.pendingTarget && !expiresAt) {
+      return {
+        text: "Target Set — Awaiting Analysis",
+        color: "#f59e0b",
+        dotColor: "#f59e0b",
+      };
+    }
+
     if (expiresAt && now > expiresAt) {
       return {
         text: "Bot Trading Disabled",
@@ -313,17 +342,13 @@ export default function AdminDashboard() {
         dotColor: "#ef4444",
       };
     }
-
-    // Phase 2: target set, trading active
     if (expiresAt && now <= expiresAt) {
       return {
         text: "Bot Trading Activated",
-        color: "#0d9488",
-        dotColor: "#0d9488",
+        color: "#8b5cf6",
+        dotColor: "#8b5cf6",
       };
     }
-
-    // Phase 1: funded, analysing
     if (analysingExpiresAt && now <= analysingExpiresAt) {
       return {
         text: "OmniDev Analysing Market",
@@ -332,8 +357,6 @@ export default function AdminDashboard() {
         analysing: true,
       };
     }
-
-    // Analysing done but no target yet
     if (user.hasBeenFunded && !expiresAt) {
       return {
         text: "OmniDev Analysing Market",
@@ -342,7 +365,6 @@ export default function AdminDashboard() {
         analysing: true,
       };
     }
-
     return {
       text: "Bot Trading Disabled",
       color: "#ef4444",
@@ -352,6 +374,7 @@ export default function AdminDashboard() {
 
   const getTransactionStatusDisplay = (t) => {
     const now = Date.now();
+    if (t.status === "scheduled") return "scheduled";
     if (t.type === "initial_fund") {
       const analysingExpires =
         t.analysingExpiresAt?.toMillis?.() || t.analysingExpiresAt;
@@ -439,7 +462,6 @@ export default function AdminDashboard() {
       </header>
 
       <div className="admin-grid" style={styles.grid}>
-        {/* === STEP 1: FUND USER === */}
         <div className="admin-card" style={styles.card}>
           <div style={styles.cardHeader}>
             <span style={styles.stepBadge}>1</span>
@@ -461,7 +483,7 @@ export default function AdminDashboard() {
               <option value="">Choose a user...</option>
               {users.map((u) => (
                 <option key={u.uid} value={u.uid}>
-                  {u.email} — {u.username || "No username"} — Balance: $
+                  {u.email} - {u.username || "No username"} - Balance: $
                   {formatMoney(u.balance)}{" "}
                   {u.hasBeenFunded ? "(Funded)" : "(New)"}
                 </option>
@@ -586,7 +608,7 @@ export default function AdminDashboard() {
             <p
               style={{ color: "#6b7280", fontSize: "12px", margin: "8px 0 0" }}
             >
-              Exact amount — no rounding applied.
+              Exact amount - no rounding applied.
             </p>
           </div>
 
@@ -667,7 +689,6 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {/* === STEP 2: SET TARGET === */}
         <div className="admin-card" style={styles.card}>
           <div style={styles.cardHeader}>
             <span style={{ ...styles.stepBadge, background: "#065f46" }}>
@@ -693,7 +714,7 @@ export default function AdminDashboard() {
                 .filter((u) => u.hasBeenFunded)
                 .map((u) => (
                   <option key={u.uid} value={u.uid}>
-                    {u.email} — Balance: ${formatMoney(u.balance)}{" "}
+                    {u.email} - Balance: ${formatMoney(u.balance)}{" "}
                     {u.botActive ? "(Active)" : "(Ready)"}
                   </option>
                 ))}
@@ -772,13 +793,15 @@ export default function AdminDashboard() {
                 <p style={styles.previewTitle}>📈 Growth Preview</p>
                 <p style={{ color: "#9ca3af", fontSize: "13px", margin: 0 }}>
                   ${formatMoney(selectedUser.initialBalance)} → $
-                  {formatMoney(parseFloat(targetAmount))} over {botHours}h
+                  {formatMoney(
+                    selectedUser.initialBalance + parseFloat(targetAmount),
+                  )}{" "}
+                  over {botHours}h
                   <br />
                   <span style={{ color: "#6b7280", fontSize: "12px" }}>
                     ~+$
                     {formatMoney(
-                      (parseFloat(targetAmount) - selectedUser.initialBalance) /
-                        (parseInt(botHours) * 6),
+                      parseFloat(targetAmount) / (parseInt(botHours) * 6),
                     )}{" "}
                     every 10 minutes
                   </span>
@@ -829,7 +852,6 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {/* === ALL USERS TABLE === */}
         <div
           className="admin-card admin-card-full"
           style={{ ...styles.card, gridColumn: "1 / -1" }}
@@ -841,6 +863,8 @@ export default function AdminDashboard() {
             className="admin-table-wrap"
             style={{
               overflowX: "auto",
+              overflowY: "auto",
+              maxHeight: "480px",
               borderRadius: "12px",
               border: "1px solid #222",
             }}
@@ -1029,7 +1053,6 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {/* === TRANSACTIONS TABLE === */}
       <div style={{ ...styles.card, marginTop: "24px" }}>
         <h2 style={{ ...styles.cardTitle, marginBottom: "16px" }}>
           📊 Recent Funding Transactions
@@ -1043,6 +1066,8 @@ export default function AdminDashboard() {
             className="admin-table-wrap"
             style={{
               overflowX: "auto",
+              overflowY: "auto",
+              maxHeight: "480px",
               borderRadius: "12px",
               border: "1px solid #222",
             }}
@@ -1079,19 +1104,22 @@ export default function AdminDashboard() {
                     liveStatus === "completed"
                       ? "#0d9488"
                       : liveStatus === "trading"
-                        ? "#f59e0b"
+                        ? "#8b5cf6"
                         : liveStatus === "analysing"
                           ? "#3b82f6"
-                          : "#0d9488";
+                          : liveStatus === "scheduled"
+                            ? "#f59e0b"
+                            : "#0d9488";
                   const statusBg =
                     liveStatus === "completed"
                       ? "rgba(13,148,136,0.15)"
                       : liveStatus === "trading"
-                        ? "rgba(245,158,11,0.15)"
+                        ? "rgba(139,92,246,0.15)"
                         : liveStatus === "analysing"
                           ? "rgba(59,130,246,0.15)"
-                          : "rgba(13,148,136,0.15)";
-
+                          : liveStatus === "scheduled"
+                            ? "rgba(245,158,11,0.15)"
+                            : "rgba(13,148,136,0.15)";
                   return (
                     <tr
                       key={t.id}

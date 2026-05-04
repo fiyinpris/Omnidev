@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useCryptoPrices, fmtPrice } from "../api/crypto";
 
 const COINS = [
   {
@@ -54,7 +55,8 @@ const COINS = [
   {
     symbol: "POL",
     id: "polygon-ecosystem-token",
-    logo: "https://assets.coingecko.com/coins/images/32440/small/polygon-ecosystem-token.png",
+    // ✅ FIXED: Updated POL logo URL (CoinGecko's current asset URL)
+    logo: "https://assets.coingecko.com/coins/images/32440/small/polygon.png?1696533695",
   },
   {
     symbol: "LTC",
@@ -73,102 +75,57 @@ const COINS = [
   },
 ];
 
-const IDS = COINS.map((c) => c.id).join(",");
-const POLL_INTERVAL = import.meta.env.DEV ? 30_000 : 60_000;
-
 export const TickerBar = () => {
-  const [prices, setPrices] = useState({});
+  // Poll every 10 seconds
+  const { prices: apiPrices, error } = useCryptoPrices(COINS, 10_000);
   const [flash, setFlash] = useState({});
   const prevRef = useRef({});
   const timers = useRef({});
-  const retryTimer = useRef(null);
 
+  // ✅ ENHANCED: Flash effect with better comparison
   useEffect(() => {
-    let mounted = true;
+    const newFlashes = {};
+    let hasChanges = false;
 
-    const fetchPrices = async (retryDelay = 0) => {
-      if (retryDelay > 0) {
-        retryTimer.current = setTimeout(() => fetchPrices(0), retryDelay);
-        return;
-      }
-      try {
-        const url = `https://api.coingecko.com/api/v3/simple/price?ids=${IDS}&vs_currencies=usd&include_24hr_change=true`;
-        const res = await fetch(url, {
-          headers: { Accept: "application/json" },
-        });
+    for (const coin of COINS) {
+      const data = apiPrices[coin.symbol];
+      if (!data || data.price == null) continue;
 
-        if (res.status === 429) {
-          if (mounted) fetchPrices(60_000);
-          return;
-        }
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!mounted) return;
+      const prevPrice = prevRef.current[coin.symbol];
 
-        const newPrices = {};
-        const newFlashes = {};
+      // Only flash if we have a previous price and it actually changed
+      if (prevPrice != null && Math.abs(prevPrice - data.price) > 0.000001) {
+        const dir = data.price > prevPrice ? "up" : "down";
+        newFlashes[coin.symbol] = dir;
+        hasChanges = true;
 
-        for (const coin of COINS) {
-          const val = data[coin.id];
-          if (!val) continue;
-          const newPrice = val.usd;
-          if (newPrice == null || isNaN(newPrice)) continue;
-
-          const prevPrice = prevRef.current[coin.symbol]?.price;
-          newPrices[coin.symbol] = {
-            price: newPrice,
-            change: val.usd_24h_change ?? 0,
-          };
-
-          if (prevPrice != null) {
-            const dir =
-              newPrice > prevPrice
-                ? "up"
-                : newPrice < prevPrice
-                  ? "down"
-                  : null;
-            if (dir) {
-              newFlashes[coin.symbol] = dir;
-              clearTimeout(timers.current[coin.symbol]);
-              timers.current[coin.symbol] = setTimeout(() => {
-                if (mounted) setFlash((f) => ({ ...f, [coin.symbol]: null }));
-              }, 800);
-            }
-          }
-          prevRef.current[coin.symbol] = { price: newPrice };
+        // Clear previous timer
+        if (timers.current[coin.symbol]) {
+          clearTimeout(timers.current[coin.symbol]);
         }
 
-        setPrices(newPrices);
-        if (Object.keys(newFlashes).length > 0)
-          setFlash((f) => ({ ...f, ...newFlashes }));
-      } catch (err) {
-        if (err?.name !== "TypeError")
-          console.error("Ticker fetch error:", err);
+        // Set new timer to clear flash
+        timers.current[coin.symbol] = setTimeout(() => {
+          setFlash((f) => ({ ...f, [coin.symbol]: null }));
+        }, 800);
       }
-    };
 
-    fetchPrices();
-    const interval = setInterval(fetchPrices, POLL_INTERVAL);
+      // Always update ref with current price
+      prevRef.current[coin.symbol] = data.price;
+    }
 
+    if (hasChanges) {
+      setFlash((f) => ({ ...f, ...newFlashes }));
+    }
+  }, [apiPrices]);
+
+  // Cleanup timers on unmount
+  useEffect(() => {
     return () => {
-      mounted = false;
-      clearInterval(interval);
-      clearTimeout(retryTimer.current);
       Object.values(timers.current).forEach(clearTimeout);
     };
   }, []);
 
-  const fmt = (p) => {
-    if (p == null || isNaN(p)) return null; // return null so we can show shimmer
-    return p < 1
-      ? p.toFixed(4)
-      : p.toLocaleString("en-US", {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
-        });
-  };
-
-  // 2 copies — pairs with -50% keyframe for seamless loop
   const items = [...COINS, ...COINS];
 
   return (
@@ -191,6 +148,14 @@ export const TickerBar = () => {
           0%, 100% { opacity: 0.25; }
           50%       { opacity: 0.6; }
         }
+        @keyframes flashUp {
+          0% { background-color: rgba(34, 197, 94, 0.3); }
+          100% { background-color: transparent; }
+        }
+        @keyframes flashDown {
+          0% { background-color: rgba(239, 68, 68, 0.3); }
+          100% { background-color: transparent; }
+        }
       `}</style>
 
       <div
@@ -205,14 +170,14 @@ export const TickerBar = () => {
         }}
       >
         {items.map((coin, i) => {
-          const data = prices[coin.symbol];
+          const data = apiPrices[coin.symbol];
           const fl = flash[coin.symbol];
-          const formattedPrice = fmt(data?.price);
+          const formattedPrice = fmtPrice(data?.price);
           const isLoaded = formattedPrice !== null;
 
           return (
             <span
-              key={i}
+              key={`${coin.symbol}-${i}`}
               style={{
                 display: "inline-flex",
                 alignItems: "center",
@@ -221,6 +186,14 @@ export const TickerBar = () => {
                 padding: "0 24px",
                 borderRight: "1px solid #1f1f1f",
                 flexShrink: 0,
+                // ✅ ENHANCED: Background flash animation
+                animation:
+                  fl === "up"
+                    ? "flashUp 0.8s ease-out"
+                    : fl === "down"
+                      ? "flashDown 0.8s ease-out"
+                      : "none",
+                borderRadius: "4px",
               }}
             >
               <img
@@ -231,13 +204,19 @@ export const TickerBar = () => {
                   height: "18px",
                   borderRadius: "50%",
                   flexShrink: 0,
+                  // ✅ FIX: Handle broken images gracefully
+                  objectFit: "cover",
+                }}
+                onError={(e) => {
+                  // Fallback if logo fails to load
+                  e.target.style.display = "none";
+                  e.target.nextSibling.style.marginLeft = "0";
                 }}
               />
               <span style={{ color: "#ccc", fontWeight: 600 }}>
                 {coin.symbol}
               </span>
 
-              {/* Price — shimmer pulse while loading, real value once loaded */}
               <span
                 style={{
                   color: isLoaded
@@ -262,12 +241,12 @@ export const TickerBar = () => {
                 {isLoaded ? `$${formattedPrice}` : ""}
               </span>
 
-              {/* Change % — only show when loaded */}
-              {isLoaded && data?.price != null && (
+              {isLoaded && data?.change != null && (
                 <span
                   style={{
                     color: data.change >= 0 ? "#22c55e" : "#ef4444",
                     fontSize: "12px",
+                    fontWeight: 500,
                   }}
                 >
                   {data.change >= 0 ? "▲" : "▼"}{" "}

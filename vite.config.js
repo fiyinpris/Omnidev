@@ -14,4 +14,14 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  server: {
+    proxy: {
+      "/api/coingecko": {
+        target: "https://api.coingecko.com", // ✅ Removed trailing space
+        changeOrigin: true,
+        secure: true,
+        rewrite: (path) => path.replace(/^\/api\/coingecko/, ""),
+      },
+    },
+  },
 });

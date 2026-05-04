@@ -835,3 +835,94 @@ input {
   align-items: center;
   gap: 6px;
 }
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+@keyframes heroUp {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes drawAssetLine {
+  from {
+    stroke-dashoffset: 300;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes floatPulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+  50% {
+    transform: scale(1.4);
+    opacity: 1;
+  }
+}
+
+/* FIXED TYPEWRITER - Fixed width container, deletes from LEFT */
+.tw-word-wrap {
+  display: inline-block;
+  width: 8ch; /* FIXED width - never changes, prevents "Than Ever" shifting */
+  text-align: left; /* Text anchors to LEFT edge */
+  height: 1.2em; /* Prevents clipping */
+  line-height: 1.2em;
+  vertical-align: middle;
+  overflow: visible; /* Allow text to show fully */
+}
+
+.tw-inner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start; /* Content starts from LEFT edge */
+  width: 100%;
+  height: 100%;
+  color: #0d9488;
+  white-space: nowrap;
+}
+
+/* Consistent behavior across all screen sizes */
+@media (min-width: 768px) {
+  .tw-word-wrap {
+    text-align: left;
+  }
+  .tw-inner {
+    justify-content: flex-start;
+    width: 100%;
+  }
+}
+
+@media (max-width: 767px) {
+  .tw-word-wrap {
+    text-align: left;
+  }
+  .tw-inner {
+    justify-content: flex-start;
+    width: 100%;
+  }
+}
+
+.tw-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 0.9em; /* reduced cursor height */
+  background: #0d9488;
+  margin-left: 2px;
+  animation: blink 1s infinite;
+  flex-shrink: 0;
+}
