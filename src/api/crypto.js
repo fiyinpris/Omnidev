@@ -1,24 +1,22 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 
 /**
- * Shared CoinGecko API client with FAST polling (10s), smart caching,
+ * Shared CoinGecko API client with 30s polling, smart caching,
  * deduplication, and rate-limit backoff.
+ * Routes through /api/coingecko proxy to avoid CORS.
  */
 
-const STALE_WHILE_REVALIDATE = 10_000;
-const RATE_LIMIT_BACKOFF = 60_000;
+const STALE_WHILE_REVALIDATE = 30_000; // treat data fresh for 30s
+const RATE_LIMIT_BACKOFF = 65_000; // wait 65s after a 429
 const REQUEST_TIMEOUT = 8_000;
-const MIN_REQUEST_INTERVAL = 5_000;
+const MIN_REQUEST_INTERVAL = 25_000; // never hit the API more often than every 25s
 
 class CryptoApiClient {
   constructor() {
     this.cache = new Map();
     this.backoffUntil = 0;
     this.pendingPromise = null;
-    // Proxy handles the base URL in dev; direct in production
-    this.baseUrl = import.meta.env.DEV
-      ? "/api/coingecko/api/v3"
-      : "https://api.coingecko.com/api/v3";
+    this.baseUrl = "/api/coingecko/api/v3/simple/price";
   }
 
   async fetchPrices(coins) {
@@ -26,19 +24,23 @@ class CryptoApiClient {
     const cacheKey = coins.map((c) => c.id).join(",");
     const cached = this.cache.get(cacheKey);
 
+    // Fresh cache hit — return immediately, no request
     if (cached && now - cached.ts < STALE_WHILE_REVALIDATE) {
       return cached.data;
     }
 
+    // Still in rate-limit backoff window
     if (now < this.backoffUntil) {
       console.warn("[CryptoApi] Rate limited. Using stale data.");
       return cached?.data ?? {};
     }
 
+    // Throttle: don't re-request the same coins within MIN_REQUEST_INTERVAL
     if (cached && now - cached.lastRequestTs < MIN_REQUEST_INTERVAL) {
       return cached.data;
     }
 
+    // Deduplicate concurrent callers — return the in-flight promise
     if (this.pendingPromise) {
       return this.pendingPromise;
     }
@@ -52,15 +54,7 @@ class CryptoApiClient {
 
   async _doFetch(coins, cacheKey) {
     const ids = coins.map((c) => c.id).join(",");
-
-    // Build URL properly
-    const endpoint = `${this.baseUrl}/simple/price`;
-    const url = new URL(
-      this.baseUrl.startsWith("http")
-        ? endpoint
-        : `${window.location.origin}${endpoint}`,
-    );
-
+    const url = new URL(`${window.location.origin}${this.baseUrl}`);
     url.searchParams.append("ids", ids);
     url.searchParams.append("vs_currencies", "usd");
     url.searchParams.append("include_24hr_change", "true");
@@ -77,12 +71,14 @@ class CryptoApiClient {
       clearTimeout(timeoutId);
 
       if (res.status === 429) {
-        this.backoffUntil = Date.now() + RATE_LIMIT_BACKOFF;
         const retryAfter = res.headers.get("retry-after");
-        if (retryAfter) {
-          this.backoffUntil = Date.now() + parseInt(retryAfter) * 1000;
-        }
-        console.warn("[CryptoApi] 429 — backing off");
+        this.backoffUntil = retryAfter
+          ? Date.now() + parseInt(retryAfter, 10) * 1000
+          : Date.now() + RATE_LIMIT_BACKOFF;
+        console.warn(
+          "[CryptoApi] 429 — backing off until",
+          new Date(this.backoffUntil).toLocaleTimeString(),
+        );
         return this.cache.get(cacheKey)?.data ?? {};
       }
 
@@ -91,8 +87,8 @@ class CryptoApiClient {
       }
 
       const raw = await res.json();
-
       const data = {};
+
       for (const coin of coins) {
         const val = raw[coin.id];
         if (!val) continue;
@@ -107,6 +103,7 @@ class CryptoApiClient {
         ts: Date.now(),
         lastRequestTs: Date.now(),
       });
+
       return data;
     } catch (err) {
       if (err.name === "AbortError") {
@@ -126,11 +123,15 @@ class CryptoApiClient {
 
 const globalClient = new CryptoApiClient();
 
-export function useCryptoPrices(coins, intervalMs = 10_000) {
+export function useCryptoPrices(coins, intervalMs = 30_000) {
   const [prices, setPrices] = useState({});
   const [error, setError] = useState(null);
   const intervalRef = useRef(null);
   const pricesRef = useRef({});
+
+  // Stable cache key so useCallback doesn't rebuild on every render
+  // even if the caller passed a new array reference with the same coins.
+  const coinsKey = coins.map((c) => c.id).join(",");
 
   const fetchPrices = useCallback(async () => {
     const data = await globalClient.fetchPrices(coins);
@@ -143,23 +144,19 @@ export function useCryptoPrices(coins, intervalMs = 10_000) {
         "Unable to fetch prices. API may be rate-limited or unavailable.",
       );
     }
-  }, [coins]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [coinsKey]); // ← string dep, not array reference
 
   useEffect(() => {
     let mounted = true;
-    const init = async () => {
-      if (!mounted) return;
-      await fetchPrices();
-    };
-    init();
 
-    intervalRef.current = setInterval(
-      () => {
-        if (!mounted) return;
-        fetchPrices();
-      },
-      Math.max(intervalMs, 5_000),
-    );
+    fetchPrices(); // initial fetch on mount
+
+    // Start interval AFTER the first fetch, so we don't double-fire
+    const effectiveInterval = Math.max(intervalMs, 30_000);
+    intervalRef.current = setInterval(() => {
+      if (mounted) fetchPrices();
+    }, effectiveInterval);
 
     return () => {
       mounted = false;

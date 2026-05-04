@@ -17,7 +17,7 @@ export default defineConfig({
   server: {
     proxy: {
       "/api/coingecko": {
-        target: "https://api.coingecko.com", // ✅ Removed trailing space
+        target: "https://api.coingecko.com",
         changeOrigin: true,
         secure: true,
         rewrite: (path) => path.replace(/^\/api\/coingecko/, ""),

@@ -55,7 +55,6 @@ const COINS = [
   {
     symbol: "POL",
     id: "polygon-ecosystem-token",
-    // ✅ FIXED: Updated POL logo URL (CoinGecko's current asset URL)
     logo: "https://assets.coingecko.com/coins/images/32440/small/polygon.png?1696533695",
   },
   {
@@ -76,13 +75,12 @@ const COINS = [
 ];
 
 export const TickerBar = () => {
-  // Poll every 10 seconds
-  const { prices: apiPrices, error } = useCryptoPrices(COINS, 10_000);
+  // Poll every 30 seconds — stays well within CoinGecko free-tier limits
+  const { prices: apiPrices, error } = useCryptoPrices(COINS, 30_000);
   const [flash, setFlash] = useState({});
   const prevRef = useRef({});
   const timers = useRef({});
 
-  // ✅ ENHANCED: Flash effect with better comparison
   useEffect(() => {
     const newFlashes = {};
     let hasChanges = false;
@@ -93,38 +91,28 @@ export const TickerBar = () => {
 
       const prevPrice = prevRef.current[coin.symbol];
 
-      // Only flash if we have a previous price and it actually changed
       if (prevPrice != null && Math.abs(prevPrice - data.price) > 0.000001) {
         const dir = data.price > prevPrice ? "up" : "down";
         newFlashes[coin.symbol] = dir;
         hasChanges = true;
 
-        // Clear previous timer
-        if (timers.current[coin.symbol]) {
+        if (timers.current[coin.symbol])
           clearTimeout(timers.current[coin.symbol]);
-        }
-
-        // Set new timer to clear flash
         timers.current[coin.symbol] = setTimeout(() => {
           setFlash((f) => ({ ...f, [coin.symbol]: null }));
         }, 800);
       }
 
-      // Always update ref with current price
       prevRef.current[coin.symbol] = data.price;
     }
 
-    if (hasChanges) {
-      setFlash((f) => ({ ...f, ...newFlashes }));
-    }
+    if (hasChanges) setFlash((f) => ({ ...f, ...newFlashes }));
   }, [apiPrices]);
 
-  // Cleanup timers on unmount
-  useEffect(() => {
-    return () => {
-      Object.values(timers.current).forEach(clearTimeout);
-    };
-  }, []);
+  useEffect(
+    () => () => Object.values(timers.current).forEach(clearTimeout),
+    [],
+  );
 
   const items = [...COINS, ...COINS];
 
@@ -186,7 +174,6 @@ export const TickerBar = () => {
                 padding: "0 24px",
                 borderRight: "1px solid #1f1f1f",
                 flexShrink: 0,
-                // ✅ ENHANCED: Background flash animation
                 animation:
                   fl === "up"
                     ? "flashUp 0.8s ease-out"
@@ -204,13 +191,10 @@ export const TickerBar = () => {
                   height: "18px",
                   borderRadius: "50%",
                   flexShrink: 0,
-                  // ✅ FIX: Handle broken images gracefully
                   objectFit: "cover",
                 }}
                 onError={(e) => {
-                  // Fallback if logo fails to load
                   e.target.style.display = "none";
-                  e.target.nextSibling.style.marginLeft = "0";
                 }}
               />
               <span style={{ color: "#ccc", fontWeight: 600 }}>
