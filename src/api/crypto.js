@@ -16,7 +16,7 @@ class CryptoApiClient {
     this.cache = new Map();
     this.backoffUntil = 0;
     this.pendingPromise = null;
-    this.baseUrl = "/api/coingecko/api/v3/simple/price";
+    this.baseUrl = "/api/coingecko";
   }
 
   async fetchPrices(coins) {
@@ -56,8 +56,6 @@ class CryptoApiClient {
     const ids = coins.map((c) => c.id).join(",");
     const url = new URL(`${window.location.origin}${this.baseUrl}`);
     url.searchParams.append("ids", ids);
-    url.searchParams.append("vs_currencies", "usd");
-    url.searchParams.append("include_24hr_change", "true");
 
     try {
       const controller = new AbortController();

@@ -20,7 +20,14 @@ export default defineConfig({
         target: "https://api.coingecko.com",
         changeOrigin: true,
         secure: true,
-        rewrite: (path) => path.replace(/^\/api\/coingecko/, ""),
+        rewrite: (path) => {
+          // path includes the query string, e.g. /api/coingecko?ids=bitcoin,...
+          const [pathname, query] = path.split("?");
+          const params = new URLSearchParams(query);
+          params.set("vs_currencies", "usd");
+          params.set("include_24hr_change", "true");
+          return `/api/v3/simple/price?${params.toString()}`;
+        },
       },
     },
   },

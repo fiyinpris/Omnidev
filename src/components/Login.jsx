@@ -15,15 +15,26 @@ export default function Login() {
   const verified = new URLSearchParams(location.search).get("verified");
 
   const handleChange = (e) => {
-    setForm({ ...form, [e.target.name]: e.target.value });
+    const { name, value } = e.target;
+    // Always trim email in real-time so no hidden spaces sneak in
+    setForm({ ...form, [name]: name === "email" ? value.trim() : value });
     setError("");
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    if (!form.email || !form.password) {
+    // Sanitise both fields before sending to Firebase
+    const email = form.email.trim().toLowerCase();
+    const password = form.password;
+
+    if (!email || !password) {
       setError("Please fill in all fields.");
+      return;
+    }
+
+    if (!/\S+@\S+\.\S+/.test(email)) {
+      setError("Please enter a valid email address.");
       return;
     }
 
@@ -31,30 +42,32 @@ export default function Login() {
       setLoading(true);
       const userCredential = await signInWithEmailAndPassword(
         auth,
-        form.email,
-        form.password,
+        email,
+        password,
       );
 
       if (!userCredential.user.emailVerified) {
         await signOut(auth);
-        setError(
-          "Please verify your email before logging in.",
-        );
+        setError("Please verify your email before logging in.");
         return;
       }
 
-      navigate("/dashboard");
+      navigate("/dashboard", { replace: true });
     } catch (err) {
-      if (err.code === "auth/user-not-found") {
-        setError("No account found with this email.");
-      } else if (err.code === "auth/wrong-password") {
-        setError("Incorrect password.");
+      if (
+        err.code === "auth/user-not-found" ||
+        err.code === "auth/wrong-password" ||
+        err.code === "auth/invalid-credential"
+      ) {
+        setError("Incorrect email or password.");
       } else if (err.code === "auth/invalid-email") {
-        setError("Invalid email format.");
+        setError("Invalid email address. Check for typos or extra spaces.");
       } else if (err.code === "auth/too-many-requests") {
         setError("Too many attempts. Try again later.");
+      } else if (err.code === "auth/network-request-failed") {
+        setError("Network error. Check your connection.");
       } else {
-        setError("Invalid email or password.");
+        setError("Login failed. Please try again.");
       }
     } finally {
       setLoading(false);
@@ -97,17 +110,27 @@ export default function Login() {
         )}
 
         <form onSubmit={handleSubmit} className="w-full space-y-4">
+          {/* autocorrect, autocapitalize, spellcheck all OFF for email */}
           <input
             name="email"
+            type="email"
+            inputMode="email"
             placeholder="Email"
+            value={form.email}
             onChange={handleChange}
+            autoComplete="email"
+            autoCorrect="off"
+            autoCapitalize="none"
+            spellCheck="false"
             className="w-full px-5 py-4 rounded-xl bg-white/90 text-black outline-none"
           />
           <input
             name="password"
             type="password"
             placeholder="Password"
+            value={form.password}
             onChange={handleChange}
+            autoComplete="current-password"
             className="w-full px-5 py-4 rounded-xl bg-white/90 text-black outline-none"
           />
 
