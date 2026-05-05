@@ -75,37 +75,44 @@ const COINS = [
 ];
 
 export const TickerBar = () => {
-  // Poll every 30 seconds — stays well within CoinGecko free-tier limits
-  const { prices: apiPrices, error } = useCryptoPrices(COINS, 30_000);
+  const { prices: apiPrices } = useCryptoPrices(COINS);
   const [flash, setFlash] = useState({});
   const prevRef = useRef({});
   const timers = useRef({});
+  const trackRef = useRef(null);
+  const xRef = useRef(0);
+  const rafRef = useRef(null);
+  const pricesRef = useRef({});
+  const flashRef = useRef({});
 
+  // Keep refs in sync so the animation loop always reads latest values
+  useEffect(() => {
+    pricesRef.current = apiPrices;
+  }, [apiPrices]);
+
+  useEffect(() => {
+    flashRef.current = flash;
+  }, [flash]);
+
+  // Flash detection
   useEffect(() => {
     const newFlashes = {};
     let hasChanges = false;
-
     for (const coin of COINS) {
       const data = apiPrices[coin.symbol];
       if (!data || data.price == null) continue;
-
       const prevPrice = prevRef.current[coin.symbol];
-
       if (prevPrice != null && Math.abs(prevPrice - data.price) > 0.000001) {
-        const dir = data.price > prevPrice ? "up" : "down";
-        newFlashes[coin.symbol] = dir;
+        newFlashes[coin.symbol] = data.price > prevPrice ? "up" : "down";
         hasChanges = true;
-
         if (timers.current[coin.symbol])
           clearTimeout(timers.current[coin.symbol]);
         timers.current[coin.symbol] = setTimeout(() => {
           setFlash((f) => ({ ...f, [coin.symbol]: null }));
         }, 800);
       }
-
       prevRef.current[coin.symbol] = data.price;
     }
-
     if (hasChanges) setFlash((f) => ({ ...f, ...newFlashes }));
   }, [apiPrices]);
 
@@ -113,6 +120,35 @@ export const TickerBar = () => {
     () => () => Object.values(timers.current).forEach(clearTimeout),
     [],
   );
+
+  // JS-driven scroll — never resets, never flickers
+  // JS-driven scroll — never resets, never flickers
+  useEffect(() => {
+    const track = trackRef.current;
+    if (!track) return;
+
+    const speed = 1.5;
+    let x = 0;
+    let raf;
+    let lastTime = null;
+
+    const animate = (timestamp) => {
+      if (lastTime !== null) {
+        const delta = timestamp - lastTime;
+        // Move based on time elapsed, not frame rate
+        // This keeps speed consistent regardless of render activity
+        x -= (speed * delta) / 16.67; // normalize to 60fps
+        const halfWidth = track.scrollWidth / 2;
+        if (Math.abs(x) >= halfWidth) x = 0;
+        track.style.transform = `translateX(${x}px)`;
+      }
+      lastTime = timestamp;
+      raf = requestAnimationFrame(animate);
+    };
+
+    raf = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(raf);
+  }, []); // runs once only
 
   const items = [...COINS, ...COINS];
 
@@ -128,10 +164,6 @@ export const TickerBar = () => {
       }}
     >
       <style>{`
-        @keyframes tickerScroll {
-          0%   { transform: translateX(0); }
-          100% { transform: translateX(-50%); }
-        }
         @keyframes shimmerPulse {
           0%, 100% { opacity: 0.25; }
           50%       { opacity: 0.6; }
@@ -147,11 +179,11 @@ export const TickerBar = () => {
       `}</style>
 
       <div
+        ref={trackRef}
         style={{
           display: "flex",
           alignItems: "center",
           width: "max-content",
-          animation: "tickerScroll 40s linear infinite",
           whiteSpace: "nowrap",
           willChange: "transform",
           flexShrink: 0,
@@ -200,7 +232,6 @@ export const TickerBar = () => {
               <span style={{ color: "#ccc", fontWeight: 600 }}>
                 {coin.symbol}
               </span>
-
               <span
                 style={{
                   color: isLoaded
@@ -224,7 +255,6 @@ export const TickerBar = () => {
               >
                 {isLoaded ? `$${formattedPrice}` : ""}
               </span>
-
               {isLoaded && data?.change != null && (
                 <span
                   style={{
