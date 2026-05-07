@@ -30,24 +30,50 @@ const generateIncrements = (target, totalHours) => {
   if (!target || target <= 0 || !totalHours || totalHours <= 0) return [];
 
   const totalMs = totalHours * 3600 * 1000;
-
   const chunks = [];
   let remaining = Math.round(target * 100) / 100;
 
+  let sevenHundredCount = 0;
+
   while (remaining > 0.005) {
-    const maxChunk = Math.min(remaining, 700);
-    const minChunk = Math.min(remaining, 50);
-    let chunk =
-      maxChunk <= 50.005
-        ? maxChunk
-        : Math.round((minChunk + Math.random() * (maxChunk - minChunk)) * 100) /
-          100;
+    let maxAllowed = Math.min(remaining, 700);
+
+    // 700 can only appear twice
+    if (sevenHundredCount >= 2) {
+      maxAllowed = Math.min(maxAllowed, 699);
+    }
+
+    let chunk;
+    const roll = Math.random();
+
+    if (roll < 0.35) {
+      // 35% chance → smaller numbers
+      chunk = 50 + Math.random() * 150; // 50–200
+    } else if (roll < 0.75) {
+      // 40% chance → medium numbers
+      chunk = 300 + Math.random() * 200; // 300–500
+    } else {
+      // 25% chance → larger numbers
+      chunk = 600 + Math.random() * 100; // 600–700
+    }
+
+    chunk = Math.round(Math.min(chunk, maxAllowed));
+
+    // Prevent tiny leftovers
+    if (remaining - chunk < 50 && remaining - chunk > 0) {
+      chunk = remaining;
+    }
+
+    if (chunk === 700) {
+      sevenHundredCount++;
+    }
+
     chunks.push(chunk);
+
     remaining = Math.round((remaining - chunk) * 100) / 100;
   }
 
   if (chunks.length === 0) return [];
-
   const n = chunks.length;
 
   const startBuffer = 2 * 60 * 1000;
@@ -81,98 +107,15 @@ const generateIncrements = (target, totalHours) => {
   return increments;
 };
 
-// Style constants
-const SEL = {
-  width: "100%",
-  background: "#1a1a1a",
-  border: "1px solid #333",
-  borderRadius: "10px",
-  padding: "12px 36px 12px 14px",
-  color: "#fff",
-  fontSize: "14px",
-  outline: "none",
-  cursor: "pointer",
-  appearance: "none",
-  backgroundImage: `url("data:image/svg+xml,%3Csvg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' strokeWidth='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E")`,
-  backgroundRepeat: "no-repeat",
-  backgroundPosition: "right 14px center",
-};
-const INP = {
-  width: "100%",
-  boxSizing: "border-box",
-  background: "#1a1a1a",
-  border: "1px solid #333",
-  borderRadius: "10px",
-  padding: "12px 14px",
-  color: "#fff",
-  fontSize: "15px",
-  outline: "none",
-};
-const LBL = {
-  display: "block",
-  color: "#9ca3af",
-  fontSize: "11px",
-  fontWeight: 600,
-  textTransform: "uppercase",
-  letterSpacing: "0.06em",
-  marginBottom: "8px",
-};
-const CARD = {
-  background: "#111",
-  border: "1px solid #222",
-  borderRadius: "16px",
-  padding: "20px",
-  boxSizing: "border-box",
-};
-const BTN_P = {
-  padding: "14px",
-  background: "#0d9488",
-  border: "none",
-  borderRadius: "10px",
-  color: "#fff",
-  fontWeight: 700,
-  fontSize: "14px",
-  cursor: "pointer",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  gap: "8px",
-  flex: 1,
-};
-const BTN_C = {
-  padding: "14px 20px",
-  background: "transparent",
-  border: "1px solid #333",
-  borderRadius: "10px",
-  color: "#9ca3af",
-  fontWeight: 600,
-  fontSize: "14px",
-  cursor: "pointer",
-};
-const SPIN = {
-  width: "16px",
-  height: "16px",
-  border: "2px solid rgba(255,255,255,.3)",
-  borderTop: "2px solid #fff",
-  borderRadius: "50%",
-  animation: "spin .7s linear infinite",
-  display: "inline-block",
-};
-const TH = {
-  textAlign: "left",
-  padding: "12px 16px",
-  fontSize: "11px",
-  fontWeight: 600,
-  textTransform: "uppercase",
-  letterSpacing: "0.05em",
-  color: "#fff",
-  whiteSpace: "nowrap",
-};
-const SC = {
-  completed: { bg: "rgba(13,148,136,.15)", text: "#0d9488" },
-  trading: { bg: "rgba(34,197,94,.15)", text: "#22c55e" },
-  analysing: { bg: "rgba(59,130,246,.15)", text: "#3b82f6" },
-  scheduled: { bg: "rgba(245,158,11,.15)", text: "#f59e0b" },
+// ─── Chunk size validation ────────────────────────────────────────────────────
+const validateChunkSizes = (schedule, target) => {
+  if (!schedule.length) return { maxChunk: 0, total: 0, valid: true };
+  const maxChunk = Math.max(...schedule.map((s) => s.amount), 0);
+  const total = schedule.reduce((s, d) => s + d.amount, 0);
+  console.log(
+    `[CHUNK CHECK] target: $${fmt(target)}, chunks: ${schedule.length}, max: $${fmt(maxChunk)}, total: $${fmt(total)}`,
+  );
+  return { maxChunk, total, valid: maxChunk <= 700 };
 };
 
 // ─── Format duration helper ───────────────────────────────────────────────────
@@ -184,6 +127,35 @@ const fmtDuration = (ms) => {
   if (h > 0 && mins > 0) return `${h}h ${mins}m`;
   if (h > 0) return `${h}h`;
   return `${mins}m`;
+};
+
+// ─── Color map for statuses (shared by type and status badges) ────────────────
+const STATUS_COLORS = {
+  analysing: {
+    bg: "rgba(13,148,136,.15)",
+    text: "#0d9488",
+    label: "OmniDev Analysing",
+  },
+  scheduled: {
+    bg: "rgba(245,158,11,.15)",
+    text: "#f59e0b",
+    label: "Scheduled",
+  },
+  trading: {
+    bg: "rgba(34,197,94,.15)",
+    text: "#22c55e",
+    label: "Bot Trading Active",
+  },
+  disabled: {
+    bg: "rgba(239,68,68,.15)",
+    text: "#ef4444",
+    label: "Bot Trading Disabled",
+  },
+  completed: {
+    bg: "rgba(13,148,136,.15)",
+    text: "#0d9488",
+    label: "Completed",
+  },
 };
 
 export default function AdminDashboard() {
@@ -282,12 +254,10 @@ export default function AdminDashboard() {
   // ── Client-side polling: activate pending bots + apply/flush increments ─────
   useEffect(() => {
     if (!adminUser || users.length === 0) return;
-
     const run = async () => {
       await checkAndActivatePendingBots();
       await applyAndFlushIncrements();
     };
-
     run();
     const interval = setInterval(run, 30 * 1000);
     return () => clearInterval(interval);
@@ -306,6 +276,7 @@ export default function AdminDashboard() {
       if (now <= anaExpMs) continue;
 
       if (!user.scheduleActivateAt) {
+        // System auto-schedules 2-5 minutes (random)
         const delayMs = (120 + Math.floor(Math.random() * 181)) * 1000;
         try {
           await updateDoc(doc(db, "users", user.uid), {
@@ -330,6 +301,8 @@ export default function AdminDashboard() {
         const botExpiresAt = Timestamp.fromMillis(now + hours * 3600 * 1000);
         const schedule = generateIncrements(target, hours);
 
+        validateChunkSizes(schedule, target);
+
         await updateDoc(doc(db, "users", user.uid), {
           botStatus: "activated",
           botActive: true,
@@ -342,21 +315,41 @@ export default function AdminDashboard() {
           incrementsApplied: 0,
         });
 
-        await setDoc(doc(collection(db, "adminTransactions")), {
-          userId: user.uid,
-          userEmail: user.email,
-          userName:
-            `${user.firstName} ${user.lastName}`.trim() || user.username,
-          type: "target_activated",
-          timestamp: nowTs,
-          status: "trading",
-          botExpiresAt,
-          targetAmount: target,
-          botHours: hours,
-          initialAmount: user.initialBalance,
-          adminEmail: adminUser.email,
-          note: "Auto-activated after analysing + scheduling gap",
-        });
+        const txnQuery = query(
+          collection(db, "adminTransactions"),
+          orderBy("timestamp", "desc"),
+        );
+        const txnSnap = await getDocs(txnQuery);
+        const existingTxn = txnSnap.docs.find(
+          (d) =>
+            d.data().userId === user.uid && d.data().type === "bot_trading",
+        );
+
+        if (existingTxn) {
+          await updateDoc(doc(db, "adminTransactions", existingTxn.id), {
+            status: "trading",
+            botExpiresAt,
+            botActivatedAt: nowTs,
+            note: "Auto-activated after analysing + scheduling gap",
+            updatedAt: nowTs,
+          });
+        } else {
+          await setDoc(doc(collection(db, "adminTransactions")), {
+            userId: user.uid,
+            userEmail: user.email,
+            userName:
+              `${user.firstName} ${user.lastName}`.trim() || user.username,
+            type: "bot_trading",
+            timestamp: nowTs,
+            status: "trading",
+            botExpiresAt,
+            targetAmount: target,
+            botHours: hours,
+            initialAmount: user.initialBalance,
+            adminEmail: adminUser.email,
+            note: "Auto-activated after analysing + scheduling gap",
+          });
+        }
       } catch (err) {
         console.error("activate error:", err);
         processingRef.current.delete(`activate_${user.uid}`);
@@ -394,6 +387,24 @@ export default function AdminDashboard() {
             botStatus: "disabled",
           });
 
+          const txnQuery = query(
+            collection(db, "adminTransactions"),
+            orderBy("timestamp", "desc"),
+          );
+          const txnSnap = await getDocs(txnQuery);
+          const existingTxn = txnSnap.docs.find(
+            (d) =>
+              d.data().userId === user.uid && d.data().type === "bot_trading",
+          );
+
+          if (existingTxn) {
+            await updateDoc(doc(db, "adminTransactions", existingTxn.id), {
+              status: "disabled",
+              completedAt: Timestamp.now(),
+              note: "Bot trading completed - time expired",
+            });
+          }
+
           if (remaining.length > 0) {
             const totalAdd = remaining.reduce((s, d) => s + d.amount, 0);
             for (const inc of remaining) {
@@ -425,7 +436,6 @@ export default function AdminDashboard() {
       }
 
       if (applied >= schedule.length) continue;
-
       const due = schedule
         .slice(applied)
         .filter((inc) => startMs + inc.offsetMs <= now);
@@ -470,7 +480,6 @@ export default function AdminDashboard() {
       return;
     }
     const now = Timestamp.now();
-    // Admin sets duration freely — no forced minimum
     const anaMs =
       (parseInt(anaHrs) || 0) * 3600000 + (parseInt(anaMins) || 0) * 60000;
     if (anaMs <= 0) {
@@ -513,7 +522,7 @@ export default function AdminDashboard() {
         status: "analysing",
         adminEmail: adminUser.email,
         analysingExpiresAt: anaExp,
-        analysingDurationMs: anaMs, // store duration for display
+        analysingDurationMs: anaMs,
       });
       await setDoc(doc(collection(db, "users", fundSel.uid, "transactions")), {
         type: "deposit",
@@ -569,7 +578,9 @@ export default function AdminDashboard() {
       const userRef = doc(db, "users", tgtSel.uid);
 
       if (isAnalysing) {
-        // Pending — CF / polling will activate after analysing ends
+        const schedule = generateIncrements(target, hours);
+        validateChunkSizes(schedule, target);
+
         await updateDoc(userRef, {
           targetAmount: target,
           botHours: hours,
@@ -581,6 +592,7 @@ export default function AdminDashboard() {
           incrementScheduleStartMs: 0,
           incrementsApplied: 0,
         });
+
         await setDoc(doc(collection(db, "adminTransactions")), {
           userId: tgtSel.uid,
           userEmail: tgtSel.email,
@@ -589,22 +601,28 @@ export default function AdminDashboard() {
           initialAmount: tgtSel.initialBalance,
           targetAmount: target,
           botHours: hours,
-          type: "target_set",
+          type: "bot_trading",
           timestamp: now,
           status: "scheduled",
           adminEmail: adminUser.email,
           note: "Will auto-activate 2–5 mins after analysing completes",
         });
+
         setTgtOk(
           `Scheduled! $${fmt(tgtSel.initialBalance)} → $${fmt(tgtSel.initialBalance + target)} ` +
             `over ${hours}h. Bot activates after analysis finishes.`,
         );
       } else {
-        // Activate immediately with full-window schedule
         const botExpiresAt = Timestamp.fromMillis(
           now.toMillis() + hours * 3600000,
         );
         const schedule = generateIncrements(target, hours);
+        const chunkCheck = validateChunkSizes(schedule, target);
+        if (!chunkCheck.valid)
+          console.warn(
+            `[CHUNK WARNING] Max chunk exceeded for ${tgtSel.email}`,
+          );
+
         await updateDoc(userRef, {
           targetAmount: target,
           botActive: true,
@@ -619,6 +637,7 @@ export default function AdminDashboard() {
           incrementScheduleStartMs: now.toMillis(),
           incrementsApplied: 0,
         });
+
         await setDoc(doc(collection(db, "adminTransactions")), {
           userId: tgtSel.uid,
           userEmail: tgtSel.email,
@@ -627,12 +646,13 @@ export default function AdminDashboard() {
           initialAmount: tgtSel.initialBalance,
           targetAmount: target,
           botHours: hours,
-          type: "target_set",
+          type: "bot_trading",
           timestamp: now,
           status: "trading",
           botExpiresAt,
           adminEmail: adminUser.email,
         });
+
         setTgtOk(
           `Bot activated! $${fmt(tgtSel.initialBalance)} → ` +
             `$${fmt(tgtSel.initialBalance + target)} over ${hours}h.`,
@@ -658,6 +678,7 @@ export default function AdminDashboard() {
     const exp = u.botExpiresAt?.toMillis?.() || u.botExpiresAt;
     const ana = u.analysingExpiresAt?.toMillis?.() || u.analysingExpiresAt;
     const sch = u.scheduleActivateAt?.toMillis?.() || u.scheduleActivateAt;
+
     if (exp && now > exp)
       return { text: "Bot Trading Disabled", color: "#ef4444", dot: "#ef4444" };
     if (exp && now <= exp)
@@ -672,7 +693,6 @@ export default function AdminDashboard() {
         color: "#f59e0b",
         dot: "#f59e0b",
       };
-    // Simplified: both analysing and pending-target show same status
     if (u.pendingTarget)
       return {
         text: "OmniDev Analysing Market",
@@ -706,15 +726,18 @@ export default function AdminDashboard() {
       if (anaExp && now < anaExp) return "analysing";
       return "completed";
     }
-    if (t.type === "target_set" || t.type === "target_activated") {
-      if (liveSt === "disabled") return "completed";
+
+    if (t.type === "bot_trading") {
+      if (t.status === "disabled") return "disabled";
       const exp = t.botExpiresAt?.toMillis?.() || t.botExpiresAt;
-      if (exp && now >= exp) return "completed";
+      if (exp && now >= exp) return "disabled";
       if (exp && now < exp) return "trading";
       if (liveSt === "activated") return "trading";
       if (liveSt === "scheduled") return "scheduled";
-      return "scheduled";
+      if (liveSt === "disabled") return "disabled";
+      return t.status || "scheduled";
     }
+
     if (liveSt === "disabled") return "completed";
     return t.status || "completed";
   };
@@ -770,87 +793,27 @@ export default function AdminDashboard() {
       </div>
     );
 
-  // ── User info card (shared between step 1 and 2) ─────────────────────────────
   const UserCard = ({ user }) => {
     const s = getBotStatus(user);
     return (
-      <div
-        style={{
-          background: "#1a1a1a",
-          borderRadius: "12px",
-          padding: "14px 16px",
-          marginBottom: "16px",
-          border: "1px solid #2a2a2a",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "10px",
-            marginBottom: "8px",
-          }}
-        >
-          <div
-            style={{
-              width: "36px",
-              height: "36px",
-              borderRadius: "50%",
-              background: "#0d9488",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "#fff",
-              fontWeight: 700,
-              overflow: "hidden",
-              flexShrink: 0,
-            }}
-          >
+      <div className="user-card">
+        <div className="user-card-header">
+          <div className="user-avatar">
             {user.picture ? (
-              <img
-                src={user.picture}
-                alt=""
-                style={{ width: "100%", height: "100%", objectFit: "cover" }}
-              />
+              <img src={user.picture} alt="" />
             ) : (
               (user.firstName?.[0] || user.email[0]).toUpperCase()
             )}
           </div>
-          <div>
-            <p
-              style={{
-                color: "#fff",
-                fontSize: "14px",
-                fontWeight: 600,
-                margin: 0,
-              }}
-            >
+          <div className="user-info">
+            <p className="user-name">
               {user.firstName} {user.lastName}
             </p>
-            <p style={{ color: "#6b7280", fontSize: "12px", margin: 0 }}>
-              @{user.username || "no username"}
-            </p>
+            <p className="user-handle">@{user.username || "no username"}</p>
           </div>
         </div>
-        <span
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "6px",
-            color: s.color,
-            fontSize: "12px",
-            fontWeight: 600,
-          }}
-        >
-          <span
-            style={{
-              width: "8px",
-              height: "8px",
-              borderRadius: "50%",
-              background: s.dot,
-              display: "inline-block",
-            }}
-          />
+        <span className="status-badge" style={{ color: s.color }}>
+          <span className="status-dot" style={{ background: s.dot }} />
           {s.text}
         </span>
       </div>
@@ -858,60 +821,14 @@ export default function AdminDashboard() {
   };
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background: "#0a0a0a",
-        color: "#fff",
-        padding: "16px",
-        fontFamily:
-          '-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif',
-        boxSizing: "border-box",
-        overflowX: "hidden",
-      }}
-    >
-      <style>{`
-        @keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
-        .ag{display:grid;grid-template-columns:1fr;gap:16px}
-        @media(min-width:640px){.ag{grid-template-columns:1fr 1fr;gap:20px}.af{grid-column:1/-1}}
-        .at{width:100%;border-collapse:collapse;min-width:560px}
-        .aw{overflow-x:auto;-webkit-overflow-scrolling:touch}
-        .ab{display:flex;gap:10px;flex-wrap:wrap}
-        .ab button{flex:1;min-width:110px}
-        .tr2{display:flex;gap:10px}
-        @media(max-width:480px){.tr2{flex-direction:column}.ah{flex-direction:column;align-items:flex-start}}
-      `}</style>
-
+    <div className="admin-dashboard">
       {/* Header */}
-      <header
-        className="ah"
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginBottom: "24px",
-          paddingBottom: "16px",
-          borderBottom: "1px solid #1a1a1a",
-          flexWrap: "wrap",
-          gap: "12px",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          <div
-            style={{
-              width: "44px",
-              height: "44px",
-              borderRadius: "12px",
-              background: "#0d9488",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              flexShrink: 0,
-            }}
-          >
+      <header className="admin-header">
+        <div className="admin-header-left">
+          <div className="admin-logo">
             <svg
-              width="24"
-              height="24"
+              width="22"
+              height="22"
               viewBox="0 0 24 24"
               fill="none"
               stroke="white"
@@ -921,109 +838,41 @@ export default function AdminDashboard() {
             </svg>
           </div>
           <div>
-            <h1
-              style={{
-                color: "#fff",
-                fontSize: "clamp(17px,4vw,22px)",
-                fontWeight: 800,
-                margin: 0,
-              }}
-            >
-              Admin Dashboard
-            </h1>
-            <p
-              style={{ color: "#6b7280", fontSize: "13px", margin: "2px 0 0" }}
-            >
-              {adminUser?.email}
-            </p>
+            <h1 className="admin-title">Admin Dashboard</h1>
+            <p className="admin-email">{adminUser?.email}</p>
           </div>
         </div>
-        <button
-          onClick={() => navigate("/dashboard")}
-          style={{
-            padding: "10px 20px",
-            background: "transparent",
-            border: "1px solid #333",
-            borderRadius: "10px",
-            color: "#9ca3af",
-            fontSize: "13px",
-            fontWeight: 600,
-            cursor: "pointer",
-          }}
-        >
+        <button className="btn-back" onClick={() => navigate("/dashboard")}>
           Back to Site
         </button>
       </header>
 
       {users.some((u) => u.pendingTarget) && (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "10px",
-            background: "rgba(245,158,11,.08)",
-            border: "1px solid rgba(245,158,11,.25)",
-            borderRadius: "10px",
-            padding: "10px 16px",
-            color: "#f59e0b",
-            fontSize: "13px",
-            marginBottom: "20px",
-          }}
-        >
+        <div className="alert-banner">
           🟡 {users.filter((u) => u.pendingTarget).length} user(s) scheduled —
           will auto-activate after analysis + scheduling gap.
         </div>
       )}
 
-      <div className="ag">
+      <div className="admin-grid">
         {/* ── STEP 1: Fund ── */}
-        <div style={CARD}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "12px",
-              marginBottom: "20px",
-            }}
-          >
-            <span
-              style={{
-                width: "28px",
-                height: "28px",
-                borderRadius: "8px",
-                background: "#0d9488",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: "#fff",
-                fontWeight: 800,
-                fontSize: "14px",
-                flexShrink: 0,
-              }}
-            >
+        <div className="card">
+          <div className="card-header">
+            <span className="card-badge" style={{ background: "#0d9488" }}>
               1
             </span>
-            <h2
-              style={{
-                color: "#fff",
-                fontSize: "17px",
-                fontWeight: 700,
-                margin: 0,
-              }}
-            >
-              Fund User Account
-            </h2>
+            <h2 className="card-title">Fund User Account</h2>
           </div>
 
-          <div style={{ marginBottom: "16px" }}>
-            <label style={LBL}>Select User</label>
+          <div className="form-group">
+            <label className="form-label">Select User</label>
             <select
+              className="form-select"
               value={fundSel?.uid || ""}
               onChange={(e) => {
                 setFundSel(users.find((u) => u.uid === e.target.value) || null);
                 setFundErr("");
               }}
-              style={SEL}
             >
               <option value="">Choose a user...</option>
               {users.map((u) => (
@@ -1037,9 +886,10 @@ export default function AdminDashboard() {
 
           {fundSel && <UserCard user={fundSel} />}
 
-          <div style={{ marginBottom: "16px" }}>
-            <label style={LBL}>Deposit Amount (USD)</label>
+          <div className="form-group">
+            <label className="form-label">Deposit Amount (USD)</label>
             <input
+              className="form-input"
               type="number"
               min="0.01"
               step="any"
@@ -1049,28 +899,16 @@ export default function AdminDashboard() {
                 setFundAmt(e.target.value);
                 setFundErr("");
               }}
-              style={INP}
             />
           </div>
 
-          <div style={{ marginBottom: "16px" }}>
-            <label style={LBL}>
-              OmniDev Analysis Duration{" "}
-              <span
-                style={{
-                  color: "#3b82f6",
-                  textTransform: "none",
-                  fontWeight: 400,
-                }}
-              >
-                (set by admin)
-              </span>
-            </label>
-            <div className="tr2">
+          <div className="form-group">
+            <label className="form-label">OmniDev Analysis Duration</label>
+            <div className="input-row">
               <select
+                className="form-select"
                 value={anaHrs}
                 onChange={(e) => setAnaHrs(e.target.value)}
-                style={{ ...SEL, flex: 1 }}
               >
                 {Array.from({ length: 24 }, (_, i) => (
                   <option key={i} value={i}>
@@ -1079,9 +917,9 @@ export default function AdminDashboard() {
                 ))}
               </select>
               <select
+                className="form-select"
                 value={anaMins}
                 onChange={(e) => setAnaMins(e.target.value)}
-                style={{ ...SEL, flex: 1 }}
               >
                 {[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map((m) => (
                   <option key={m} value={m}>
@@ -1090,117 +928,52 @@ export default function AdminDashboard() {
                 ))}
               </select>
             </div>
-            <p
-              style={{ color: "#6b7280", fontSize: "11px", margin: "6px 0 0" }}
-            >
-              Admin controls how long OmniDev analyses. After this + 2–5 min
-              gap, bot trading begins.
+            <p className="form-hint">
+              After this + 2–5 min gap, bot trading begins.
             </p>
           </div>
 
-          {fundErr && (
-            <div
-              style={{
-                padding: "12px 16px",
-                borderRadius: "10px",
-                fontSize: "13px",
-                background: "rgba(239,68,68,.08)",
-                border: "1px solid rgba(239,68,68,.25)",
-                color: "#f87171",
-                marginBottom: "12px",
-              }}
-            >
-              {fundErr}
-            </div>
-          )}
-          {fundOk && (
-            <div
-              style={{
-                padding: "12px 16px",
-                borderRadius: "10px",
-                fontSize: "13px",
-                background: "rgba(13,148,136,.08)",
-                border: "1px solid rgba(13,148,136,.25)",
-                color: "#0d9488",
-                marginBottom: "12px",
-              }}
-            >
-              {fundOk}
-            </div>
-          )}
+          {fundErr && <div className="alert alert-error">{fundErr}</div>}
+          {fundOk && <div className="alert alert-success">{fundOk}</div>}
 
-          <div className="ab">
+          <div className="btn-group">
             <button
+              className="btn-primary"
               onClick={handleFund}
               disabled={fundLoading || !fundSel}
-              style={{
-                ...BTN_P,
-                opacity: fundLoading || !fundSel ? 0.6 : 1,
-                cursor: fundLoading || !fundSel ? "not-allowed" : "pointer",
-              }}
             >
               {fundLoading ? (
                 <>
-                  <span style={SPIN} /> Processing...
+                  <span className="spinner" /> Processing...
                 </>
               ) : (
                 "Fund Account"
               )}
             </button>
-            <button onClick={clearFund} style={BTN_C}>
+            <button className="btn-secondary" onClick={clearFund}>
               Cancel
             </button>
           </div>
         </div>
 
         {/* ── STEP 2: Target ── */}
-        <div style={CARD}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "12px",
-              marginBottom: "20px",
-            }}
-          >
-            <span
-              style={{
-                width: "28px",
-                height: "28px",
-                borderRadius: "8px",
-                background: "#065f46",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: "#fff",
-                fontWeight: 800,
-                fontSize: "14px",
-                flexShrink: 0,
-              }}
-            >
+        <div className="card">
+          <div className="card-header">
+            <span className="card-badge" style={{ background: "#065f46" }}>
               2
             </span>
-            <h2
-              style={{
-                color: "#fff",
-                fontSize: "17px",
-                fontWeight: 700,
-                margin: 0,
-              }}
-            >
-              Set Target &amp; Activate Bot
-            </h2>
+            <h2 className="card-title">Set Target &amp; Activate Bot</h2>
           </div>
 
-          <div style={{ marginBottom: "16px" }}>
-            <label style={LBL}>Select Funded User</label>
+          <div className="form-group">
+            <label className="form-label">Select Funded User</label>
             <select
+              className="form-select"
               value={tgtSel?.uid || ""}
               onChange={(e) => {
                 setTgtSel(users.find((u) => u.uid === e.target.value) || null);
                 setTgtErr("");
               }}
-              style={SEL}
             >
               <option value="">Choose a funded user...</option>
               {users
@@ -1221,40 +994,14 @@ export default function AdminDashboard() {
           </div>
 
           {tgtSel?.hasBeenFunded && (
-            <div
-              style={{
-                background: "#1a1a1a",
-                borderRadius: "12px",
-                padding: "14px 16px",
-                marginBottom: "16px",
-                border: "1px solid #2a2a2a",
-              }}
-            >
-              <p
-                style={{
-                  color: "#9ca3af",
-                  fontSize: "13px",
-                  margin: "0 0 4px",
-                }}
-              >
-                Balance:{" "}
-                <strong style={{ color: "#fff" }}>
-                  ${fmt(tgtSel.balance)}
-                </strong>
+            <div className="info-box">
+              <p className="info-row">
+                Balance: <strong>${fmt(tgtSel.balance)}</strong>
               </p>
-              <p
-                style={{
-                  color: "#9ca3af",
-                  fontSize: "13px",
-                  margin: "0 0 4px",
-                }}
-              >
-                Initial Deposit:{" "}
-                <strong style={{ color: "#fff" }}>
-                  ${fmt(tgtSel.initialBalance)}
-                </strong>
+              <p className="info-row">
+                Initial Deposit: <strong>${fmt(tgtSel.initialBalance)}</strong>
               </p>
-              <p style={{ color: "#9ca3af", fontSize: "13px", margin: 0 }}>
+              <p className="info-row">
                 Status:{" "}
                 <strong
                   style={{
@@ -1278,22 +1025,17 @@ export default function AdminDashboard() {
                 </strong>
               </p>
               {tgtSel.analysingExpiresAt && (
-                <p
-                  style={{
-                    color: "#6b7280",
-                    fontSize: "12px",
-                    margin: "4px 0 0",
-                  }}
-                >
+                <p className="info-sub">
                   Analysing ends in: {fmtLeft(tgtSel.analysingExpiresAt)}
                 </p>
               )}
             </div>
           )}
 
-          <div style={{ marginBottom: "16px" }}>
-            <label style={LBL}>Target Profit Amount (USD)</label>
+          <div className="form-group">
+            <label className="form-label">Target Profit Amount (USD)</label>
             <input
+              className="form-input"
               type="number"
               min="0.01"
               step="any"
@@ -1303,33 +1045,20 @@ export default function AdminDashboard() {
                 setTgtAmt(e.target.value);
                 setTgtErr("");
               }}
-              style={INP}
             />
-            <p
-              style={{ color: "#6b7280", fontSize: "12px", margin: "6px 0 0" }}
-            >
-              Profit added in random $50–$700 drops. Full amount guaranteed by
-              end of trading window.
-            </p>
           </div>
 
-          <div style={{ marginBottom: "16px" }}>
-            <label style={LBL}>
+          <div className="form-group">
+            <label className="form-label">
               Bot Trading Duration{" "}
-              <span
-                style={{
-                  color: "#22c55e",
-                  textTransform: "none",
-                  fontWeight: 400,
-                }}
-              >
+              <span style={{ color: "#22c55e" }}>
                 (how long the bot trades)
               </span>
             </label>
             <select
+              className="form-select"
               value={botHrs}
               onChange={(e) => setBotHrs(e.target.value)}
-              style={SEL}
             >
               {[1, 2, 3, 4, 5, 6, 7, 8, 12, 24, 48, 72].map((h) => (
                 <option key={h} value={h}>
@@ -1340,30 +1069,13 @@ export default function AdminDashboard() {
           </div>
 
           {tgtSel?.hasBeenFunded && tgtAmt && parseFloat(tgtAmt) > 0 && (
-            <div
-              style={{
-                background: "rgba(13,148,136,.06)",
-                border: "1px solid rgba(13,148,136,.2)",
-                borderRadius: "10px",
-                padding: "14px 16px",
-                marginBottom: "16px",
-              }}
-            >
-              <p
-                style={{
-                  color: "#0d9488",
-                  fontSize: "13px",
-                  fontWeight: 700,
-                  margin: "0 0 6px",
-                }}
-              >
-                📈 Growth Preview
-              </p>
-              <p style={{ color: "#9ca3af", fontSize: "13px", margin: 0 }}>
+            <div className="preview-box">
+              <p className="preview-title">📈 Growth Preview</p>
+              <p className="preview-text">
                 ${fmt(tgtSel.initialBalance)} → $
                 {fmt(tgtSel.initialBalance + parseFloat(tgtAmt))} over {botHrs}h
                 <br />
-                <span style={{ color: "#6b7280", fontSize: "12px" }}>
+                <span className="preview-sub">
                   = ${fmt(tgtSel.initialBalance)} initial + $
                   {fmt(parseFloat(tgtAmt))} profit (scattered drops, all
                   guaranteed)
@@ -1372,93 +1084,41 @@ export default function AdminDashboard() {
             </div>
           )}
 
-          {tgtErr && (
-            <div
-              style={{
-                padding: "12px 16px",
-                borderRadius: "10px",
-                fontSize: "13px",
-                background: "rgba(239,68,68,.08)",
-                border: "1px solid rgba(239,68,68,.25)",
-                color: "#f87171",
-                marginBottom: "12px",
-              }}
-            >
-              {tgtErr}
-            </div>
-          )}
-          {tgtOk && (
-            <div
-              style={{
-                padding: "12px 16px",
-                borderRadius: "10px",
-                fontSize: "13px",
-                background: "rgba(13,148,136,.08)",
-                border: "1px solid rgba(13,148,136,.25)",
-                color: "#0d9488",
-                marginBottom: "12px",
-              }}
-            >
-              {tgtOk}
-            </div>
-          )}
+          {tgtErr && <div className="alert alert-error">{tgtErr}</div>}
+          {tgtOk && <div className="alert alert-success">{tgtOk}</div>}
 
-          <div className="ab">
+          <div className="btn-group">
             <button
+              className="btn-primary"
               onClick={handleTarget}
               disabled={tgtLoading || !tgtSel?.hasBeenFunded}
-              style={{
-                ...BTN_P,
-                opacity: tgtLoading || !tgtSel?.hasBeenFunded ? 0.6 : 1,
-                cursor:
-                  tgtLoading || !tgtSel?.hasBeenFunded
-                    ? "not-allowed"
-                    : "pointer",
-              }}
             >
               {tgtLoading ? (
                 <>
-                  <span style={SPIN} /> Processing...
+                  <span className="spinner" /> Processing...
                 </>
               ) : (
                 "Set Target & Activate Bot"
               )}
             </button>
-            <button onClick={clearTgt} style={BTN_C}>
+            <button className="btn-secondary" onClick={clearTgt}>
               Cancel
             </button>
           </div>
         </div>
 
         {/* ── All Users table ── */}
-        <div className="af" style={CARD}>
-          <h2
-            style={{
-              color: "#fff",
-              fontSize: "17px",
-              fontWeight: 700,
-              margin: "0 0 16px",
-            }}
-          >
+        <div className="card admin-grid-full">
+          <h2 className="card-title" style={{ margin: "0 0 14px" }}>
             👥 All Users ({users.length})
           </h2>
-          <div
-            className="aw"
-            style={{
-              maxHeight: "480px",
-              overflowY: "auto",
-              borderRadius: "12px",
-              border: "1px solid #222",
-            }}
-          >
-            <table className="at">
+          <div className="table-wrap table-scroll">
+            <table className="admin-table">
               <thead>
-                <tr style={{ background: "#0d9488" }}>
+                <tr>
                   {["User", "Balance", "Target", "Status", "Time Left"].map(
                     (h) => (
-                      <th key={h} style={TH}>
-                        {h}
-                      </th>
+                      <th key={h}>{h}</th>
                     ),
                   )}
                 </tr>
@@ -1466,14 +1126,7 @@ export default function AdminDashboard() {
               <tbody>
                 {users.length === 0 ? (
                   <tr>
-                    <td
-                      colSpan={5}
-                      style={{
-                        padding: "40px",
-                        textAlign: "center",
-                        color: "#6b7280",
-                      }}
-                    >
+                    <td colSpan={5} className="table-empty">
                       No users found.
                     </td>
                   </tr>
@@ -1487,137 +1140,41 @@ export default function AdminDashboard() {
                           setFundSel(u);
                           if (u.hasBeenFunded) setTgtSel(u);
                         }}
-                        style={{
-                          borderBottom: "1px solid #1a1a1a",
-                          cursor: "pointer",
-                        }}
-                        onMouseEnter={(e) =>
-                          (e.currentTarget.style.background = "#1a1a1a")
-                        }
-                        onMouseLeave={(e) =>
-                          (e.currentTarget.style.background = "transparent")
-                        }
                       >
-                        <td style={{ padding: "12px 16px" }}>
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: "8px",
-                            }}
-                          >
-                            <div
-                              style={{
-                                width: "30px",
-                                height: "30px",
-                                borderRadius: "50%",
-                                background: "#0d9488",
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                color: "#fff",
-                                fontWeight: 700,
-                                fontSize: "12px",
-                                overflow: "hidden",
-                                flexShrink: 0,
-                              }}
-                            >
+                        <td>
+                          <div className="table-user">
+                            <div className="table-avatar">
                               {u.picture ? (
-                                <img
-                                  src={u.picture}
-                                  alt=""
-                                  style={{
-                                    width: "100%",
-                                    height: "100%",
-                                    objectFit: "cover",
-                                  }}
-                                />
+                                <img src={u.picture} alt="" />
                               ) : (
                                 (u.firstName?.[0] || u.email[0]).toUpperCase()
                               )}
                             </div>
-                            <div style={{ minWidth: 0 }}>
-                              <p
-                                style={{
-                                  color: "#fff",
-                                  fontSize: "12px",
-                                  fontWeight: 600,
-                                  margin: 0,
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                  whiteSpace: "nowrap",
-                                  maxWidth: "170px",
-                                }}
-                              >
-                                {u.email}
-                              </p>
-                              <p
-                                style={{
-                                  color: "#6b7280",
-                                  fontSize: "11px",
-                                  margin: 0,
-                                }}
-                              >
+                            <div className="table-user-info">
+                              <p className="table-user-email">{u.email}</p>
+                              <p className="table-user-handle">
                                 @{u.username || "—"}
                               </p>
                             </div>
                           </div>
                         </td>
-                        <td
-                          style={{
-                            padding: "12px 16px",
-                            color: "#fff",
-                            fontWeight: 700,
-                            fontSize: "13px",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          ${fmt(u.balance)}
-                        </td>
-                        <td
-                          style={{
-                            padding: "12px 16px",
-                            color: u.targetAmount > 0 ? "#0d9488" : "#6b7280",
-                            fontWeight: 700,
-                            fontSize: "13px",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
+                        <td className="amount">${fmt(u.balance)}</td>
+                        <td className="amount">
                           {u.targetAmount > 0 ? `$${fmt(u.targetAmount)}` : "—"}
                         </td>
-                        <td style={{ padding: "12px 16px" }}>
+                        <td>
                           <span
-                            style={{
-                              display: "inline-flex",
-                              alignItems: "center",
-                              gap: "6px",
-                              color: s.color,
-                              fontSize: "12px",
-                              fontWeight: 600,
-                              whiteSpace: "nowrap",
-                            }}
+                            className="table-status"
+                            style={{ color: s.color }}
                           >
                             <span
-                              style={{
-                                width: "8px",
-                                height: "8px",
-                                borderRadius: "50%",
-                                background: s.dot,
-                                display: "inline-block",
-                                flexShrink: 0,
-                              }}
+                              className="table-status-dot"
+                              style={{ background: s.dot }}
                             />
                             {s.text}
                           </span>
                         </td>
-                        <td
-                          style={{
-                            padding: "12px 16px",
-                            color: "#6b7280",
-                            fontSize: "12px",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
+                        <td className="time-left">
                           {u.botExpiresAt
                             ? fmtLeft(u.botExpiresAt)
                             : u.scheduleActivateAt
@@ -1637,36 +1194,21 @@ export default function AdminDashboard() {
       </div>
 
       {/* ── Transactions ── */}
-      <div style={{ ...CARD, marginTop: "24px" }}>
-        <h2
-          style={{
-            color: "#fff",
-            fontSize: "17px",
-            fontWeight: 700,
-            margin: "0 0 16px",
-          }}
-        >
+      <div className="card txn-card">
+        <h2 className="card-title" style={{ margin: "0 0 14px" }}>
           📊 Recent Funding Transactions
         </h2>
         {txns.length === 0 ? (
           <p
-            style={{ color: "#6b7280", textAlign: "center", padding: "40px 0" }}
+            style={{ color: "#6b7280", textAlign: "center", padding: "30px 0" }}
           >
             No transactions yet.
           </p>
         ) : (
-          <div
-            className="aw"
-            style={{
-              maxHeight: "480px",
-              overflowY: "auto",
-              borderRadius: "12px",
-              border: "1px solid #222",
-            }}
-          >
-            <table className="at" style={{ minWidth: "640px" }}>
+          <div className="table-wrap table-scroll">
+            <table className="admin-table">
               <thead>
-                <tr style={{ background: "#0d9488" }}>
+                <tr>
                   {[
                     "User",
                     "Type",
@@ -1676,42 +1218,32 @@ export default function AdminDashboard() {
                     "Status",
                     "Date",
                   ].map((h) => (
-                    <th key={h} style={TH}>
-                      {h}
-                    </th>
+                    <th key={h}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {txns.map((t) => {
                   const ls = getTxnStatus(t);
-                  const sc = SC[ls] || SC.completed;
+                  const colors = STATUS_COLORS[ls] || STATUS_COLORS.completed;
 
-                  // Type label logic
                   let typeLabel = t.type;
                   if (t.type === "initial_fund") {
                     typeLabel =
                       ls === "analysing"
                         ? `OmniDev Analysing (${fmtDuration(t.analysingDurationMs)})`
                         : "OmniDev Deposit";
-                  } else if (t.type === "target_activated") {
-                    typeLabel = "Auto-Activated";
-                  } else if (t.type === "target_set") {
-                    if (ls === "trading") typeLabel = "Bot Trading Active";
-                    else if (ls === "scheduled") typeLabel = "Scheduled";
-                    else typeLabel = "Bot Done";
+                  } else if (t.type === "bot_trading") {
+                    typeLabel = colors.label;
                   }
 
                   return (
-                    <tr
-                      key={t.id}
-                      style={{ borderBottom: "1px solid #1a1a1a" }}
-                    >
-                      <td style={{ padding: "12px 16px" }}>
+                    <tr key={t.id}>
+                      <td>
                         <p
                           style={{
                             color: "#fff",
-                            fontSize: "13px",
+                            fontSize: "12px",
                             fontWeight: 600,
                             margin: 0,
                           }}
@@ -1721,83 +1253,39 @@ export default function AdminDashboard() {
                         <p
                           style={{
                             color: "#6b7280",
-                            fontSize: "11px",
+                            fontSize: "10px",
                             margin: 0,
                           }}
                         >
                           {t.userEmail}
                         </p>
                       </td>
-                      <td style={{ padding: "12px 16px" }}>
+                      <td>
                         <span
-                          style={{
-                            background: "rgba(13,148,136,.15)",
-                            color: "#0d9488",
-                            padding: "4px 10px",
-                            borderRadius: "6px",
-                            fontSize: "11px",
-                            fontWeight: 600,
-                            whiteSpace: "nowrap",
-                          }}
+                          className="txn-badge"
+                          style={{ background: colors.bg, color: colors.text }}
                         >
                           {typeLabel}
                         </span>
                       </td>
-                      <td
-                        style={{
-                          padding: "12px 16px",
-                          color: "#0d9488",
-                          fontWeight: 700,
-                          fontSize: "13px",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
+                      <td className="amount">
                         +${fmt(t.amount || t.initialAmount || 0)}
                       </td>
-                      <td
-                        style={{
-                          padding: "12px 16px",
-                          color: "#0d9488",
-                          fontWeight: 700,
-                          fontSize: "13px",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
+                      <td className="amount">
                         {t.targetAmount ? `$${fmt(t.targetAmount)}` : "—"}
                       </td>
-                      <td
-                        style={{
-                          padding: "12px 16px",
-                          color: "#0d9488",
-                          fontSize: "13px",
-                        }}
-                      >
+                      <td className="amount">
                         {t.botHours ? `${t.botHours}h` : "—"}
                       </td>
-                      <td style={{ padding: "12px 16px" }}>
+                      <td>
                         <span
-                          style={{
-                            background: sc.bg,
-                            color: sc.text,
-                            padding: "4px 10px",
-                            borderRadius: "6px",
-                            fontSize: "11px",
-                            fontWeight: 600,
-                            textTransform: "capitalize",
-                            whiteSpace: "nowrap",
-                          }}
+                          className="txn-badge"
+                          style={{ background: colors.bg, color: colors.text }}
                         >
                           {ls}
                         </span>
                       </td>
-                      <td
-                        style={{
-                          padding: "12px 16px",
-                          color: "#9ca3af",
-                          fontSize: "12px",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
+                      <td className="date-cell">
                         {t.timestamp.toLocaleString()}
                       </td>
                     </tr>
