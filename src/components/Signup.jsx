@@ -21,6 +21,7 @@ export default function Signup() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [verificationSent, setVerificationSent] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const navigate = useNavigate();
 
   const handleChange = (e) => {
@@ -28,8 +29,6 @@ export default function Signup() {
     setError("");
   };
 
-  // Queries the 'usernames' collection which has allow read: if true
-  // so it works before the user is authenticated
   const isUsernameTaken = async (username) => {
     const ref = doc(db, "usernames", username.toLowerCase().trim());
     const snap = await getDoc(ref);
@@ -66,8 +65,6 @@ export default function Signup() {
     setError("");
 
     try {
-      // Step 1: Check username availability BEFORE creating the account
-      // This works because usernames collection has allow read: if true
       const taken = await isUsernameTaken(username);
       if (taken) {
         setError("Username already taken. Please choose another.");
@@ -75,7 +72,6 @@ export default function Signup() {
         return;
       }
 
-      // Step 2: Create the Firebase Auth user
       const userCredential = await createUserWithEmailAndPassword(
         auth,
         email,
@@ -83,18 +79,14 @@ export default function Signup() {
       );
       const user = userCredential.user;
 
-      // Step 3: Force token refresh so Firestore recognizes the auth session
       await user.getIdToken(true);
 
-      // Step 4: Update display name
       await updateProfile(user, {
         displayName: `${firstName} ${lastName}`,
       });
 
       const cleanUsername = username.toLowerCase().trim();
 
-      // Step 5: Write user data to Firestore
-      // Now auth is confirmed so request.auth.uid == userId will pass
       await setDoc(doc(db, "users", user.uid), {
         firstName,
         lastName,
@@ -108,13 +100,11 @@ export default function Signup() {
         username: cleanUsername,
       });
 
-      // Step 6: Send verification email
       await sendEmailVerification(user, {
         url: "https://omnidev-two.vercel.app/login?verified=true",
         handleCodeInApp: false,
       });
 
-      // Step 7: Done
       setVerificationSent(true);
     } catch (err) {
       console.error("SIGNUP ERROR:", err.code, err.message);
@@ -140,6 +130,37 @@ export default function Signup() {
       setLoading(false);
     }
   };
+
+  const EyeIcon = ({ open }) =>
+    open ? (
+      <svg
+        width="18"
+        height="18"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+        <circle cx="12" cy="12" r="3" />
+      </svg>
+    ) : (
+      <svg
+        width="18"
+        height="18"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+        <line x1="1" y1="1" x2="23" y2="23" />
+      </svg>
+    );
 
   if (verificationSent) {
     return (
@@ -174,7 +195,7 @@ export default function Signup() {
           </div>
 
           <h1 className="text-white text-2xl font-bold mb-3">
-            Check your email
+            Verify Your Email
           </h1>
           <p className="text-gray-400 text-sm leading-relaxed mb-2">
             We sent a verification link to
@@ -182,9 +203,17 @@ export default function Signup() {
           <p className="text-teal-400 font-semibold text-sm mb-6">
             {form.email}
           </p>
-          <p className="text-gray-500 text-xs leading-relaxed mb-8 px-4">
-            Click the link in your email to verify your account. Once verified
-            you can log in. If you don't see it, check your spam folder.
+          <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4 mb-6">
+            <p className="text-yellow-400 text-xs leading-relaxed">
+              You must verify your email. Check your inbox (and spam folder) for
+              the verification link.
+            </p>
+          </div>
+          <p className="text-gray-500 text-xs mb-4">
+            Already verified?{" "}
+            <Link to="/login" className="text-teal-400 hover:underline">
+              Go to Login
+            </Link>
           </p>
 
           <Link
@@ -196,27 +225,12 @@ export default function Signup() {
             Go to Login
           </Link>
 
-          <button
-            onClick={async () => {
-              try {
-                const user = auth.currentUser;
-                if (user) {
-                  await sendEmailVerification(user, {
-                    url: "https://omnidev-two.vercel.app/login?verified=true",
-                    handleCodeInApp: false,
-                  });
-                  alert("Verification email resent! Check your inbox.");
-                }
-              } catch {
-                setError("Too many requests. Wait a moment before resending.");
-              }
-            }}
-            className="mt-4 text-gray-500 text-xs hover:text-teal-400 transition-colors"
-          >
-            Didn't receive it? Resend email
-          </button>
-
-          {error && <p className="mt-3 text-red-400 text-xs">{error}</p>}
+          <p className="mt-4 text-gray-500 text-xs">
+            Didn't receive it?{" "}
+            <span className="text-gray-400">
+              Check your spam folder or sign up again.
+            </span>
+          </p>
 
           <Link to="/" className="mt-6 text-teal-400 text-sm hover:underline">
             ← Back to Home
@@ -287,14 +301,25 @@ export default function Signup() {
             className="w-full px-5 py-3.5 rounded-xl bg-white/90 text-black outline-none"
           />
 
-          <input
-            type="password"
-            name="password"
-            placeholder="Enter Password"
-            value={form.password}
-            onChange={handleChange}
-            className="w-full px-5 py-3.5 rounded-xl bg-white/90 text-black outline-none"
-          />
+          {/* Password field with eye toggle */}
+          <div className="relative">
+            <input
+              type={showPassword ? "text" : "password"}
+              name="password"
+              placeholder="Enter Password"
+              value={form.password}
+              onChange={handleChange}
+              className="w-full px-5 py-3.5 pr-12 rounded-xl bg-white/90 text-black outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((p) => !p)}
+              className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 transition-colors"
+              tabIndex={-1}
+            >
+              <EyeIcon open={showPassword} />
+            </button>
+          </div>
 
           {error && (
             <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-3">

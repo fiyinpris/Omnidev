@@ -14,6 +14,7 @@ import {
   where,
   onSnapshot,
   updateDoc,
+  Timestamp,
 } from "firebase/firestore";
 import { TickerBar } from "./TickerBar";
 
@@ -123,151 +124,6 @@ const SIDEBAR_ITEMS = [
   },
 ];
 
-/**
- * BOT PHASE LOGIC:
- * Phase 1 - "analysing": hasBeenFunded=true, now < analysingExpiresAt
- * Phase 2 - "activated": botExpiresAt set, now < botExpiresAt
- * Phase 3 - "disabled": botExpiresAt set, now >= botExpiresAt
- */
-function useBalanceGrowth(session) {
-  useEffect(() => {
-    if (!session?.uid) return;
-    let intervalId = null;
-
-    const tick = async () => {
-      try {
-        const userRef = doc(db, "users", session.uid);
-        const snap = await getDoc(userRef);
-        if (!snap.exists()) return;
-        const data = snap.data();
-
-        const {
-          hasBeenFunded,
-          botActive,
-          initialBalance,
-          targetAmount,
-          balance,
-          botExpiresAt,
-          botActivatedAt,
-          analysingExpiresAt,
-          pendingTarget,
-          botHours,
-        } = data;
-
-        if (!hasBeenFunded) return;
-
-        const now = Date.now();
-        const analysingExpMs =
-          analysingExpiresAt?.toMillis?.() || analysingExpiresAt;
-        const botExpMs = botExpiresAt?.toMillis?.() || botExpiresAt;
-        const activatedAtMs = botActivatedAt?.toMillis?.() || botActivatedAt;
-
-        // Phase 1: Analysing (lock balance at initialBalance)
-        if (
-          !botExpMs ||
-          (analysingExpMs && now < analysingExpMs && !botExpMs)
-        ) {
-          // Check if pending target exists - if analysing is done, activate it
-          if (
-            analysingExpMs &&
-            now >= analysingExpMs &&
-            pendingTarget &&
-            targetAmount &&
-            botHours
-          ) {
-            const tradingMs = botHours * 60 * 60 * 1000;
-            const newBotExpiresAt = Timestamp.fromMillis(now + tradingMs);
-            const newBotActivatedAt = Timestamp.fromMillis(now);
-            await updateDoc(userRef, {
-              botActive: true,
-              botStatus: "activated",
-              botActivatedAt: newBotActivatedAt,
-              botExpiresAt: newBotExpiresAt,
-              pendingTarget: false,
-              lastTargetSetAt: newBotActivatedAt,
-            });
-            return;
-          }
-
-          if (balance !== initialBalance) {
-            await updateDoc(userRef, {
-              balance: initialBalance,
-              botStatus: "analysing",
-            });
-          }
-          return;
-        }
-
-        // Phase 3: Trading expired
-        if (botExpMs && now >= botExpMs) {
-          const finalBalance = initialBalance + targetAmount;
-          const updates = {};
-          if (balance !== finalBalance) updates.balance = finalBalance;
-          if (botActive) updates.botActive = false;
-          updates.botStatus = "disabled";
-          if (Object.keys(updates).length > 0) {
-            await updateDoc(userRef, updates);
-          }
-          return;
-        }
-
-        // Phase 2: Actively trading - grow balance
-        if (!botExpMs || !activatedAtMs || !targetAmount || !initialBalance)
-          return;
-
-        const tradingDuration = botExpMs - activatedAtMs;
-        const elapsed = now - activatedAtMs;
-        const progress = Math.min(Math.max(elapsed / tradingDuration, 0), 1);
-
-        let computedBalance;
-        if (progress >= 1) {
-          computedBalance = initialBalance + targetAmount;
-        } else {
-          const raw = initialBalance + targetAmount * progress;
-          computedBalance = Math.floor(raw * 100) / 100;
-        }
-
-        const currentBalance =
-          typeof balance === "number" ? balance : parseFloat(balance) || 0;
-
-        if (computedBalance > currentBalance + 0.001) {
-          await updateDoc(userRef, {
-            balance: computedBalance,
-            botStatus: "activated",
-          });
-          // Create growth transaction for user's dashboard history
-          await createGrowthTransaction(session.uid, computedBalance, data);
-        } else if (data.botStatus !== "activated") {
-          await updateDoc(userRef, { botStatus: "activated" });
-        }
-      } catch (err) {
-        console.error("Balance growth tick error:", err);
-      }
-    };
-
-    tick();
-    intervalId = setInterval(tick, 300_000);
-    return () => clearInterval(intervalId);
-  }, [session?.uid]);
-}
-
-// Helper: Create growth transaction in user's dashboard history (NOT admin)
-async function createGrowthTransaction(uid, newBalance, userData) {
-  try {
-    const txnRef = doc(collection(db, "users", uid, "transactions"));
-    await setDoc(txnRef, {
-      type: "growth",
-      amount: newBalance,
-      source: "bot_trading",
-      status: "completed",
-      timestamp: new Date(),
-      description: `OmniDev trading growth - Balance updated to $${formatMoney(newBalance)}`,
-    });
-  } catch (err) {
-    console.error("Growth transaction error:", err);
-  }
-}
-
 export default function Dashboard() {
   const [session, setSession] = useState(null);
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -296,9 +152,7 @@ export default function Dashboard() {
   const [withdrawWallet, setWithdrawWallet] = useState("");
   const [withdrawError, setWithdrawError] = useState("");
 
-  useBalanceGrowth(session);
-
-  // Auth + profile load
+  // ─── Auth + profile load ───
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
       if (!user) {
@@ -346,24 +200,21 @@ export default function Dashboard() {
     return () => unsub();
   }, [navigate]);
 
-  // Real-time listener: bot phase
+  // ─── Real-time balance + bot phase listener ───
   useEffect(() => {
     if (!session?.uid) return;
     const userRef = doc(db, "users", session.uid);
 
     const computePhase = (data) => {
       const now = Date.now();
-      const funded = data.hasBeenFunded || false;
-      if (!funded) return "disabled";
-      const analysingExpMs =
-        data.analysingExpiresAt?.toMillis?.() || data.analysingExpiresAt;
+      if (!data.hasBeenFunded) return "disabled";
       const botExpMs = data.botExpiresAt?.toMillis?.() || data.botExpiresAt;
       if (botExpMs && now >= botExpMs) return "disabled";
       if (botExpMs && now < botExpMs) return "activated";
-      // If pending target exists but no bot expiry yet, still show as analysing
       return "analysing";
     };
 
+    // onSnapshot fires instantly whenever Firestore writes a new balance chunk
     const unsub = onSnapshot(userRef, (snap) => {
       if (!snap.exists()) return;
       const data = snap.data();
@@ -371,21 +222,10 @@ export default function Dashboard() {
       setBotPhase(computePhase(data));
     });
 
-    const phaseTimer = setInterval(async () => {
-      const snap = await getDoc(userRef);
-      if (!snap.exists()) return;
-      const data = snap.data();
-      setBalance(data.balance || 0);
-      setBotPhase(computePhase(data));
-    }, 15_000);
-
-    return () => {
-      unsub();
-      clearInterval(phaseTimer);
-    };
+    return () => unsub();
   }, [session?.uid]);
 
-  // Transactions listener
+  // ─── Real-time transactions listener ───
   useEffect(() => {
     if (!session?.uid) return;
     const txnRef = collection(db, "users", session.uid, "transactions");
@@ -417,7 +257,6 @@ export default function Dashboard() {
     }, 1800);
   };
 
-  // FIXED #1: Profile image save - immediate Firestore write with current state
   const handleFileChange = (e) => {
     const file = e.target.files?.[0];
     if (!file || !session) return;
@@ -523,7 +362,6 @@ export default function Dashboard() {
     }
   };
 
-  // FIXED #2: Withdraw validation with popup error
   const handleWithdraw = () => {
     setWithdrawError("");
     if (!withdrawAmount || parseFloat(withdrawAmount) <= 0) {
@@ -541,23 +379,33 @@ export default function Dashboard() {
     navigate("/withdrawal-support");
   };
 
-  // FIXED #3: Export transactions to CSV
   const handleExportTransactions = () => {
     if (userTransactions.length === 0) {
       setWithdrawError("No transactions to export.");
       return;
     }
     const headers = ["VSN", "Type", "Status", "Amount", "Date", "Description"];
-    const rows = userTransactions.map((t) => [
-      t.id.slice(-6).toUpperCase(),
-      t.type || "",
-      t.status || "",
-      (t.type === "deposit" || t.type === "growth" ? "+" : "-") +
-        "$" +
-        formatMoney(t.amount),
-      t.timestamp ? t.timestamp.toLocaleString() : "",
-      t.description || "",
-    ]);
+    const rows = userTransactions.map((t) => {
+      // Show friendly type name
+      let typeName = t.type || "";
+      if (typeName === "solana") typeName = "Solana";
+      else if (typeName === "deposit") typeName = "Deposit";
+      else if (typeName === "growth") typeName = "Solana";
+      else typeName = typeName.charAt(0).toUpperCase() + typeName.slice(1);
+
+      return [
+        t.id.slice(-6).toUpperCase(),
+        typeName,
+        t.status || "",
+        (t.type === "deposit" || t.type === "solana" || t.type === "growth"
+          ? "+"
+          : "-") +
+          "$" +
+          formatMoney(t.amount),
+        t.timestamp ? t.timestamp.toLocaleString() : "",
+        t.description || "",
+      ];
+    });
     const csvContent = [
       headers.join(","),
       ...rows.map((row) =>
@@ -566,8 +414,7 @@ export default function Dashboard() {
     ].join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
-    const url = URL.createObjectURL(blob);
-    link.setAttribute("href", url);
+    link.setAttribute("href", URL.createObjectURL(blob));
     link.setAttribute(
       "download",
       `omnidev_transactions_${new Date().toISOString().split("T")[0]}.csv`,
@@ -581,16 +428,17 @@ export default function Dashboard() {
   const displayName =
     profileForm.username || session?.email?.split("@")[0] || "";
 
+  // ─── Bot display — activated is NOW light green (#22c55e), disabled is red ───
   const getBotDisplay = () => {
     switch (botPhase) {
       case "activated":
         return {
           text: "Bot Trading Activated",
           subText: "OmniDev is actively trading on your behalf",
-          dotColor: "#8b5cf6",
-          bgColor: "rgba(139,92,246,0.1)",
-          borderColor: "rgba(139,92,246,0.3)",
-          textColor: "#8b5cf6",
+          dotColor: "#22c55e",
+          bgColor: "rgba(34,197,94,0.1)",
+          borderColor: "rgba(34,197,94,0.3)",
+          textColor: "#22c55e",
         };
       case "analysing":
         return {
@@ -606,14 +454,44 @@ export default function Dashboard() {
           text: "Bot Trading Disabled",
           subText: "Fund your account to activate",
           dotColor: "#ef4444",
-          bgColor: "#1a1a1a",
-          borderColor: "#2a2a2a",
+          bgColor: "rgba(239,68,68,0.08)",
+          borderColor: "rgba(239,68,68,0.25)",
           textColor: "#ef4444",
         };
     }
   };
-
   const botDisplay = getBotDisplay();
+
+  // ─── Friendly type label for dashboard transactions ───
+  const getTypeLabel = (type) => {
+    if (type === "deposit") return "Deposit";
+    if (type === "solana") return "Solana";
+    if (type === "growth") return "Solana";
+    if (type === "bot_profit") return "Solana";
+    return type ? type.charAt(0).toUpperCase() + type.slice(1) : "—";
+  };
+
+  // Green for deposit/solana/growth, red for others
+  const getAmountColor = (type) => {
+    if (
+      type === "deposit" ||
+      type === "solana" ||
+      type === "growth" ||
+      type === "bot_profit"
+    )
+      return "#22c55e";
+    return "#ef4444";
+  };
+  const getAmountPrefix = (type) => {
+    if (
+      type === "deposit" ||
+      type === "solana" ||
+      type === "growth" ||
+      type === "bot_profit"
+    )
+      return "+";
+    return "-";
+  };
 
   return (
     <>
@@ -648,18 +526,9 @@ export default function Dashboard() {
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes pulse-dot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.6; transform: scale(1.3); } }
         @keyframes countUp { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
-        .analysing-dots {
-          display: inline-flex;
-          align-items: center;
-          justify-content: flex-start;
-          min-width: 32px;
-          height: 1.2em;
-          line-height: 1.2;
-          vertical-align: middle;
-          margin-left: 4px;
-          position: relative;
-          top: -1px;
-        }
+        @keyframes balancePop { 0% { transform: scale(1); } 50% { transform: scale(1.04); color: #22c55e; } 100% { transform: scale(1); } }
+        .balance-update { animation: balancePop 0.5s ease; }
+        .analysing-dots { display: inline-flex; align-items: center; min-width: 32px; height: 1.2em; vertical-align: middle; margin-left: 4px; }
         .analysing-dots::after {
           content: "...";
           animation: analysing-anim 1.5s steps(4, end) infinite;
@@ -671,14 +540,9 @@ export default function Dashboard() {
           width: 32px;
           white-space: nowrap;
           overflow: hidden;
-          line-height: 1;
         }
         @keyframes analysing-anim {
-          0%   { width: 0; }
-          25%  { width: 10px; }
-          50%  { width: 20px; }
-          75%  { width: 30px; }
-          100% { width: 32px; }
+          0% { width: 0; } 25% { width: 10px; } 50% { width: 20px; } 75% { width: 30px; } 100% { width: 32px; }
         }
       `}</style>
 
@@ -739,6 +603,7 @@ export default function Dashboard() {
           overflow: "hidden",
         }}
       >
+        {/* HEADER */}
         <header
           style={{
             flexShrink: 0,
@@ -856,6 +721,7 @@ export default function Dashboard() {
             />
           )}
 
+          {/* SIDEBAR */}
           <aside
             className="dash-sidebar"
             style={{
@@ -1133,6 +999,7 @@ export default function Dashboard() {
             </div>
           </aside>
 
+          {/* MAIN */}
           <main
             className="dash-main"
             style={{
@@ -1177,7 +1044,7 @@ export default function Dashboard() {
                   margin: "0 auto",
                 }}
               >
-                {/* DASHBOARD TAB */}
+                {/* ══════════════ DASHBOARD TAB ══════════════ */}
                 {activeTab === "dashboard" && (
                   <div>
                     <div style={{ marginBottom: "24px" }}>
@@ -1293,6 +1160,7 @@ export default function Dashboard() {
                         marginBottom: "28px",
                       }}
                     >
+                      {/* Balance card */}
                       <div
                         style={{
                           background: "#111",
@@ -1347,12 +1215,13 @@ export default function Dashboard() {
                           }}
                         >
                           <p
+                            key={balance}
                             style={{
                               color: "#fff",
                               fontSize: "30px",
                               fontWeight: 800,
                               margin: 0,
-                              animation: "countUp 0.3s ease",
+                              animation: "countUp 0.4s ease",
                             }}
                           >
                             {balanceVisible
@@ -1425,7 +1294,7 @@ export default function Dashboard() {
                               flex: 1,
                               padding: "10px",
                               borderRadius: "9px",
-                              background: "#03295b",
+                              background: "#7C5CFC",
                               border: "1px solid #333",
                               color: "#fff",
                               fontWeight: 700,
@@ -1436,6 +1305,7 @@ export default function Dashboard() {
                             Connect Wallet
                           </button>
                         </div>
+                        {/* Bot status pill */}
                         <div
                           style={{
                             display: "inline-flex",
@@ -1479,8 +1349,7 @@ export default function Dashboard() {
                             style={{
                               color: "#6b7280",
                               fontSize: "11px",
-                              margin: "6px 0 0",
-                              paddingLeft: "22px",
+                              margin: "16px 0 0",
                             }}
                           >
                             {botDisplay.subText}
@@ -1488,6 +1357,7 @@ export default function Dashboard() {
                         )}
                       </div>
 
+                      {/* Total transactions card */}
                       <div
                         style={{
                           background: "#111",
@@ -1544,7 +1414,7 @@ export default function Dashboard() {
                       </div>
                     </div>
 
-                    {/* Recent transactions - FIXED: increased header height */}
+                    {/* Recent transactions */}
                     <div>
                       <div
                         style={{
@@ -1654,10 +1524,9 @@ export default function Dashboard() {
                                   color: "#d1d5db",
                                   fontSize: "13px",
                                   textAlign: "center",
-                                  textTransform: "capitalize",
                                 }}
                               >
-                                {t.type}
+                                {getTypeLabel(t.type)}
                               </span>
                               <span style={{ textAlign: "center" }}>
                                 <span
@@ -1682,19 +1551,14 @@ export default function Dashboard() {
                               </span>
                               <span
                                 style={{
-                                  color:
-                                    t.type === "deposit" || t.type === "growth"
-                                      ? "#0d9488"
-                                      : "#ef4444",
+                                  color: getAmountColor(t.type),
                                   fontSize: "13px",
                                   fontWeight: 700,
                                   textAlign: "right",
                                 }}
                               >
-                                {t.type === "deposit" || t.type === "growth"
-                                  ? "+"
-                                  : "-"}
-                                ${formatMoney(t.amount)}
+                                {getAmountPrefix(t.type)}$
+                                {formatMoney(t.amount)}
                               </span>
                             </div>
                           ))
@@ -1704,7 +1568,7 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                {/* DEPOSIT TAB */}
+                {/* ══════════════ DEPOSIT TAB ══════════════ */}
                 {activeTab === "deposit" && (
                   <div
                     style={{
@@ -1767,7 +1631,7 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                {/* WITHDRAW TAB */}
+                {/* ══════════════ WITHDRAW TAB ══════════════ */}
                 {activeTab === "withdraw" && (
                   <div
                     style={{
@@ -1798,8 +1662,6 @@ export default function Dashboard() {
                       Withdraw your USD into your bank account or preferred
                       payment method
                     </p>
-
-                    {/* FIXED: Withdraw error popup */}
                     {withdrawError && (
                       <div
                         style={{
@@ -1837,7 +1699,6 @@ export default function Dashboard() {
                         </span>
                       </div>
                     )}
-
                     <div
                       style={{
                         display: "flex",
@@ -1943,7 +1804,7 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                {/* TRANSACTIONS TAB */}
+                {/* ══════════════ TRANSACTIONS TAB ══════════════ */}
                 {activeTab === "transactions" && (
                   <div>
                     <h2
@@ -1993,7 +1854,7 @@ export default function Dashboard() {
                         <option>All Types</option>
                         <option>Deposit</option>
                         <option>Withdrawal</option>
-                        <option>Growth</option>
+                        <option>Solana</option>
                       </select>
                       <button
                         onClick={handleExportTransactions}
@@ -2096,10 +1957,9 @@ export default function Dashboard() {
                                 color: "#d1d5db",
                                 fontSize: "13px",
                                 textAlign: "center",
-                                textTransform: "capitalize",
                               }}
                             >
-                              {t.type}
+                              {getTypeLabel(t.type)}
                             </span>
                             <span style={{ textAlign: "center" }}>
                               <span
@@ -2124,19 +1984,13 @@ export default function Dashboard() {
                             </span>
                             <span
                               style={{
-                                color:
-                                  t.type === "deposit" || t.type === "growth"
-                                    ? "#0d9488"
-                                    : "#ef4444",
+                                color: getAmountColor(t.type),
                                 fontSize: "13px",
                                 fontWeight: 700,
                                 textAlign: "right",
                               }}
                             >
-                              {t.type === "deposit" || t.type === "growth"
-                                ? "+"
-                                : "-"}
-                              ${formatMoney(t.amount)}
+                              {getAmountPrefix(t.type)}${formatMoney(t.amount)}
                             </span>
                           </div>
                         ))
@@ -2145,7 +1999,7 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                {/* PROFILE TAB */}
+                {/* ══════════════ PROFILE TAB ══════════════ */}
                 {activeTab === "profile" && (
                   <div
                     style={{
@@ -2294,8 +2148,8 @@ export default function Dashboard() {
                                 margin: 0,
                               }}
                             >
-                              ⚠️ Complete your profile — some details are
-                              missing from your account.
+                              Complete your profile — some details are missing
+                              from your account.
                             </p>
                           </div>
                         )}
@@ -2325,17 +2179,9 @@ export default function Dashboard() {
                           }}
                         >
                           {[
-                            {
-                              label: "First Name",
-                              key: "firstName",
-                              readOnly: true,
-                            },
-                            {
-                              label: "Last Name",
-                              key: "lastName",
-                              readOnly: true,
-                            },
-                          ].map(({ label, key, readOnly }) => (
+                            { label: "First Name", key: "firstName" },
+                            { label: "Last Name", key: "lastName" },
+                          ].map(({ label, key }) => (
                             <div key={key}>
                               <label
                                 style={{
@@ -2352,7 +2198,7 @@ export default function Dashboard() {
                               <input
                                 type="text"
                                 value={profileForm[key]}
-                                readOnly={readOnly}
+                                readOnly
                                 style={{
                                   width: "100%",
                                   boxSizing: "border-box",

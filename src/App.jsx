@@ -28,6 +28,7 @@ const ADMIN_EMAIL = "fiyinolaleke@gmail.com";
  * Without this, the guard sees "no user" for ~200ms and redirects
  * before Firebase has even responded — causing the back-button loop.
  */
+// AuthLoader removed - route guards handle loading individually
 function AuthLoader({ children }) {
   const [authReady, setAuthReady] = useState(false);
 
@@ -70,20 +71,28 @@ function AuthLoader({ children }) {
  * Uses replace:true so pressing back never lands on /login.
  */
 function ProtectedRoute({ children, adminOnly = false }) {
-  const [user, setUser] = useState(undefined); // undefined = loading
+  const [user, setUser] = useState(undefined);
   const [checked, setChecked] = useState(false);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
+    const unsub = onAuthStateChanged(auth, async (u) => {
+      if (u) {
+        await u.reload();
+      }
       setUser(u);
       setChecked(true);
     });
     return () => unsub();
   }, []);
 
-  if (!checked) return null; // AuthLoader already showed spinner
+  if (!checked) return null;
 
   if (!user) return <Navigate to="/login" replace />;
+
+  // Block unverified users from protected routes
+  if (!user.emailVerified) {
+    return <Navigate to="/login?unverified=true" replace />;
+  }
 
   if (adminOnly && user.email !== ADMIN_EMAIL) {
     return <Navigate to="/dashboard" replace />;
@@ -93,15 +102,19 @@ function ProtectedRoute({ children, adminOnly = false }) {
 }
 
 /**
- * Redirects already-logged-in users away from login/signup
- * so they never land back on auth pages after logging in.
+ * Redirects verified logged-in users away from login/signup.
+ * Unverified users MUST stay on auth pages so they can see
+ * the "verify your email" message and request new links.
  */
 function PublicRoute({ children }) {
   const [user, setUser] = useState(undefined);
   const [checked, setChecked] = useState(false);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
+    const unsub = onAuthStateChanged(auth, async (u) => {
+      if (u) {
+        await u.reload(); // get fresh emailVerified status
+      }
       setUser(u);
       setChecked(true);
     });
@@ -110,7 +123,11 @@ function PublicRoute({ children }) {
 
   if (!checked) return null;
 
-  if (user) return <Navigate to="/dashboard" replace />;
+  // Only redirect VERIFIED users to dashboard
+  // Unverified users stay on login/signup pages
+  if (user && user.emailVerified) {
+    return <Navigate to="/dashboard" replace />;
+  }
 
   return children;
 }
@@ -203,9 +220,7 @@ function LayoutWrapper() {
 function App() {
   return (
     <BrowserRouter>
-      <AuthLoader>
-        <LayoutWrapper />
-      </AuthLoader>
+      <LayoutWrapper />
     </BrowserRouter>
   );
 }

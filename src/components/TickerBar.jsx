@@ -127,7 +127,7 @@ export const TickerBar = () => {
     const track = trackRef.current;
     if (!track) return;
 
-    const speed = 1.5;
+    const speed = 2;
     let x = 0;
     let raf;
     let lastTime = null;
