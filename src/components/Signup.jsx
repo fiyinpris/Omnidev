@@ -205,8 +205,9 @@ export default function Signup() {
           </p>
           <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4 mb-6">
             <p className="text-yellow-400 text-xs leading-relaxed">
-              You must verify your email. Check your inbox (and spam folder) for
-              the verification link.
+              We have sent a confirmation email to your email address. Please
+              follow the instructions in the confirmation email in order to
+              activate your account.
             </p>
           </div>
           <p className="text-gray-500 text-xs mb-4">
