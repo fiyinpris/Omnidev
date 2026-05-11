@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth, db } from "../firebase";
@@ -25,100 +25,6 @@ const fmt = (val) => {
   return `${int.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${dec.substring(0, 2)}`;
 };
 
-// ─── Generate scattered increment schedule ────────────────────────────────────
-const generateIncrements = (target, totalHours) => {
-  if (!target || target <= 0 || !totalHours || totalHours <= 0) return [];
-
-  const totalMs = totalHours * 3600 * 1000;
-  const chunks = [];
-  let remaining = Math.round(target * 100) / 100;
-
-  let sevenHundredCount = 0;
-
-  while (remaining > 0.005) {
-    let maxAllowed = Math.min(remaining, 700);
-
-    // 700 can only appear twice
-    if (sevenHundredCount >= 2) {
-      maxAllowed = Math.min(maxAllowed, 699);
-    }
-
-    let chunk;
-    const roll = Math.random();
-
-    if (roll < 0.35) {
-      // 35% chance → smaller numbers
-      chunk = 50 + Math.random() * 150; // 50–200
-    } else if (roll < 0.75) {
-      // 40% chance → medium numbers
-      chunk = 300 + Math.random() * 200; // 300–500
-    } else {
-      // 25% chance → larger numbers
-      chunk = 600 + Math.random() * 100; // 600–700
-    }
-
-    chunk = Math.round(Math.min(chunk, maxAllowed));
-
-    // Prevent tiny leftovers
-    if (remaining - chunk < 50 && remaining - chunk > 0) {
-      chunk = remaining;
-    }
-
-    if (chunk === 700) {
-      sevenHundredCount++;
-    }
-
-    chunks.push(chunk);
-
-    remaining = Math.round((remaining - chunk) * 100) / 100;
-  }
-
-  if (chunks.length === 0) return [];
-  const n = chunks.length;
-
-  const startBuffer = 2 * 60 * 1000;
-  const endBuffer = totalMs - 2 * 60 * 1000;
-  const usableMs = endBuffer - startBuffer;
-  const slotSize = usableMs / n;
-
-  const increments = chunks.map((amount, i) => {
-    const slotStart = startBuffer + i * slotSize;
-    const jitter = (Math.random() - 0.5) * slotSize * 0.4;
-    const offsetMs = Math.round(
-      Math.max(startBuffer, Math.min(endBuffer, slotStart + jitter)),
-    );
-    return { amount, offsetMs };
-  });
-
-  increments.sort((a, b) => a.offsetMs - b.offsetMs);
-
-  for (let i = 1; i < increments.length; i++) {
-    const minNext = increments[i - 1].offsetMs + 60000;
-    if (increments[i].offsetMs < minNext) {
-      increments[i].offsetMs = minNext;
-    }
-  }
-
-  for (let i = increments.length - 1; i >= 0; i--) {
-    const cap = endBuffer - (increments.length - 1 - i) * 60000;
-    if (increments[i].offsetMs > cap) increments[i].offsetMs = cap;
-  }
-
-  return increments;
-};
-
-// ─── Chunk size validation ────────────────────────────────────────────────────
-const validateChunkSizes = (schedule, target) => {
-  if (!schedule.length) return { maxChunk: 0, total: 0, valid: true };
-  const maxChunk = Math.max(...schedule.map((s) => s.amount), 0);
-  const total = schedule.reduce((s, d) => s + d.amount, 0);
-  console.log(
-    `[CHUNK CHECK] target: $${fmt(target)}, chunks: ${schedule.length}, max: $${fmt(maxChunk)}, total: $${fmt(total)}`,
-  );
-  return { maxChunk, total, valid: maxChunk <= 700 };
-};
-
-// ─── Format duration helper ───────────────────────────────────────────────────
 const fmtDuration = (ms) => {
   if (!ms || ms <= 0) return "0m";
   const m = Math.floor(ms / 60000);
@@ -129,7 +35,6 @@ const fmtDuration = (ms) => {
   return `${mins}m`;
 };
 
-// ─── Color map for statuses (shared by type and status badges) ────────────────
 const STATUS_COLORS = {
   analysing: {
     bg: "rgba(13,148,136,.15)",
@@ -177,7 +82,6 @@ export default function AdminDashboard() {
   const [tgtErr, setTgtErr] = useState("");
   const [txns, setTxns] = useState([]);
   const navigate = useNavigate();
-  const processingRef = useRef(new Set());
 
   // ── Auth ────────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -250,227 +154,6 @@ export default function AdminDashboard() {
     );
     return () => unsub();
   }, [adminUser]);
-
-  // ── Client-side polling: activate pending bots + apply/flush increments ─────
-  useEffect(() => {
-    if (!adminUser || users.length === 0) return;
-    const run = async () => {
-      await checkAndActivatePendingBots();
-      await applyAndFlushIncrements();
-    };
-    run();
-    const interval = setInterval(run, 30 * 1000);
-    return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [adminUser, users]);
-
-  // ── Activate pending bots ────────────────────────────────────────────────────
-  const checkAndActivatePendingBots = async () => {
-    const now = Date.now();
-    for (const user of users) {
-      if (!user.pendingTarget) continue;
-      if (processingRef.current.has(`activate_${user.uid}`)) continue;
-
-      const anaExpMs =
-        user.analysingExpiresAt?.toMillis?.() || user.analysingExpiresAt || 0;
-      if (now <= anaExpMs) continue;
-
-      if (!user.scheduleActivateAt) {
-        // System auto-schedules 2-5 minutes (random)
-        const delayMs = (120 + Math.floor(Math.random() * 181)) * 1000;
-        try {
-          await updateDoc(doc(db, "users", user.uid), {
-            scheduleActivateAt: Timestamp.fromMillis(now + delayMs),
-            botStatus: "scheduled",
-          });
-        } catch (e) {
-          console.error(e);
-        }
-        continue;
-      }
-
-      const activateAtMs =
-        user.scheduleActivateAt?.toMillis?.() || user.scheduleActivateAt || 0;
-      if (now < activateAtMs) continue;
-
-      processingRef.current.add(`activate_${user.uid}`);
-      try {
-        const hours = user.botHours || 1;
-        const target = user.targetAmount || 0;
-        const nowTs = Timestamp.now();
-        const botExpiresAt = Timestamp.fromMillis(now + hours * 3600 * 1000);
-        const schedule = generateIncrements(target, hours);
-
-        validateChunkSizes(schedule, target);
-
-        await updateDoc(doc(db, "users", user.uid), {
-          botStatus: "activated",
-          botActive: true,
-          botActivatedAt: nowTs,
-          botExpiresAt,
-          pendingTarget: false,
-          scheduleActivateAt: null,
-          incrementSchedule: schedule,
-          incrementScheduleStartMs: now,
-          incrementsApplied: 0,
-        });
-
-        const txnQuery = query(
-          collection(db, "adminTransactions"),
-          orderBy("timestamp", "desc"),
-        );
-        const txnSnap = await getDocs(txnQuery);
-        const existingTxn = txnSnap.docs.find(
-          (d) =>
-            d.data().userId === user.uid && d.data().type === "bot_trading",
-        );
-
-        if (existingTxn) {
-          await updateDoc(doc(db, "adminTransactions", existingTxn.id), {
-            status: "trading",
-            botExpiresAt,
-            botActivatedAt: nowTs,
-            note: "Auto-activated after analysing + scheduling gap",
-            updatedAt: nowTs,
-          });
-        } else {
-          await setDoc(doc(collection(db, "adminTransactions")), {
-            userId: user.uid,
-            userEmail: user.email,
-            userName:
-              `${user.firstName} ${user.lastName}`.trim() || user.username,
-            type: "bot_trading",
-            timestamp: nowTs,
-            status: "trading",
-            botExpiresAt,
-            targetAmount: target,
-            botHours: hours,
-            initialAmount: user.initialBalance,
-            adminEmail: adminUser.email,
-            note: "Auto-activated after analysing + scheduling gap",
-          });
-        }
-      } catch (err) {
-        console.error("activate error:", err);
-        processingRef.current.delete(`activate_${user.uid}`);
-      }
-    }
-  };
-
-  // ── Apply due increments + handle expiry ─────────────────────────────────────
-  const applyAndFlushIncrements = async () => {
-    const now = Date.now();
-    for (const user of users) {
-      if (user.botStatus !== "activated") continue;
-      if (processingRef.current.has(`inc_${user.uid}`)) continue;
-
-      const expMs = user.botExpiresAt?.toMillis?.() || user.botExpiresAt || 0;
-      const schedule = user.incrementSchedule || [];
-      const applied = user.incrementsApplied || 0;
-      const startMs = user.incrementScheduleStartMs || 0;
-
-      if (expMs > 0 && now >= expMs) {
-        if (processingRef.current.has(`expire_${user.uid}`)) continue;
-        processingRef.current.add(`expire_${user.uid}`);
-
-        const remaining = schedule.slice(applied);
-
-        try {
-          const finalBalance = parseFloat(
-            ((user.initialBalance || 0) + (user.targetAmount || 0)).toFixed(2),
-          );
-
-          await updateDoc(doc(db, "users", user.uid), {
-            balance: finalBalance,
-            incrementsApplied: schedule.length,
-            botActive: false,
-            botStatus: "disabled",
-          });
-
-          const txnQuery = query(
-            collection(db, "adminTransactions"),
-            orderBy("timestamp", "desc"),
-          );
-          const txnSnap = await getDocs(txnQuery);
-          const existingTxn = txnSnap.docs.find(
-            (d) =>
-              d.data().userId === user.uid && d.data().type === "bot_trading",
-          );
-
-          if (existingTxn) {
-            await updateDoc(doc(db, "adminTransactions", existingTxn.id), {
-              status: "disabled",
-              completedAt: Timestamp.now(),
-              note: "Bot trading completed - time expired",
-            });
-          }
-
-          if (remaining.length > 0) {
-            const totalAdd = remaining.reduce((s, d) => s + d.amount, 0);
-            for (const inc of remaining) {
-              await setDoc(
-                doc(collection(db, "users", user.uid, "transactions")),
-                {
-                  type: "bot_profit",
-                  amount: inc.amount,
-                  source: "bot_flush",
-                  status: "completed",
-                  timestamp: Timestamp.now(),
-                  description: `OmniDev final balance adjustment +$${fmt(inc.amount)}`,
-                },
-              );
-            }
-            console.log(
-              `[FLUSH] ${user.email}: micro-residual +$${fmt(totalAdd)}, final $${fmt(finalBalance)}`,
-            );
-          } else {
-            console.log(
-              `[EXPIRE] ${user.email}: clean expiry, final $${fmt(finalBalance)}`,
-            );
-          }
-        } catch (err) {
-          console.error("flush error:", err);
-          processingRef.current.delete(`expire_${user.uid}`);
-        }
-        continue;
-      }
-
-      if (applied >= schedule.length) continue;
-      const due = schedule
-        .slice(applied)
-        .filter((inc) => startMs + inc.offsetMs <= now);
-      if (due.length === 0) continue;
-
-      processingRef.current.add(`inc_${user.uid}`);
-      try {
-        const totalAdd = due.reduce((s, d) => s + d.amount, 0);
-        const newBalance = Math.round((user.balance + totalAdd) * 100) / 100;
-
-        await updateDoc(doc(db, "users", user.uid), {
-          balance: newBalance,
-          incrementsApplied: applied + due.length,
-        });
-
-        for (const inc of due) {
-          await setDoc(doc(collection(db, "users", user.uid, "transactions")), {
-            type: "bot_profit",
-            amount: inc.amount,
-            source: "bot",
-            status: "completed",
-            timestamp: Timestamp.now(),
-            description: `OmniDev trading profit +$${fmt(inc.amount)}`,
-          });
-        }
-        console.log(
-          `[APPLY] ${user.email}: ${due.length} drops +$${fmt(totalAdd)}, bal $${fmt(newBalance)}`,
-        );
-      } catch (err) {
-        console.error("increment error:", err);
-      } finally {
-        processingRef.current.delete(`inc_${user.uid}`);
-      }
-    }
-  };
 
   // ── Fund user ────────────────────────────────────────────────────────────────
   const handleFund = async () => {
@@ -578,9 +261,7 @@ export default function AdminDashboard() {
       const userRef = doc(db, "users", tgtSel.uid);
 
       if (isAnalysing) {
-        const schedule = generateIncrements(target, hours);
-        validateChunkSizes(schedule, target);
-
+        // Set pending target — Cloud Function will activate after analysis + grace period
         await updateDoc(userRef, {
           targetAmount: target,
           botHours: hours,
@@ -605,7 +286,7 @@ export default function AdminDashboard() {
           timestamp: now,
           status: "scheduled",
           adminEmail: adminUser.email,
-          note: "Will auto-activate 2–5 mins after analysing completes",
+          note: "Will auto-activate after analysing completes + grace period",
         });
 
         setTgtOk(
@@ -613,15 +294,10 @@ export default function AdminDashboard() {
             `over ${hours}h. Bot activates after analysis finishes.`,
         );
       } else {
+        // Activate immediately if not in analysis phase
         const botExpiresAt = Timestamp.fromMillis(
           now.toMillis() + hours * 3600000,
         );
-        const schedule = generateIncrements(target, hours);
-        const chunkCheck = validateChunkSizes(schedule, target);
-        if (!chunkCheck.valid)
-          console.warn(
-            `[CHUNK WARNING] Max chunk exceeded for ${tgtSel.email}`,
-          );
 
         await updateDoc(userRef, {
           targetAmount: target,
@@ -633,7 +309,7 @@ export default function AdminDashboard() {
           pendingTarget: false,
           scheduleActivateAt: null,
           lastTargetSetAt: now,
-          incrementSchedule: schedule,
+          incrementSchedule: [],
           incrementScheduleStartMs: now.toMillis(),
           incrementsApplied: 0,
         });
