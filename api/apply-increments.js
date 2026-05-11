@@ -1,20 +1,14 @@
 import admin from "firebase-admin";
 
-// Initialize Firebase Admin with better error handling
+// Initialize Firebase Admin
 if (!admin.apps.length) {
   try {
-    // Try to get the private key - handle both formats
     let privateKey = process.env.FIREBASE_PRIVATE_KEY;
 
-    // If the key contains literal \n, replace them with actual newlines
-    if (privateKey && privateKey.includes('\\n')) {
-      privateKey = privateKey.replace(/\\n/g, '
-');
-    }
-
-    // If the key is wrapped in quotes, remove them
-    if (privateKey && privateKey.startsWith('"') && privateKey.endsWith('"')) {
-      privateKey = privateKey.slice(1, -1);
+    // Handle newlines in private key
+    if (privateKey) {
+      privateKey = privateKey.split("\n").join("
+");
     }
 
     if (!privateKey || !process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_CLIENT_EMAIL) {
@@ -28,7 +22,7 @@ if (!admin.apps.length) {
         privateKey: privateKey,
       }),
     });
-    console.log("Firebase Admin initialized successfully");
+    console.log("Firebase Admin initialized");
   } catch (err) {
     console.error("Firebase Admin init error:", err.message);
   }
@@ -42,13 +36,12 @@ function formatMoney(val) {
   const num = typeof val === "number" ? val : parseFloat(val);
   if (isNaN(num)) return "0.00";
   const str = num.toFixed(10);
-  const [intPart, decPart] = str.split(".");
-  return `${intPart}.${decPart ? decPart.substring(0, 2) : "00"}`;
+  const parts = str.split(".");
+  return parts[0] + "." + (parts[1] ? parts[1].substring(0, 2) : "00");
 }
 
 export default async function handler(req, res) {
   try {
-    // Validate secret
     const secret = req.headers["x-cron-secret"] || req.query.secret;
     if (secret !== CRON_SECRET) {
       return res.status(403).json({ error: "Unauthorized" });
@@ -80,7 +73,7 @@ export default async function handler(req, res) {
       const startMs = user.incrementScheduleStartMs || 0;
       const appliedCountUser = user.incrementsApplied || 0;
 
-      // ── BOT EXPIRED ───────────────────────────────────────────────────────
+      // BOT EXPIRED
       if (now >= expMs) {
         const remaining = schedule.slice(appliedCountUser);
         const residual = remaining.reduce((s, d) => s + d.amount, 0);
@@ -107,7 +100,7 @@ export default async function handler(req, res) {
               source: "bot_flush",
               status: "completed",
               timestamp: admin.firestore.Timestamp.now(),
-              description: `OmniDev final balance adjustment +$${formatMoney(residual)}`,
+              description: "OmniDev final balance adjustment +$" + formatMoney(residual),
             });
         }
 
@@ -131,7 +124,7 @@ export default async function handler(req, res) {
         continue;
       }
 
-      // ── BOT STILL ACTIVE — apply due chunks ──────────────────────────────
+      // BOT STILL ACTIVE - apply due chunks
       if (appliedCountUser >= schedule.length) continue;
 
       const elapsedMs = now - startMs;
@@ -169,7 +162,7 @@ export default async function handler(req, res) {
             source: "bot",
             status: "completed",
             timestamp: admin.firestore.Timestamp.now(),
-            description: `OmniDev trading profit +$${formatMoney(inc.amount)}`,
+            description: "OmniDev trading profit +$" + formatMoney(inc.amount),
           });
         }
       });

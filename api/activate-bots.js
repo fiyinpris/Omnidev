@@ -1,27 +1,18 @@
 import admin from "firebase-admin";
 
-// Initialize Firebase Admin with better error handling
+// Initialize Firebase Admin
 if (!admin.apps.length) {
   try {
-    // Try to get the private key - handle both formats
     let privateKey = process.env.FIREBASE_PRIVATE_KEY;
 
-    // If the key contains literal \n, replace them with actual newlines
-    if (privateKey && privateKey.includes('\\n')) {
-      privateKey = privateKey.replace(/\\n/g, '
-');
-    }
-
-    // If the key is wrapped in quotes, remove them
-    if (privateKey && privateKey.startsWith('"') && privateKey.endsWith('"')) {
-      privateKey = privateKey.slice(1, -1);
+    // Handle newlines in private key
+    if (privateKey) {
+      privateKey = privateKey.split("\n").join("
+");
     }
 
     if (!privateKey || !process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_CLIENT_EMAIL) {
       console.error("Missing Firebase environment variables");
-      console.error("FIREBASE_PROJECT_ID:", process.env.FIREBASE_PROJECT_ID ? "Set" : "Missing");
-      console.error("FIREBASE_CLIENT_EMAIL:", process.env.FIREBASE_CLIENT_EMAIL ? "Set" : "Missing");
-      console.error("FIREBASE_PRIVATE_KEY:", privateKey ? "Set (length: " + privateKey.length + ")" : "Missing");
     }
 
     admin.initializeApp({
@@ -31,7 +22,7 @@ if (!admin.apps.length) {
         privateKey: privateKey,
       }),
     });
-    console.log("Firebase Admin initialized successfully");
+    console.log("Firebase Admin initialized");
   } catch (err) {
     console.error("Firebase Admin init error:", err.message);
   }
@@ -45,8 +36,8 @@ function formatMoney(val) {
   const num = typeof val === "number" ? val : parseFloat(val);
   if (isNaN(num)) return "0.00";
   const str = num.toFixed(10);
-  const [intPart, decPart] = str.split(".");
-  return `${intPart}.${decPart ? decPart.substring(0, 2) : "00"}`;
+  const parts = str.split(".");
+  return parts[0] + "." + (parts[1] ? parts[1].substring(0, 2) : "00");
 }
 
 function generateIncrementSchedule(targetAmount, totalHours) {
@@ -128,7 +119,6 @@ function generateIncrementSchedule(targetAmount, totalHours) {
 
 export default async function handler(req, res) {
   try {
-    // Validate secret
     const secret = req.headers["x-cron-secret"] || req.query.secret;
     if (secret !== CRON_SECRET) {
       return res.status(403).json({ error: "Unauthorized" });
@@ -208,7 +198,7 @@ export default async function handler(req, res) {
           userId: docSnap.id,
           userEmail: user.email || "",
           userName:
-            `${user.firstName || ""} ${user.lastName || ""}`.trim() ||
+            (user.firstName || "") + " " + (user.lastName || "").trim() ||
             user.username ||
             "",
           initialAmount: user.initialBalance || 0,
