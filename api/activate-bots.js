@@ -1,4 +1,4 @@
-const admin = require("firebase-admin");
+import admin from "firebase-admin";
 
 // Initialize Firebase Admin
 if (!admin.apps.length) {
@@ -122,8 +122,7 @@ function generateIncrementSchedule(targetAmount, totalHours) {
 
   return increments;
 }
-
-module.exports = async function handler(req, res) {
+export default async function handler(req, res) {
   try {
     const secret = req.headers["x-cron-secret"] || req.query.secret;
     if (secret !== CRON_SECRET) {
@@ -241,4 +240,4 @@ module.exports = async function handler(req, res) {
       message: err.message,
     });
   }
-};
+}

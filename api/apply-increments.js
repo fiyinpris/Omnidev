@@ -1,4 +1,4 @@
-const admin = require("firebase-admin");
+import admin from "firebase-admin";
 
 // Initialize Firebase Admin
 if (!admin.apps.length) {
@@ -46,7 +46,7 @@ function formatMoney(val) {
   return parts[0] + "." + (parts[1] ? parts[1].substring(0, 2) : "00");
 }
 
-module.exports = async function handler(req, res) {
+export default async function handler(req, res) {
   try {
     const secret = req.headers["x-cron-secret"] || req.query.secret;
     if (secret !== CRON_SECRET) {
