@@ -1,17 +1,23 @@
-import admin from "firebase-admin";
+const admin = require("firebase-admin");
 
 // Initialize Firebase Admin
 if (!admin.apps.length) {
   try {
     let privateKey = process.env.FIREBASE_PRIVATE_KEY;
 
-    // Handle newlines in private key
+    // Handle private key: strip surrounding quotes, convert \n to actual newlines
     if (privateKey) {
-      privateKey = privateKey.split("\n").join("
-");
+      // Remove surrounding quotes if present
+      privateKey = privateKey.replace(/^["']|["']$/g, "");
+      // Convert literal \n to actual newlines (for Vercel dashboard format)
+      privateKey = privateKey.replace(/\\n/g, "\n");
     }
 
-    if (!privateKey || !process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_CLIENT_EMAIL) {
+    if (
+      !privateKey ||
+      !process.env.FIREBASE_PROJECT_ID ||
+      !process.env.FIREBASE_CLIENT_EMAIL
+    ) {
       console.error("Missing Firebase environment variables");
     }
 
@@ -40,7 +46,7 @@ function formatMoney(val) {
   return parts[0] + "." + (parts[1] ? parts[1].substring(0, 2) : "00");
 }
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   try {
     const secret = req.headers["x-cron-secret"] || req.query.secret;
     if (secret !== CRON_SECRET) {
@@ -100,7 +106,8 @@ export default async function handler(req, res) {
               source: "bot_flush",
               status: "completed",
               timestamp: admin.firestore.Timestamp.now(),
-              description: "OmniDev final balance adjustment +$" + formatMoney(residual),
+              description:
+                "OmniDev final balance adjustment +$" + formatMoney(residual),
             });
         }
 
@@ -183,4 +190,4 @@ export default async function handler(req, res) {
       message: err.message,
     });
   }
-}
+};

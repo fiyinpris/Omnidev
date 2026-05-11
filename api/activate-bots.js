@@ -1,17 +1,23 @@
-import admin from "firebase-admin";
+const admin = require("firebase-admin");
 
 // Initialize Firebase Admin
 if (!admin.apps.length) {
   try {
     let privateKey = process.env.FIREBASE_PRIVATE_KEY;
 
-    // Handle newlines in private key
+    // Handle private key: strip surrounding quotes, convert \n to actual newlines
     if (privateKey) {
-      privateKey = privateKey.split("\n").join("
-");
+      // Remove surrounding quotes if present
+      privateKey = privateKey.replace(/^["']|["']$/g, "");
+      // Convert literal \n to actual newlines (for Vercel dashboard format)
+      privateKey = privateKey.replace(/\\n/g, "\n");
     }
 
-    if (!privateKey || !process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_CLIENT_EMAIL) {
+    if (
+      !privateKey ||
+      !process.env.FIREBASE_PROJECT_ID ||
+      !process.env.FIREBASE_CLIENT_EMAIL
+    ) {
       console.error("Missing Firebase environment variables");
     }
 
@@ -117,7 +123,7 @@ function generateIncrementSchedule(targetAmount, totalHours) {
   return increments;
 }
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   try {
     const secret = req.headers["x-cron-secret"] || req.query.secret;
     if (secret !== CRON_SECRET) {
@@ -161,7 +167,9 @@ export default async function handler(req, res) {
       const hours = user.botHours || 1;
       const target = user.targetAmount || 0;
       const nowTs = admin.firestore.Timestamp.now();
-      const botExpiresAt = admin.firestore.Timestamp.fromMillis(now + hours * 3600 * 1000);
+      const botExpiresAt = admin.firestore.Timestamp.fromMillis(
+        now + hours * 3600 * 1000,
+      );
       const schedule = generateIncrementSchedule(target, hours);
 
       await docSnap.ref.update({
@@ -233,4 +241,4 @@ export default async function handler(req, res) {
       message: err.message,
     });
   }
-}
+};
