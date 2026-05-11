@@ -1,18 +1,40 @@
-// api/activate-bots.js
-// Vercel Serverless Function — runs on cron-job.org ping
-
 import admin from "firebase-admin";
 
-// Initialize Firebase Admin if not already initialized
+// Initialize Firebase Admin with better error handling
 if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert({
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\n/g, "
-"),
-    }),
-  });
+  try {
+    // Try to get the private key - handle both formats
+    let privateKey = process.env.FIREBASE_PRIVATE_KEY;
+
+    // If the key contains literal \n, replace them with actual newlines
+    if (privateKey && privateKey.includes('\\n')) {
+      privateKey = privateKey.replace(/\\n/g, '
+');
+    }
+
+    // If the key is wrapped in quotes, remove them
+    if (privateKey && privateKey.startsWith('"') && privateKey.endsWith('"')) {
+      privateKey = privateKey.slice(1, -1);
+    }
+
+    if (!privateKey || !process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_CLIENT_EMAIL) {
+      console.error("Missing Firebase environment variables");
+      console.error("FIREBASE_PROJECT_ID:", process.env.FIREBASE_PROJECT_ID ? "Set" : "Missing");
+      console.error("FIREBASE_CLIENT_EMAIL:", process.env.FIREBASE_CLIENT_EMAIL ? "Set" : "Missing");
+      console.error("FIREBASE_PRIVATE_KEY:", privateKey ? "Set (length: " + privateKey.length + ")" : "Missing");
+    }
+
+    admin.initializeApp({
+      credential: admin.credential.cert({
+        projectId: process.env.FIREBASE_PROJECT_ID,
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+        privateKey: privateKey,
+      }),
+    });
+    console.log("Firebase Admin initialized successfully");
+  } catch (err) {
+    console.error("Firebase Admin init error:", err.message);
+  }
 }
 
 const db = admin.firestore();
@@ -105,16 +127,17 @@ function generateIncrementSchedule(targetAmount, totalHours) {
 }
 
 export default async function handler(req, res) {
-  // Validate secret
-  const secret = req.headers["x-cron-secret"] || req.query.secret;
-  if (secret !== CRON_SECRET) {
-    return res.status(403).json({ error: "Unauthorized" });
-  }
-
-  const now = Date.now();
-  let activatedCount = 0;
-
   try {
+    // Validate secret
+    const secret = req.headers["x-cron-secret"] || req.query.secret;
+    if (secret !== CRON_SECRET) {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    const now = Date.now();
+    let activatedCount = 0;
+    const results = [];
+
     const snap = await db
       .collection("users")
       .where("pendingTarget", "==", true)
@@ -137,6 +160,10 @@ export default async function handler(req, res) {
       if (!gracePeriodMs) {
         gracePeriodMs = (2 + Math.random() * 3) * 60 * 1000;
         await docSnap.ref.update({ gracePeriodMs });
+        results.push({
+          userId: docSnap.id,
+          action: "grace_period_set",
+        });
         continue;
       }
       if (now < analysingExpMs + gracePeriodMs) continue;
@@ -195,15 +222,25 @@ export default async function handler(req, res) {
       }
 
       activatedCount++;
+      results.push({
+        userId: docSnap.id,
+        action: "activated",
+        target: formatMoney(target),
+        hours,
+      });
     }
 
     res.status(200).json({
       status: "ok",
       activated: activatedCount,
       checked: snap.docs.length,
+      results,
     });
   } catch (err) {
-    console.error("[activate-bots]", err);
-    res.status(500).json({ status: "error", message: err.message });
+    console.error("[activate-bots] ERROR:", err.message);
+    res.status(500).json({
+      status: "error",
+      message: err.message,
+    });
   }
 }

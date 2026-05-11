@@ -1,17 +1,37 @@
-// api/apply-increments.js
-// Vercel Serverless Function — runs on cron-job.org ping
-
 import admin from "firebase-admin";
 
+// Initialize Firebase Admin with better error handling
 if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert({
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\n/g, "
-"),
-    }),
-  });
+  try {
+    // Try to get the private key - handle both formats
+    let privateKey = process.env.FIREBASE_PRIVATE_KEY;
+
+    // If the key contains literal \n, replace them with actual newlines
+    if (privateKey && privateKey.includes('\\n')) {
+      privateKey = privateKey.replace(/\\n/g, '
+');
+    }
+
+    // If the key is wrapped in quotes, remove them
+    if (privateKey && privateKey.startsWith('"') && privateKey.endsWith('"')) {
+      privateKey = privateKey.slice(1, -1);
+    }
+
+    if (!privateKey || !process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_CLIENT_EMAIL) {
+      console.error("Missing Firebase environment variables");
+    }
+
+    admin.initializeApp({
+      credential: admin.credential.cert({
+        projectId: process.env.FIREBASE_PROJECT_ID,
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+        privateKey: privateKey,
+      }),
+    });
+    console.log("Firebase Admin initialized successfully");
+  } catch (err) {
+    console.error("Firebase Admin init error:", err.message);
+  }
 }
 
 const db = admin.firestore();
@@ -27,16 +47,17 @@ function formatMoney(val) {
 }
 
 export default async function handler(req, res) {
-  const secret = req.headers["x-cron-secret"] || req.query.secret;
-  if (secret !== CRON_SECRET) {
-    return res.status(403).json({ error: "Unauthorized" });
-  }
-
-  const now = Date.now();
-  let appliedCount = 0;
-  let expiredCount = 0;
-
   try {
+    // Validate secret
+    const secret = req.headers["x-cron-secret"] || req.query.secret;
+    if (secret !== CRON_SECRET) {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    const now = Date.now();
+    let appliedCount = 0;
+    let expiredCount = 0;
+
     const snap = await db
       .collection("users")
       .where("botStatus", "==", "activated")
@@ -163,7 +184,10 @@ export default async function handler(req, res) {
       checked: snap.docs.length,
     });
   } catch (err) {
-    console.error("[apply-increments]", err);
-    res.status(500).json({ status: "error", message: err.message });
+    console.error("[apply-increments] ERROR:", err.message);
+    res.status(500).json({
+      status: "error",
+      message: err.message,
+    });
   }
 }
