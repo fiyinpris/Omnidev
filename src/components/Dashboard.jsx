@@ -148,9 +148,20 @@ export default function Dashboard() {
   const [userTransactions, setUserTransactions] = useState([]);
   const [isAdmin, setIsAdmin] = useState(false);
   const [balance, setBalance] = useState(0);
+
+  // ── Withdraw form state ───────────────────────────────────────────────────────
+  const [withdrawStep, setWithdrawStep] = useState("form"); // "form" | "submitted"
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [withdrawWallet, setWithdrawWallet] = useState("");
   const [withdrawError, setWithdrawError] = useState("");
+
+  // ── VSN state (modal shown only when user clicks Withdraw again after vsn_required=true) ──
+  const [vsnRequired, setVsnRequired] = useState(false); // live from Firestore
+  const [showVsnModal, setShowVsnModal] = useState(false); // only open on user action
+  const [vsnInput, setVsnInput] = useState("");
+  const [vsnError, setVsnError] = useState("");
+  const [vsnSuccess, setVsnSuccess] = useState(false);
+  const [vsnLoading, setVsnLoading] = useState(false);
 
   // ─── Auth + profile load ───
   useEffect(() => {
@@ -204,7 +215,6 @@ export default function Dashboard() {
   useEffect(() => {
     if (!session?.uid) return;
     const userRef = doc(db, "users", session.uid);
-
     const computePhase = (data) => {
       const now = Date.now();
       if (!data.hasBeenFunded) return "disabled";
@@ -213,15 +223,14 @@ export default function Dashboard() {
       if (botExpMs && now < botExpMs) return "activated";
       return "analysing";
     };
-
-    // onSnapshot fires instantly whenever Firestore writes a new balance chunk
     const unsub = onSnapshot(userRef, (snap) => {
       if (!snap.exists()) return;
       const data = snap.data();
       setBalance(data.balance || 0);
       setBotPhase(computePhase(data));
+      // Track vsn_required silently — do NOT auto-show modal
+      setVsnRequired(data.vsn_required === true && !data.vsn_verified);
     });
-
     return () => unsub();
   }, [session?.uid]);
 
@@ -362,8 +371,20 @@ export default function Dashboard() {
     }
   };
 
-  const handleWithdraw = () => {
+  // ── Withdraw handler ──────────────────────────────────────────────────────────
+  // Step 1: User fills form and clicks Withdraw → save pending request → show "contact support" message
+  // Step 2: Admin generates VSN and tells user via support chat
+  // Step 3: User comes back, clicks Withdraw again → VSN modal appears (because vsn_required=true)
+  const handleWithdrawClick = () => {
     setWithdrawError("");
+
+    // If admin has already set vsn_required=true, show the VSN modal instead of the form
+    if (vsnRequired) {
+      setShowVsnModal(true);
+      return;
+    }
+
+    // Otherwise validate and submit the withdrawal request
     if (!withdrawAmount || parseFloat(withdrawAmount) <= 0) {
       setWithdrawError("Please enter a valid withdrawal amount.");
       return;
@@ -376,23 +397,81 @@ export default function Dashboard() {
       setWithdrawError("Withdrawal amount exceeds your available balance.");
       return;
     }
+    handleWithdrawSubmit();
+  };
+
+  const handleWithdrawSubmit = async () => {
+    try {
+      await updateDoc(doc(db, "users", session.uid), {
+        pendingWithdrawAmount: parseFloat(withdrawAmount),
+        pendingWithdrawWallet: withdrawWallet.trim(),
+        pendingWithdrawAt: Timestamp.now(),
+        withdrawalStatus: "pending_support",
+      });
+    } catch (e) {
+      console.error(e);
+    }
     navigate("/withdrawal-support");
   };
 
-  const handleExportTransactions = () => {
-    if (userTransactions.length === 0) {
-      setWithdrawError("No transactions to export.");
+  // ── VSN verification handler ──────────────────────────────────────────────────
+  const handleVsnSubmit = async () => {
+    if (!vsnInput.trim()) {
+      setVsnError("Please enter your VSN code.");
       return;
     }
+    setVsnLoading(true);
+    setVsnError("");
+    try {
+      const userRef = doc(db, "users", session.uid);
+      const snap = await getDoc(userRef);
+      const data = snap.data();
+
+      if (data.vsn_code && vsnInput.trim() !== data.vsn_code) {
+        setVsnError("Incorrect VSN code. Please contact support.");
+        setVsnLoading(false);
+        return;
+      }
+
+      await updateDoc(userRef, {
+        vsn_required: false,
+        vsn_verified: true,
+        vsn_verified_at: Timestamp.now(),
+        withdrawalStatus: "vsn_verified",
+      });
+
+      await setDoc(doc(collection(db, "users", session.uid, "transactions")), {
+        type: "withdrawal",
+        amount: data.pendingWithdrawAmount || 0,
+        status: "processing",
+        timestamp: Timestamp.now(),
+        description: `Withdrawal request verified via VSN`,
+      });
+
+      setVsnSuccess(true);
+      setVsnInput("");
+      setTimeout(() => {
+        setShowVsnModal(false);
+        setVsnSuccess(false);
+        setVsnRequired(false);
+      }, 3000);
+    } catch (e) {
+      console.error(e);
+      setVsnError("Verification failed. Try again.");
+    } finally {
+      setVsnLoading(false);
+    }
+  };
+
+  const handleExportTransactions = () => {
+    if (userTransactions.length === 0) return;
     const headers = ["VSN", "Type", "Status", "Amount", "Date", "Description"];
     const rows = userTransactions.map((t) => {
-      // Show friendly type name
       let typeName = t.type || "";
       if (typeName === "solana") typeName = "Solana";
       else if (typeName === "deposit") typeName = "Deposit";
       else if (typeName === "growth") typeName = "Solana";
       else typeName = typeName.charAt(0).toUpperCase() + typeName.slice(1);
-
       return [
         t.id.slice(-6).toUpperCase(),
         typeName,
@@ -428,7 +507,6 @@ export default function Dashboard() {
   const displayName =
     profileForm.username || session?.email?.split("@")[0] || "";
 
-  // ─── Bot display — activated is NOW light green (#22c55e), disabled is red ───
   const getBotDisplay = () => {
     switch (botPhase) {
       case "activated":
@@ -462,16 +540,15 @@ export default function Dashboard() {
   };
   const botDisplay = getBotDisplay();
 
-  // ─── Friendly type label for dashboard transactions ───
   const getTypeLabel = (type) => {
     if (type === "deposit") return "Deposit";
     if (type === "solana") return "Solana";
     if (type === "growth") return "Solana";
     if (type === "bot_profit") return "Solana";
+    if (type === "withdrawal") return "Withdrawal";
     return type ? type.charAt(0).toUpperCase() + type.slice(1) : "—";
   };
 
-  // Green for deposit/solana/growth, red for others
   const getAmountColor = (type) => {
     if (
       type === "deposit" ||
@@ -482,6 +559,7 @@ export default function Dashboard() {
       return "#22c55e";
     return "#ef4444";
   };
+
   const getAmountPrefix = (type) => {
     if (
       type === "deposit" ||
@@ -527,6 +605,7 @@ export default function Dashboard() {
         @keyframes pulse-dot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.6; transform: scale(1.3); } }
         @keyframes countUp { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes balancePop { 0% { transform: scale(1); } 50% { transform: scale(1.04); color: #22c55e; } 100% { transform: scale(1); } }
+        @keyframes vsnSlideUp { from { opacity: 0; transform: translateY(24px) scale(0.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
         .balance-update { animation: balancePop 0.5s ease; }
         .analysing-dots { display: inline-flex; align-items: center; min-width: 32px; height: 1.2em; vertical-align: middle; margin-left: 4px; }
         .analysing-dots::after {
@@ -544,8 +623,10 @@ export default function Dashboard() {
         @keyframes analysing-anim {
           0% { width: 0; } 25% { width: 10px; } 50% { width: 20px; } 75% { width: 30px; } 100% { width: 32px; }
         }
+        .vsn-input:focus { border-color: #0d9488 !important; box-shadow: 0 0 0 3px rgba(124,92,252,0.15); }
       `}</style>
 
+      {/* ══ Logout overlay ══ */}
       {logoutMsg && (
         <div
           style={{
@@ -603,7 +684,7 @@ export default function Dashboard() {
           overflow: "hidden",
         }}
       >
-        {/* HEADER */}
+        {/* ══ HEADER ══ */}
         <header
           style={{
             flexShrink: 0,
@@ -721,7 +802,7 @@ export default function Dashboard() {
             />
           )}
 
-          {/* SIDEBAR */}
+          {/* ══ SIDEBAR ══ */}
           <aside
             className="dash-sidebar"
             style={{
@@ -999,7 +1080,7 @@ export default function Dashboard() {
             </div>
           </aside>
 
-          {/* MAIN */}
+          {/* ══ MAIN ══ */}
           <main
             className="dash-main"
             style={{
@@ -1305,7 +1386,6 @@ export default function Dashboard() {
                             Connect Wallet
                           </button>
                         </div>
-                        {/* Bot status pill */}
                         <div
                           style={{
                             display: "inline-flex",
@@ -1662,145 +1742,305 @@ export default function Dashboard() {
                       Withdraw your USD into your bank account or preferred
                       payment method
                     </p>
-                    {withdrawError && (
+
+                    {/* ── Insufficient Balance ── */}
+                    {balance <= 0 ? (
                       <div
                         style={{
-                          background: "rgba(239,68,68,0.1)",
-                          border: "1px solid rgba(239,68,68,0.3)",
-                          borderRadius: "12px",
-                          padding: "14px 16px",
-                          marginBottom: "20px",
                           display: "flex",
-                          alignItems: "center",
-                          gap: "10px",
-                          animation: "popIn 0.3s ease",
+                          justifyContent: "center",
+                          marginTop: "20px",
                         }}
                       >
-                        <svg
-                          width="20"
-                          height="20"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="#ef4444"
-                          strokeWidth="2"
-                        >
-                          <circle cx="12" cy="12" r="10" />
-                          <line x1="12" y1="8" x2="12" y2="12" />
-                          <line x1="12" y1="16" x2="12.01" y2="16" />
-                        </svg>
-                        <span
-                          style={{
-                            color: "#f87171",
-                            fontSize: "14px",
-                            fontWeight: 600,
-                          }}
-                        >
-                          {withdrawError}
-                        </span>
-                      </div>
-                    )}
-                    <div
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: "16px",
-                      }}
-                    >
-                      <div>
                         <div
                           style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            marginBottom: "7px",
+                            background: "#fff",
+                            borderRadius: "18px",
+                            padding: "40px 56px",
+                            textAlign: "center",
+                            boxShadow: "0 8px 40px rgba(13,148,136,0.18)",
                           }}
                         >
-                          <label style={{ color: "#9ca3af", fontSize: "13px" }}>
-                            Amount
-                          </label>
-                          <span
+                          <div
+                            style={{
+                              marginBottom: "14px",
+                              display: "flex",
+                              justifyContent: "center",
+                            }}
+                          >
+                            <div
+                              style={{
+                                width: "48px",
+                                height: "48px",
+                                borderRadius: "50%",
+                                background: "rgba(13,148,136,0.1)",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                              }}
+                            >
+                              <svg
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="#0d9488"
+                                strokeWidth="2.5"
+                              >
+                                <circle cx="12" cy="12" r="10" />
+                                <line x1="12" y1="8" x2="12" y2="12" />
+                                <line x1="12" y1="16" x2="12.01" y2="16" />
+                              </svg>
+                            </div>
+                          </div>
+
+                          <p
+                            style={{
+                              color: "#111",
+                              fontSize: "20px",
+                              fontWeight: 700,
+                              margin: 0,
+                              lineHeight: 1.5,
+                            }}
+                          >
+                            Insufficient USD
+                            <br />
+                            Balance
+                          </p>
+
+                          <p
                             style={{
                               color: "#0d9488",
-                              fontSize: "11px",
-                              background: "rgba(13,148,136,0.1)",
-                              padding: "2px 8px",
-                              borderRadius: "6px",
-                              cursor: "pointer",
+                              fontSize: "13px",
+                              margin: "10px 0 0",
+                              fontWeight: 500,
                             }}
-                            onClick={() => setWithdrawAmount(String(balance))}
                           >
-                            Max
-                          </span>
+                            Fund your account to start withdrawing.
+                          </p>
                         </div>
-                        <input
-                          type="number"
-                          placeholder="Enter USD Amount"
-                          value={withdrawAmount}
-                          onChange={(e) => {
-                            setWithdrawAmount(e.target.value);
-                            setWithdrawError("");
-                          }}
-                          style={{
-                            width: "100%",
-                            boxSizing: "border-box",
-                            background: "#111",
-                            border: "1px solid #333",
-                            borderRadius: "12px",
-                            padding: "13px 16px",
-                            color: "#fff",
-                            fontSize: "16px",
-                            outline: "none",
-                          }}
-                        />
                       </div>
-                      <div>
-                        <label
-                          style={{
-                            color: "#9ca3af",
-                            fontSize: "13px",
-                            display: "block",
-                            marginBottom: "7px",
-                          }}
-                        >
-                          Payment Details
-                        </label>
-                        <textarea
-                          rows={4}
-                          placeholder="Enter Your preferred Wallet"
-                          value={withdrawWallet}
-                          onChange={(e) => {
-                            setWithdrawWallet(e.target.value);
-                            setWithdrawError("");
-                          }}
-                          style={{
-                            width: "100%",
-                            boxSizing: "border-box",
-                            background: "#111",
-                            border: "1px solid #333",
-                            borderRadius: "12px",
-                            padding: "13px 16px",
-                            color: "#fff",
-                            fontSize: "16px",
-                            outline: "none",
-                            resize: "none",
-                          }}
-                        />
-                      </div>
-                      <button
-                        onClick={handleWithdraw}
+                    ) : (
+                      /* ── Has Balance ── */
+                      <div
                         style={{
-                          padding: "14px",
-                          background: "#0d9488",
-                          border: "none",
-                          borderRadius: "12px",
-                          color: "#fff",
-                          fontWeight: 700,
-                          fontSize: "16px",
-                          cursor: "pointer",
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: "16px",
                         }}
                       >
-                        Withdraw
-                      </button>
-                    </div>
+                        {/* If VSN has already been issued by admin, show a hint banner */}
+                        {vsnRequired && (
+                          <div
+                            style={{
+                              background: "rgba(13,148,136,0.1)",
+                              border: "1px solid rgba(13,148,136,0.3)",
+                              borderRadius: "12px",
+                              padding: "14px 16px",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "10px",
+                              animation: "popIn 0.3s ease",
+                              boxShadow: "0 4px 20px rgba(13,148,136,0.12)",
+                            }}
+                          >
+                            <svg
+                              width="20"
+                              height="20"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="#0d9488"
+                              strokeWidth="2"
+                            >
+                              <rect
+                                x="3"
+                                y="11"
+                                width="18"
+                                height="11"
+                                rx="2"
+                              />
+                              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                            </svg>
+
+                            <div>
+                              <p
+                                style={{
+                                  color: "#0d9488",
+                                  fontSize: "13px",
+                                  fontWeight: 700,
+                                  margin: "0 0 2px",
+                                }}
+                              >
+                                VSN Code Ready
+                              </p>
+
+                              <p
+                                style={{
+                                  color: "#14b8a6",
+                                  fontSize: "12px",
+                                  margin: 0,
+                                }}
+                              >
+                                Your VSN code has been issued. Enter your VSN
+                                code to complete your request.
+                              </p>
+                            </div>
+                          </div>
+                        )}
+
+                        {withdrawError && (
+                          <div
+                            style={{
+                              background: "rgba(13,148,136,0.1)",
+                              border: "1px solid rgba(13,148,136,0.3)",
+                              borderRadius: "12px",
+                              padding: "14px 16px",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "10px",
+                              animation: "popIn 0.3s ease",
+                            }}
+                          >
+                            <svg
+                              width="20"
+                              height="20"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="#0d9488"
+                              strokeWidth="2"
+                            >
+                              <circle cx="12" cy="12" r="10" />
+                              <line x1="12" y1="8" x2="12" y2="12" />
+                              <line x1="12" y1="16" x2="12.01" y2="16" />
+                            </svg>
+
+                            <span
+                              style={{
+                                color: "#0d9488",
+                                fontSize: "14px",
+                                fontWeight: 600,
+                              }}
+                            >
+                              {withdrawError}
+                            </span>
+                          </div>
+                        )}
+
+                        {/* Only show form fields if VSN not yet required */}
+                        {!vsnRequired && (
+                          <>
+                            <div>
+                              <div
+                                style={{
+                                  display: "flex",
+                                  justifyContent: "space-between",
+                                  marginBottom: "7px",
+                                }}
+                              >
+                                <label
+                                  style={{
+                                    color: "#9ca3af",
+                                    fontSize: "13px",
+                                  }}
+                                >
+                                  Amount
+                                </label>
+
+                                <span
+                                  style={{
+                                    color: "#0d9488",
+                                    fontSize: "11px",
+                                    background: "rgba(13,148,136,0.1)",
+                                    padding: "2px 8px",
+                                    borderRadius: "6px",
+                                    cursor: "pointer",
+                                  }}
+                                  onClick={() =>
+                                    setWithdrawAmount(String(balance))
+                                  }
+                                >
+                                  Max
+                                </span>
+                              </div>
+
+                              <input
+                                type="number"
+                                placeholder="Enter USD Amount"
+                                value={withdrawAmount}
+                                onChange={(e) => {
+                                  setWithdrawAmount(e.target.value);
+                                  setWithdrawError("");
+                                }}
+                                style={{
+                                  width: "100%",
+                                  boxSizing: "border-box",
+                                  background: "#111",
+                                  border: "1px solid rgba(13,148,136,0.25)",
+                                  borderRadius: "12px",
+                                  padding: "13px 16px",
+                                  color: "#fff",
+                                  fontSize: "16px",
+                                  outline: "none",
+                                }}
+                              />
+                            </div>
+
+                            <div>
+                              <label
+                                style={{
+                                  color: "#9ca3af",
+                                  fontSize: "13px",
+                                  display: "block",
+                                  marginBottom: "7px",
+                                }}
+                              >
+                                Payment Details
+                              </label>
+
+                              <textarea
+                                rows={4}
+                                placeholder="Enter your preferred wallet / bank details"
+                                value={withdrawWallet}
+                                onChange={(e) => {
+                                  setWithdrawWallet(e.target.value);
+                                  setWithdrawError("");
+                                }}
+                                style={{
+                                  width: "100%",
+                                  boxSizing: "border-box",
+                                  background: "#111",
+                                  border: "1px solid rgba(13,148,136,0.25)",
+                                  borderRadius: "12px",
+                                  padding: "13px 16px",
+                                  color: "#fff",
+                                  fontSize: "16px",
+                                  outline: "none",
+                                  resize: "none",
+                                }}
+                              />
+                            </div>
+                          </>
+                        )}
+
+                        <button
+                          onClick={handleWithdrawClick}
+                          style={{
+                            padding: "14px",
+                            background:
+                              "linear-gradient(135deg, #0d9488, #14b8a6)",
+                            border: "none",
+                            borderRadius: "12px",
+                            color: "#fff",
+                            fontWeight: 700,
+                            fontSize: "16px",
+                            cursor: "pointer",
+                            boxShadow: "0 8px 24px rgba(13,148,136,0.25)",
+                          }}
+                        >
+                          {vsnRequired ? "Enter VSN Code" : "Withdraw"}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -2216,7 +2456,6 @@ export default function Dashboard() {
                               />
                             </div>
                           ))}
-
                           <div>
                             <label
                               style={{
@@ -2253,7 +2492,6 @@ export default function Dashboard() {
                               }}
                             />
                           </div>
-
                           <div>
                             <label
                               style={{
@@ -2329,7 +2567,6 @@ export default function Dashboard() {
                               </span>
                             </div>
                           </div>
-
                           <button
                             onClick={handleProfileSave}
                             disabled={profileSaved}
@@ -2419,7 +2656,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* MOBILE BOTTOM NAV */}
+      {/* ══ MOBILE BOTTOM NAV ══ */}
       <div
         className="mobile-bottom-nav"
         style={{
@@ -2555,6 +2792,260 @@ export default function Dashboard() {
           );
         })}
       </div>
+      {/* ══════════════ VSN CODE MODAL ══════════════ */}
+      {showVsnModal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.82)",
+            backdropFilter: "blur(6px)",
+            zIndex: 9998,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "20px",
+          }}
+        >
+          <div
+            style={{
+              background: "#081012",
+              borderRadius: "24px",
+              padding: "40px 32px",
+              maxWidth: "390px",
+              width: "100%",
+              textAlign: "center",
+              border: "1px solid rgba(13,148,136,0.22)",
+              boxShadow:
+                "0 24px 70px rgba(0,0,0,0.55), 0 0 40px rgba(13,148,136,0.08)",
+              animation: "vsnSlideUp 0.35s cubic-bezier(0.34,1.56,0.64,1)",
+            }}
+          >
+            {/* ICON */}
+            <div
+              style={{
+                width: "68px",
+                height: "68px",
+                borderRadius: "50%",
+                background: "#0d9488",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                margin: "0 auto 22px",
+                boxShadow: "0 10px 30px rgba(13,148,136,0.18)",
+              }}
+            >
+              <svg
+                width="30"
+                height="30"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="white"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <rect x="3" y="11" width="18" height="11" rx="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                <circle cx="12" cy="16" r="1.5" fill="white" />
+              </svg>
+            </div>
+
+            {/* TITLE */}
+            <h3
+              style={{
+                color: "#fff",
+                fontSize: "22px",
+                fontWeight: 800,
+                margin: "0 0 10px",
+                letterSpacing: "-0.3px",
+              }}
+            >
+              Enter VSN Code
+            </h3>
+
+            {/* DESCRIPTION */}
+            <p
+              style={{
+                color: "#94a3b8",
+                fontSize: "14px",
+                lineHeight: 1.65,
+                margin: "0 0 28px",
+              }}
+            >
+              Enter the VSN code provided to you by our support team to complete
+              your withdrawal.
+            </p>
+
+            {vsnSuccess ? (
+              <div
+                style={{
+                  padding: "20px",
+                  background: "rgba(13,148,136,0.12)",
+                  borderRadius: "14px",
+                  border: "1px solid rgba(13,148,136,0.3)",
+                  animation: "popIn 0.3s ease",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "10px",
+                  }}
+                >
+                  <svg
+                    width="22"
+                    height="22"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="#14b8a6"
+                    strokeWidth="2.5"
+                  >
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                    <polyline points="22 4 12 14.01 9 11.01" />
+                  </svg>
+
+                  <p
+                    style={{
+                      color: "#14b8a6",
+                      fontWeight: 700,
+                      margin: 0,
+                      fontSize: "15px",
+                    }}
+                  >
+                    VSN Verified!
+                  </p>
+                </div>
+
+                <p
+                  style={{
+                    color: "#94a3b8",
+                    fontSize: "13px",
+                    margin: "8px 0 0",
+                  }}
+                >
+                  Your withdrawal is being processed.
+                </p>
+              </div>
+            ) : (
+              <>
+                {/* INPUT */}
+                <input
+                  type="text"
+                  className="vsn-input"
+                  placeholder="Enter your VSN code"
+                  value={vsnInput}
+                  onChange={(e) => {
+                    setVsnInput(e.target.value);
+                    setVsnError("");
+                  }}
+                  onKeyDown={(e) => e.key === "Enter" && handleVsnSubmit()}
+                  style={{
+                    width: "100%",
+                    boxSizing: "border-box",
+                    background: "#0f1720",
+                    border: vsnError
+                      ? "1.5px solid #ef4444"
+                      : "1.5px solid rgba(13,148,136,0.22)",
+                    borderRadius: "12px",
+                    padding: "15px 16px",
+                    color: "#fff",
+                    fontSize: "18px",
+                    outline: "none",
+                    marginBottom: "10px",
+                    textAlign: "center",
+                    letterSpacing: "0.2em",
+                    fontWeight: 700,
+                    transition: "all 0.2s",
+                    boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.02)",
+                    caretColor: "#14b8a6",
+                    accentColor: "#14b8a6",
+                  }}
+                />
+
+                {/* ERROR */}
+                {vsnError && (
+                  <p
+                    style={{
+                      color: "#f87171",
+                      fontSize: "13px",
+                      marginBottom: "14px",
+                      fontWeight: 500,
+                    }}
+                  >
+                    {vsnError}
+                  </p>
+                )}
+
+                {/* BUTTON */}
+                <button
+                  onClick={handleVsnSubmit}
+                  disabled={vsnLoading}
+                  style={{
+                    width: "100%",
+                    padding: "15px",
+                    background: vsnLoading
+                      ? "rgba(13,148,136,0.45)"
+                      : "#0d9488",
+                    border: "1px solid rgba(255,255,255,0.04)",
+                    borderRadius: "12px",
+                    color: "#fff",
+                    fontWeight: 700,
+                    fontSize: "16px",
+                    cursor: vsnLoading ? "default" : "pointer",
+                    marginBottom: "12px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "8px",
+                    boxShadow: "0 8px 24px rgba(13,148,136,0.18)",
+                    transition: "all 0.2s",
+                  }}
+                >
+                  {vsnLoading ? (
+                    <>
+                      <div
+                        style={{
+                          width: "16px",
+                          height: "16px",
+                          border: "2.5px solid rgba(255,255,255,0.3)",
+                          borderTop: "2.5px solid #fff",
+                          borderRadius: "50%",
+                          animation: "spin 0.7s linear infinite",
+                        }}
+                      />
+                      Verifying...
+                    </>
+                  ) : (
+                    "Proceed"
+                  )}
+                </button>
+
+                {/* CANCEL */}
+                <button
+                  onClick={() => {
+                    setShowVsnModal(false);
+                    setVsnInput("");
+                    setVsnError("");
+                  }}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "#94a3b8",
+                    fontSize: "14px",
+                    cursor: "pointer",
+                    padding: "4px 12px",
+                  }}
+                >
+                  Cancel
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       <ConnectWallet isOpen={walletOpen} onClose={() => setWalletOpen(false)} />
     </>
