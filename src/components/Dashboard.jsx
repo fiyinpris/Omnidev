@@ -155,13 +155,17 @@ export default function Dashboard() {
   const [withdrawWallet, setWithdrawWallet] = useState("");
   const [withdrawError, setWithdrawError] = useState("");
 
-  // ── VSN state ─────────────────────────────────────────────────────────────────
-  const [vsnRequired, setVsnRequired] = useState(false);
-  const [showVsnModal, setShowVsnModal] = useState(false);
+  // ── VSN state (modal shown only when user clicks Withdraw again after vsn_required=true) ──
+  const [vsnRequired, setVsnRequired] = useState(false); // live from Firestore
+  const [showVsnModal, setShowVsnModal] = useState(false); // only open on user action
   const [vsnInput, setVsnInput] = useState("");
   const [vsnError, setVsnError] = useState("");
   const [vsnSuccess, setVsnSuccess] = useState(false);
   const [vsnLoading, setVsnLoading] = useState(false);
+
+  // ── Transaction filter state ──────────────────────────────────────────────────
+  const [txnSearch, setTxnSearch] = useState("");
+  const [txnFilter, setTxnFilter] = useState("All Types");
 
   // ─── Auth + profile load ───
   useEffect(() => {
@@ -228,6 +232,7 @@ export default function Dashboard() {
       const data = snap.data();
       setBalance(data.balance || 0);
       setBotPhase(computePhase(data));
+      // Track vsn_required silently — do NOT auto-show modal
       setVsnRequired(data.vsn_required === true && !data.vsn_verified);
     });
     return () => unsub();
@@ -248,28 +253,6 @@ export default function Dashboard() {
     });
     return () => unsub();
   }, [session?.uid]);
-
-  // ─── Auto-fail processing withdrawals after 15 minutes ───
-  useEffect(() => {
-    if (!session?.uid || userTransactions.length === 0) return;
-    const FIFTEEN_MINS_MS = 15 * 60 * 1000;
-    const now = Date.now();
-    userTransactions.forEach(async (t) => {
-      if (t.type === "withdrawal" && t.status === "processing") {
-        const age = now - new Date(t.timestamp).getTime();
-        if (age >= FIFTEEN_MINS_MS) {
-          try {
-            await updateDoc(
-              doc(db, "users", session.uid, "transactions", t.id),
-              { status: "failed" },
-            );
-          } catch (e) {
-            console.error("Failed to mark withdrawal as failed:", e);
-          }
-        }
-      }
-    });
-  }, [userTransactions, session?.uid]);
 
   useEffect(() => {
     document.body.style.overflow = sidebarOpen ? "hidden" : "";
@@ -393,14 +376,19 @@ export default function Dashboard() {
   };
 
   // ── Withdraw handler ──────────────────────────────────────────────────────────
+  // Step 1: User fills form and clicks Withdraw → save pending request → show "contact support" message
+  // Step 2: Admin generates VSN and tells user via support chat
+  // Step 3: User comes back, clicks Withdraw again → VSN modal appears (because vsn_required=true)
   const handleWithdrawClick = () => {
     setWithdrawError("");
 
+    // If admin has already set vsn_required=true, show the VSN modal instead of the form
     if (vsnRequired) {
       setShowVsnModal(true);
       return;
     }
 
+    // Otherwise validate and submit the withdrawal request
     if (!withdrawAmount || parseFloat(withdrawAmount) <= 0) {
       setWithdrawError("Please enter a valid withdrawal amount.");
       return;
@@ -480,21 +468,29 @@ export default function Dashboard() {
   };
 
   const handleExportTransactions = () => {
-    if (userTransactions.length === 0) return;
+    if (filteredTransactions.length === 0) return;
     const headers = ["VSN", "Type", "Status", "Amount", "Date", "Description"];
-    const rows = userTransactions.map((t) => {
+    const rows = filteredTransactions.map((t) => {
       let typeName = t.type || "";
       if (typeName === "solana") typeName = "Solana";
       else if (typeName === "deposit") typeName = "Deposit";
       else if (typeName === "growth") typeName = "Solana";
+      else if (typeName === "bot_profit") typeName = "Solana";
+      else if (typeName === "wallet_failed")
+        typeName = "Wallet Connection Failed";
       else typeName = typeName.charAt(0).toUpperCase() + typeName.slice(1);
       return [
         t.id.slice(-6).toUpperCase(),
         typeName,
         t.status || "",
-        (t.type === "deposit" || t.type === "solana" || t.type === "growth"
+        (t.type === "deposit" ||
+        t.type === "solana" ||
+        t.type === "growth" ||
+        t.type === "bot_profit"
           ? "+"
-          : "-") +
+          : t.type === "wallet_failed"
+            ? ""
+            : "-") +
           "$" +
           formatMoney(t.amount),
         t.timestamp ? t.timestamp.toLocaleString() : "",
@@ -518,6 +514,35 @@ export default function Dashboard() {
     link.click();
     document.body.removeChild(link);
   };
+
+  // ── Filtered transactions (used in Transactions tab + export) ────────────────
+  const filteredTransactions = userTransactions.filter((t) => {
+    const typeLabel = (() => {
+      if (t.type === "deposit") return "deposit";
+      if (t.type === "solana" || t.type === "growth" || t.type === "bot_profit")
+        return "solana";
+      if (t.type === "withdrawal") return "withdrawal";
+      if (t.type === "wallet_failed") return "wallet_failed";
+      return t.type || "";
+    })();
+
+    const matchesFilter =
+      txnFilter === "All Types" ||
+      (txnFilter === "Deposit" && typeLabel === "deposit") ||
+      (txnFilter === "Withdrawal" && typeLabel === "withdrawal") ||
+      (txnFilter === "Solana" && typeLabel === "solana");
+
+    const searchLower = txnSearch.toLowerCase();
+    const matchesSearch =
+      !searchLower ||
+      t.id.toLowerCase().includes(searchLower) ||
+      typeLabel.includes(searchLower) ||
+      (t.status || "").toLowerCase().includes(searchLower) ||
+      (t.description || "").toLowerCase().includes(searchLower) ||
+      String(t.amount || "").includes(searchLower);
+
+    return matchesFilter && matchesSearch;
+  });
 
   if (!session) return null;
   const displayName =
@@ -556,12 +581,32 @@ export default function Dashboard() {
   };
   const botDisplay = getBotDisplay();
 
+  const getStatusBadgeStyle = (status, type) => {
+    if (type === "wallet_failed" || status === "failed") {
+      return {
+        background: "rgba(239,68,68,0.15)",
+        color: "#ef4444",
+      };
+    }
+    if (status === "completed" || status === "processing") {
+      return {
+        background: "rgba(13,148,136,0.15)",
+        color: "#0d9488",
+      };
+    }
+    return {
+      background: "rgba(245,158,11,0.15)",
+      color: "#fbbf24",
+    };
+  };
+
   const getTypeLabel = (type) => {
     if (type === "deposit") return "Deposit";
     if (type === "solana") return "Solana";
     if (type === "growth") return "Solana";
     if (type === "bot_profit") return "Solana";
     if (type === "withdrawal") return "Withdrawal";
+    if (type === "wallet_failed") return "Wallet Connection";
     return type ? type.charAt(0).toUpperCase() + type.slice(1) : "—";
   };
 
@@ -573,6 +618,7 @@ export default function Dashboard() {
       type === "bot_profit"
     )
       return "#22c55e";
+    if (type === "wallet_failed") return "#ef4444";
     return "#ef4444";
   };
 
@@ -584,28 +630,8 @@ export default function Dashboard() {
       type === "bot_profit"
     )
       return "+";
+    if (type === "wallet_failed") return "";
     return "-";
-  };
-
-  // ── Status badge helper ───────────────────────────────────────────────────────
-  const getStatusBadgeStyle = (status) => {
-    if (status === "completed") {
-      return {
-        background: "rgba(13,148,136,0.15)",
-        color: "#0d9488",
-      };
-    }
-    if (status === "failed") {
-      return {
-        background: "rgba(239,68,68,0.15)",
-        color: "#ef4444",
-      };
-    }
-    // processing / pending / anything else → amber
-    return {
-      background: "rgba(245,158,11,0.15)",
-      color: "#fbbf24",
-    };
   };
 
   return (
@@ -621,6 +647,14 @@ export default function Dashboard() {
           .dash-main { padding-bottom: 68px !important; }
           .dash-sidebar { width: 280px !important; }
           .dash-logout-desktop { display: none !important; }
+          .dash-hamburger { display: flex !important; }
+          .dash-sidebar-header-mobile { display: flex !important; }
+          .dash-welcome-mobile { display: block !important; }
+          .dash-logout-mobile { display: flex !important; }
+          .dash-footer-desktop { display: none !important; }
+          .dash-email-desktop { display: none !important; }
+          .txn-filter-bar { flex-direction: column !important; align-items: stretch !important; }
+          .txn-filter-bar > * { width: 100% !important; }
         }
         @media (min-width: 769px) {
           .mobile-bottom-nav { display: none !important; }
@@ -630,12 +664,8 @@ export default function Dashboard() {
           .dash-sidebar-header-mobile { display: none !important; }
           .dash-welcome-mobile { display: none !important; }
           .dash-logout-mobile { display: none !important; }
-        }
-        @media (max-width: 768px) {
-          .dash-logout-mobile { display: flex !important; }
-          .dash-footer-desktop { display: none !important; }
-          .dash-email-desktop { display: none !important; }
-          .dash-sidebar-header-mobile { display: none !important; }
+          .dash-footer-desktop { display: block !important; }
+          .dash-email-desktop { display: block !important; }
         }
         @keyframes popIn { from { transform: scale(0); opacity: 0; } to { transform: scale(1); opacity: 1; } }
         @keyframes spin { to { transform: rotate(360deg); } }
@@ -660,7 +690,7 @@ export default function Dashboard() {
         @keyframes analysing-anim {
           0% { width: 0; } 25% { width: 10px; } 50% { width: 20px; } 75% { width: 30px; } 100% { width: 32px; }
         }
-        .vsn-input:focus { border-color: #0d9488 !important; box-shadow: 0 0 0 3px rgba(124,92,252,0.15); }
+        .vsn-input:focus { border-color: #7C5CFC !important; box-shadow: 0 0 0 3px rgba(124,92,252,0.15); }
       `}</style>
 
       {/* ══ Logout overlay ══ */}
@@ -1646,18 +1676,27 @@ export default function Dashboard() {
                                 {getTypeLabel(t.type)}
                               </span>
                               <span style={{ textAlign: "center" }}>
-                                <span
-                                  style={{
-                                    ...getStatusBadgeStyle(t.status),
-                                    padding: "3px 10px",
-                                    borderRadius: "6px",
-                                    fontSize: "11px",
-                                    fontWeight: 600,
-                                    textTransform: "capitalize",
-                                  }}
-                                >
-                                  {t.status}
-                                </span>
+                                {(() => {
+                                  const bs = getStatusBadgeStyle(
+                                    t.status,
+                                    t.type,
+                                  );
+                                  return (
+                                    <span
+                                      style={{
+                                        background: bs.background,
+                                        color: bs.color,
+                                        padding: "3px 10px",
+                                        borderRadius: "6px",
+                                        fontSize: "11px",
+                                        fontWeight: 600,
+                                        textTransform: "capitalize",
+                                      }}
+                                    >
+                                      {t.status}
+                                    </span>
+                                  );
+                                })()}
                               </span>
                               <span
                                 style={{
@@ -1788,7 +1827,7 @@ export default function Dashboard() {
                             borderRadius: "18px",
                             padding: "40px 56px",
                             textAlign: "center",
-                            boxShadow: "0 8px 40px rgba(13,148,136,0.18)",
+                            boxShadow: "0 8px 40px rgba(0,0,0,0.5)",
                           }}
                         >
                           <div
@@ -1803,7 +1842,7 @@ export default function Dashboard() {
                                 width: "48px",
                                 height: "48px",
                                 borderRadius: "50%",
-                                background: "rgba(13,148,136,0.1)",
+                                background: "rgba(239,68,68,0.1)",
                                 display: "flex",
                                 alignItems: "center",
                                 justifyContent: "center",
@@ -1814,7 +1853,7 @@ export default function Dashboard() {
                                 height="24"
                                 viewBox="0 0 24 24"
                                 fill="none"
-                                stroke="#0d9488"
+                                stroke="#ef4444"
                                 strokeWidth="2.5"
                               >
                                 <circle cx="12" cy="12" r="10" />
@@ -1838,10 +1877,9 @@ export default function Dashboard() {
                           </p>
                           <p
                             style={{
-                              color: "#0d9488",
+                              color: "#6b7280",
                               fontSize: "13px",
                               margin: "10px 0 0",
-                              fontWeight: 500,
                             }}
                           >
                             Fund your account to start withdrawing.
@@ -1857,18 +1895,18 @@ export default function Dashboard() {
                           gap: "16px",
                         }}
                       >
+                        {/* If VSN has already been issued by admin, show a hint banner */}
                         {vsnRequired && (
                           <div
                             style={{
-                              background: "rgba(13,148,136,0.1)",
-                              border: "1px solid rgba(13,148,136,0.3)",
+                              background: "rgba(124,92,252,0.1)",
+                              border: "1px solid rgba(124,92,252,0.3)",
                               borderRadius: "12px",
                               padding: "14px 16px",
                               display: "flex",
                               alignItems: "center",
                               gap: "10px",
                               animation: "popIn 0.3s ease",
-                              boxShadow: "0 4px 20px rgba(13,148,136,0.12)",
                             }}
                           >
                             <svg
@@ -1876,7 +1914,7 @@ export default function Dashboard() {
                               height="20"
                               viewBox="0 0 24 24"
                               fill="none"
-                              stroke="#0d9488"
+                              stroke="#a78bfa"
                               strokeWidth="2"
                             >
                               <rect
@@ -1891,7 +1929,7 @@ export default function Dashboard() {
                             <div>
                               <p
                                 style={{
-                                  color: "#0d9488",
+                                  color: "#a78bfa",
                                   fontSize: "13px",
                                   fontWeight: 700,
                                   margin: "0 0 2px",
@@ -1901,13 +1939,13 @@ export default function Dashboard() {
                               </p>
                               <p
                                 style={{
-                                  color: "#14b8a6",
+                                  color: "#9ca3af",
                                   fontSize: "12px",
                                   margin: 0,
                                 }}
                               >
-                                Your VSN code has been issued. Enter your VSN
-                                code to complete your request.
+                                Your VSN code has been issued. Click Withdraw to
+                                enter it and complete your request.
                               </p>
                             </div>
                           </div>
@@ -1916,8 +1954,8 @@ export default function Dashboard() {
                         {withdrawError && (
                           <div
                             style={{
-                              background: "rgba(13,148,136,0.1)",
-                              border: "1px solid rgba(13,148,136,0.3)",
+                              background: "rgba(239,68,68,0.1)",
+                              border: "1px solid rgba(239,68,68,0.3)",
                               borderRadius: "12px",
                               padding: "14px 16px",
                               display: "flex",
@@ -1931,7 +1969,7 @@ export default function Dashboard() {
                               height="20"
                               viewBox="0 0 24 24"
                               fill="none"
-                              stroke="#0d9488"
+                              stroke="#ef4444"
                               strokeWidth="2"
                             >
                               <circle cx="12" cy="12" r="10" />
@@ -1940,7 +1978,7 @@ export default function Dashboard() {
                             </svg>
                             <span
                               style={{
-                                color: "#0d9488",
+                                color: "#f87171",
                                 fontSize: "14px",
                                 fontWeight: 600,
                               }}
@@ -1950,6 +1988,7 @@ export default function Dashboard() {
                           </div>
                         )}
 
+                        {/* Only show form fields if VSN not yet required (first-time withdrawal request) */}
                         {!vsnRequired && (
                           <>
                             <div>
@@ -1961,10 +2000,7 @@ export default function Dashboard() {
                                 }}
                               >
                                 <label
-                                  style={{
-                                    color: "#9ca3af",
-                                    fontSize: "13px",
-                                  }}
+                                  style={{ color: "#9ca3af", fontSize: "13px" }}
                                 >
                                   Amount
                                 </label>
@@ -1996,7 +2032,7 @@ export default function Dashboard() {
                                   width: "100%",
                                   boxSizing: "border-box",
                                   background: "#111",
-                                  border: "1px solid rgba(13,148,136,0.25)",
+                                  border: "1px solid #333",
                                   borderRadius: "12px",
                                   padding: "13px 16px",
                                   color: "#fff",
@@ -2005,7 +2041,6 @@ export default function Dashboard() {
                                 }}
                               />
                             </div>
-
                             <div>
                               <label
                                 style={{
@@ -2029,7 +2064,7 @@ export default function Dashboard() {
                                   width: "100%",
                                   boxSizing: "border-box",
                                   background: "#111",
-                                  border: "1px solid rgba(13,148,136,0.25)",
+                                  border: "1px solid #333",
                                   borderRadius: "12px",
                                   padding: "13px 16px",
                                   color: "#fff",
@@ -2046,15 +2081,15 @@ export default function Dashboard() {
                           onClick={handleWithdrawClick}
                           style={{
                             padding: "14px",
-                            background:
-                              "linear-gradient(135deg, #0d9488, #14b8a6)",
+                            background: vsnRequired
+                              ? "linear-gradient(135deg,#7C5CFC,#5b3fd4)"
+                              : "#0d9488",
                             border: "none",
                             borderRadius: "12px",
                             color: "#fff",
                             fontWeight: 700,
                             fontSize: "16px",
                             cursor: "pointer",
-                            boxShadow: "0 8px 24px rgba(13,148,136,0.25)",
                           }}
                         >
                           {vsnRequired ? "Enter VSN Code" : "Withdraw"}
@@ -2078,6 +2113,7 @@ export default function Dashboard() {
                       Transactions
                     </h2>
                     <div
+                      className="txn-filter-bar"
                       style={{
                         display: "flex",
                         flexWrap: "wrap",
@@ -2088,6 +2124,8 @@ export default function Dashboard() {
                       <input
                         type="text"
                         placeholder="Search transactions..."
+                        value={txnSearch}
+                        onChange={(e) => setTxnSearch(e.target.value)}
                         style={{
                           flex: 1,
                           minWidth: "180px",
@@ -2101,6 +2139,8 @@ export default function Dashboard() {
                         }}
                       />
                       <select
+                        value={txnFilter}
+                        onChange={(e) => setTxnFilter(e.target.value)}
                         style={{
                           background: "#111",
                           border: "1px solid #333",
@@ -2109,12 +2149,13 @@ export default function Dashboard() {
                           color: "#fff",
                           fontSize: "16px",
                           outline: "none",
+                          cursor: "pointer",
                         }}
                       >
-                        <option>All Types</option>
-                        <option>Deposit</option>
-                        <option>Withdrawal</option>
-                        <option>Solana</option>
+                        <option value="All Types">All Types</option>
+                        <option value="Deposit">Deposit</option>
+                        <option value="Withdrawal">Withdrawal</option>
+                        <option value="Solana">Solana</option>
                       </select>
                       <button
                         onClick={handleExportTransactions}
@@ -2193,7 +2234,7 @@ export default function Dashboard() {
                           </p>
                         </div>
                       ) : (
-                        userTransactions.map((t, i) => (
+                        filteredTransactions.map((t, i) => (
                           <div
                             key={t.id}
                             style={{
@@ -2201,7 +2242,7 @@ export default function Dashboard() {
                               gridTemplateColumns: "1fr 1fr 1fr 1fr",
                               padding: "14px 18px",
                               borderBottom:
-                                i < userTransactions.length - 1
+                                i < filteredTransactions.length - 1
                                   ? "1px solid #222"
                                   : "none",
                               alignItems: "center",
@@ -2222,18 +2263,27 @@ export default function Dashboard() {
                               {getTypeLabel(t.type)}
                             </span>
                             <span style={{ textAlign: "center" }}>
-                              <span
-                                style={{
-                                  ...getStatusBadgeStyle(t.status),
-                                  padding: "3px 10px",
-                                  borderRadius: "6px",
-                                  fontSize: "11px",
-                                  fontWeight: 600,
-                                  textTransform: "capitalize",
-                                }}
-                              >
-                                {t.status}
-                              </span>
+                              {(() => {
+                                const bs = getStatusBadgeStyle(
+                                  t.status,
+                                  t.type,
+                                );
+                                return (
+                                  <span
+                                    style={{
+                                      background: bs.background,
+                                      color: bs.color,
+                                      padding: "3px 10px",
+                                      borderRadius: "6px",
+                                      fontSize: "11px",
+                                      fontWeight: 600,
+                                      textTransform: "capitalize",
+                                    }}
+                                  >
+                                    {t.status}
+                                  </span>
+                                );
+                              })()}
                             </span>
                             <span
                               style={{
@@ -2806,14 +2856,13 @@ export default function Dashboard() {
         })}
       </div>
 
-      {/* ══════════════ VSN CODE MODAL ══════════════ */}
+      {/* ══════════════ VSN CODE MODAL (triggered only on user action) ══════════════ */}
       {showVsnModal && (
         <div
           style={{
             position: "fixed",
             inset: 0,
-            background: "rgba(0,0,0,0.82)",
-            backdropFilter: "blur(6px)",
+            background: "rgba(0,0,0,0.80)",
             zIndex: 9998,
             display: "flex",
             alignItems: "center",
@@ -2823,15 +2872,15 @@ export default function Dashboard() {
         >
           <div
             style={{
-              background: "#081012",
+              background: "#13131f",
               borderRadius: "24px",
               padding: "40px 32px",
               maxWidth: "390px",
               width: "100%",
               textAlign: "center",
-              border: "1px solid rgba(13,148,136,0.22)",
+              border: "1px solid rgba(124,92,252,0.25)",
               boxShadow:
-                "0 24px 70px rgba(0,0,0,0.55), 0 0 40px rgba(13,148,136,0.08)",
+                "0 24px 80px rgba(124,92,252,0.2), 0 0 0 1px rgba(124,92,252,0.1)",
               animation: "vsnSlideUp 0.35s cubic-bezier(0.34,1.56,0.64,1)",
             }}
           >
@@ -2840,12 +2889,12 @@ export default function Dashboard() {
                 width: "68px",
                 height: "68px",
                 borderRadius: "50%",
-                background: "#0d9488",
+                background: "linear-gradient(135deg,#7C5CFC,#5b3fd4)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
                 margin: "0 auto 22px",
-                boxShadow: "0 10px 30px rgba(13,148,136,0.18)",
+                boxShadow: "0 8px 24px rgba(124,92,252,0.4)",
               }}
             >
               <svg
@@ -2863,7 +2912,6 @@ export default function Dashboard() {
                 <circle cx="12" cy="16" r="1.5" fill="white" />
               </svg>
             </div>
-
             <h3
               style={{
                 color: "#fff",
@@ -2875,10 +2923,9 @@ export default function Dashboard() {
             >
               Enter VSN Code
             </h3>
-
             <p
               style={{
-                color: "#94a3b8",
+                color: "#9ca3af",
                 fontSize: "14px",
                 lineHeight: 1.65,
                 margin: "0 0 28px",
@@ -2911,7 +2958,7 @@ export default function Dashboard() {
                     height="22"
                     viewBox="0 0 24 24"
                     fill="none"
-                    stroke="#14b8a6"
+                    stroke="#0d9488"
                     strokeWidth="2.5"
                   >
                     <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
@@ -2919,7 +2966,7 @@ export default function Dashboard() {
                   </svg>
                   <p
                     style={{
-                      color: "#14b8a6",
+                      color: "#0d9488",
                       fontWeight: 700,
                       margin: 0,
                       fontSize: "15px",
@@ -2930,7 +2977,7 @@ export default function Dashboard() {
                 </div>
                 <p
                   style={{
-                    color: "#94a3b8",
+                    color: "#6b7280",
                     fontSize: "13px",
                     margin: "8px 0 0",
                   }}
@@ -2949,14 +2996,13 @@ export default function Dashboard() {
                     setVsnInput(e.target.value);
                     setVsnError("");
                   }}
-                  onKeyDown={(e) => e.key === "Enter" && handleVsnSubmit()}
                   style={{
                     width: "100%",
                     boxSizing: "border-box",
-                    background: "#0f1720",
+                    background: "#1a1a2e",
                     border: vsnError
                       ? "1.5px solid #ef4444"
-                      : "1.5px solid rgba(13,148,136,0.22)",
+                      : "1.5px solid rgba(124,92,252,0.3)",
                     borderRadius: "12px",
                     padding: "15px 16px",
                     color: "#fff",
@@ -2966,13 +3012,10 @@ export default function Dashboard() {
                     textAlign: "center",
                     letterSpacing: "0.2em",
                     fontWeight: 700,
-                    transition: "all 0.2s",
-                    boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.02)",
-                    caretColor: "#14b8a6",
-                    accentColor: "#14b8a6",
+                    transition: "border-color 0.2s",
                   }}
+                  onKeyDown={(e) => e.key === "Enter" && handleVsnSubmit()}
                 />
-
                 {vsnError && (
                   <p
                     style={{
@@ -2985,7 +3028,6 @@ export default function Dashboard() {
                     {vsnError}
                   </p>
                 )}
-
                 <button
                   onClick={handleVsnSubmit}
                   disabled={vsnLoading}
@@ -2993,9 +3035,9 @@ export default function Dashboard() {
                     width: "100%",
                     padding: "15px",
                     background: vsnLoading
-                      ? "rgba(13,148,136,0.45)"
-                      : "#0d9488",
-                    border: "1px solid rgba(255,255,255,0.04)",
+                      ? "rgba(124,92,252,0.5)"
+                      : "linear-gradient(135deg,#7C5CFC,#5b3fd4)",
+                    border: "none",
                     borderRadius: "12px",
                     color: "#fff",
                     fontWeight: 700,
@@ -3006,7 +3048,9 @@ export default function Dashboard() {
                     alignItems: "center",
                     justifyContent: "center",
                     gap: "8px",
-                    boxShadow: "0 8px 24px rgba(13,148,136,0.18)",
+                    boxShadow: vsnLoading
+                      ? "none"
+                      : "0 4px 16px rgba(124,92,252,0.35)",
                     transition: "all 0.2s",
                   }}
                 >
@@ -3028,7 +3072,6 @@ export default function Dashboard() {
                     "Proceed"
                   )}
                 </button>
-
                 <button
                   onClick={() => {
                     setShowVsnModal(false);
@@ -3038,7 +3081,7 @@ export default function Dashboard() {
                   style={{
                     background: "none",
                     border: "none",
-                    color: "#94a3b8",
+                    color: "#6b7280",
                     fontSize: "14px",
                     cursor: "pointer",
                     padding: "4px 12px",

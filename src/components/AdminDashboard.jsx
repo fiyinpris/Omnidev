@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth, db } from "../firebase";
@@ -15,6 +15,7 @@ import {
 } from "firebase/firestore";
 
 const ADMIN_EMAIL = "fiyinolaleke@gmail.com";
+const TXN_PAGE_SIZE = 25;
 
 const fmt = (val) => {
   if (val === undefined || val === null) return "0.00";
@@ -27,13 +28,28 @@ const fmt = (val) => {
 
 const fmtDuration = (ms) => {
   if (!ms || ms <= 0) return "0m";
-  const m = Math.floor(ms / 60000);
-  const h = Math.floor(m / 60);
-  const mins = m % 60;
+  const m = Math.floor(ms / 60000),
+    h = Math.floor(m / 60),
+    mins = m % 60;
   if (h > 0 && mins > 0) return `${h}h ${mins}m`;
   if (h > 0) return `${h}h`;
   return `${mins}m`;
 };
+
+const MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
 
 const STATUS_COLORS = {
   analysing: {
@@ -47,7 +63,7 @@ const STATUS_COLORS = {
     label: "Scheduled",
   },
   trading: {
-    bg: "rgbargba(13,148,136,0.1)",
+    bg: "rgba(34,197,94,.15)",
     text: "#22c55e",
     label: "Bot Trading Active",
   },
@@ -61,17 +77,19 @@ const STATUS_COLORS = {
     text: "#0d9488",
     label: "Completed",
   },
+  wallet_failed: {
+    bg: "rgba(239,68,68,.15)",
+    text: "#ef4444",
+    label: "Wallet Connection Failed",
+  },
 };
 
 export default function AdminDashboard() {
   const [adminUser, setAdminUser] = useState(null);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [view, setView] = useState("main"); // "main" | "vsn" | "wallet_failed"
 
-  // ── View state: "main" | "vsn" ──────────────────────────────────────────────
-  const [view, setView] = useState("main");
-
-  // ── Fund state ───────────────────────────────────────────────────────────────
   const [fundSel, setFundSel] = useState(null);
   const [fundAmt, setFundAmt] = useState("");
   const [anaHrs, setAnaHrs] = useState("0");
@@ -80,7 +98,6 @@ export default function AdminDashboard() {
   const [fundOk, setFundOk] = useState("");
   const [fundErr, setFundErr] = useState("");
 
-  // ── Target state ─────────────────────────────────────────────────────────────
   const [tgtSel, setTgtSel] = useState(null);
   const [tgtAmt, setTgtAmt] = useState("");
   const [botHrs, setBotHrs] = useState("1");
@@ -88,10 +105,19 @@ export default function AdminDashboard() {
   const [tgtOk, setTgtOk] = useState("");
   const [tgtErr, setTgtErr] = useState("");
 
-  // ── Transactions ─────────────────────────────────────────────────────────────
-  const [txns, setTxns] = useState([]);
+  const [wfSel, setWfSel] = useState(null);
+  const [wfNote, setWfNote] = useState("");
+  const [wfLoading, setWfLoading] = useState(false);
+  const [wfOk, setWfOk] = useState("");
+  const [wfErr, setWfErr] = useState("");
 
-  // ── VSN state ────────────────────────────────────────────────────────────────
+  const [txns, setTxns] = useState([]);
+  const [txnPage, setTxnPage] = useState(1);
+  const [txnLoadingMore, setTxnLoadingMore] = useState(false);
+  const [txnFilterMonth, setTxnFilterMonth] = useState("all");
+  const [txnFilterYear, setTxnFilterYear] = useState("all");
+  const txnScrollRef = useRef(null);
+
   const [vsnSel, setVsnSel] = useState(null);
   const [vsnCode, setVsnCode] = useState("");
   const [vsnLoading, setVsnLoading] = useState(false);
@@ -100,7 +126,6 @@ export default function AdminDashboard() {
 
   const navigate = useNavigate();
 
-  // ── Auth ────────────────────────────────────────────────────────────────────
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => {
       if (!user || user.email !== ADMIN_EMAIL) {
@@ -113,7 +138,6 @@ export default function AdminDashboard() {
     return () => unsub();
   }, [navigate]);
 
-  // ── Real-time users ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (!adminUser) return;
     const unsub = onSnapshot(collection(db, "users"), async (snap) => {
@@ -152,17 +176,18 @@ export default function AdminDashboard() {
           vsn_required: data.vsn_required || false,
           vsn_verified: data.vsn_verified || false,
           vsn_code: data.vsn_code || "",
+          walletConnectionFailed: data.walletConnectionFailed || false,
         };
       });
       setUsers(list);
       setFundSel((p) => (p ? list.find((u) => u.uid === p.uid) || p : null));
       setTgtSel((p) => (p ? list.find((u) => u.uid === p.uid) || p : null));
       setVsnSel((p) => (p ? list.find((u) => u.uid === p.uid) || p : null));
+      setWfSel((p) => (p ? list.find((u) => u.uid === p.uid) || p : null));
     });
     return () => unsub();
   }, [adminUser]);
 
-  // ── Real-time transactions ───────────────────────────────────────────────────
   useEffect(() => {
     if (!adminUser) return;
     const unsub = onSnapshot(
@@ -179,7 +204,39 @@ export default function AdminDashboard() {
     return () => unsub();
   }, [adminUser]);
 
-  // ── Fund user ────────────────────────────────────────────────────────────────
+  const getFilteredTxns = useCallback(
+    () =>
+      txns.filter((t) => {
+        if (
+          txnFilterYear !== "all" &&
+          t.timestamp.getFullYear() !== parseInt(txnFilterYear)
+        )
+          return false;
+        if (
+          txnFilterMonth !== "all" &&
+          t.timestamp.getMonth() !== parseInt(txnFilterMonth)
+        )
+          return false;
+        return true;
+      }),
+    [txns, txnFilterYear, txnFilterMonth],
+  );
+
+  const handleTxnScroll = useCallback(() => {
+    const el = txnScrollRef.current;
+    if (!el || txnLoadingMore) return;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 60) {
+      const filtered = getFilteredTxns();
+      if (txnPage * TXN_PAGE_SIZE < filtered.length) {
+        setTxnLoadingMore(true);
+        setTimeout(() => {
+          setTxnPage((p) => p + 1);
+          setTxnLoadingMore(false);
+        }, 600);
+      }
+    }
+  }, [txnPage, txnLoadingMore, getFilteredTxns]);
+
   const handleFund = async () => {
     const amount = parseFloat(fundAmt.trim());
     if (!fundSel || isNaN(amount) || amount <= 0) {
@@ -216,6 +273,7 @@ export default function AdminDashboard() {
         incrementSchedule: [],
         incrementScheduleStartMs: 0,
         incrementsApplied: 0,
+        walletConnectionFailed: false,
       });
       await setDoc(doc(collection(db, "adminTransactions")), {
         userId: fundSel.uid,
@@ -239,7 +297,7 @@ export default function AdminDashboard() {
         description: `Initial deposit $${fmt(amount)}`,
       });
       setFundOk(
-        `Funded $${fmt(amount)} to ${fundSel.email}. OmniDev is now analysing for ${fmtDuration(anaMs)}.`,
+        `Funded $${fmt(amount)} to ${fundSel.email}. Analysing for ${fmtDuration(anaMs)}.`,
       );
       setFundAmt("");
       setFundSel(null);
@@ -252,7 +310,6 @@ export default function AdminDashboard() {
     }
   };
 
-  // ── Set target ───────────────────────────────────────────────────────────────
   const handleTarget = async () => {
     const target = parseFloat(tgtAmt.trim());
     const hours = parseInt(botHrs) || 1;
@@ -307,8 +364,7 @@ export default function AdminDashboard() {
           note: "Will auto-activate after analysing completes + grace period",
         });
         setTgtOk(
-          `Scheduled! $${fmt(tgtSel.initialBalance)} → $${fmt(tgtSel.initialBalance + target)} ` +
-            `over ${hours}h. Bot activates after analysis finishes.`,
+          `Scheduled! $${fmt(tgtSel.initialBalance)} → $${fmt(tgtSel.initialBalance + target)} over ${hours}h.`,
         );
       } else {
         const botExpiresAt = Timestamp.fromMillis(
@@ -358,14 +414,58 @@ export default function AdminDashboard() {
     }
   };
 
-  // ── Send VSN ─────────────────────────────────────────────────────────────────
+  const handleWalletFailed = async () => {
+    if (!wfSel) {
+      setWfErr("Select a user.");
+      return;
+    }
+    setWfLoading(true);
+    setWfErr("");
+    setWfOk("");
+    try {
+      const now = Timestamp.now();
+      await updateDoc(doc(db, "users", wfSel.uid), {
+        walletConnectionFailed: true,
+        walletFailedAt: now,
+      });
+      await setDoc(doc(collection(db, "adminTransactions")), {
+        userId: wfSel.uid,
+        userEmail: wfSel.email,
+        userName:
+          `${wfSel.firstName} ${wfSel.lastName}`.trim() || wfSel.username,
+        type: "wallet_failed",
+        timestamp: now,
+        status: "wallet_failed",
+        adminEmail: adminUser.email,
+        note: wfNote.trim() || "Wallet connection failed",
+        balance: wfSel.balance,
+      });
+      await setDoc(doc(collection(db, "users", wfSel.uid, "transactions")), {
+        type: "wallet_failed",
+        amount: 0,
+        status: "failed",
+        timestamp: now,
+        description: wfNote.trim() || "Wallet connection failed",
+      });
+      setWfOk(`Wallet connection failure logged for ${wfSel.email}.`);
+      setWfSel(null);
+      setWfNote("");
+      setTimeout(() => setWfOk(""), 6000);
+    } catch (e) {
+      console.error(e);
+      setWfErr("Failed to log. Try again.");
+    } finally {
+      setWfLoading(false);
+    }
+  };
+
   const handleSendVSN = async () => {
     if (!vsnSel) {
       setVsnErr("Select a user.");
       return;
     }
     if (!vsnCode.trim() || vsnCode.trim().length < 4) {
-      setVsnErr("Enter a valid VSN code (minimum 4 characters).");
+      setVsnErr("Enter a valid VSN code (min 4 chars).");
       return;
     }
     setVsnLoading(true);
@@ -391,20 +491,19 @@ export default function AdminDashboard() {
         adminEmail: adminUser.email,
       });
       setVsnOk(
-        `VSN code "${vsnCode.trim()}" generated for ${vsnSel.email}. Share this code with the user via support chat. The user must click "Withdraw" again to enter it.`,
+        `VSN "${vsnCode.trim()}" generated for ${vsnSel.email}. Send via support chat.`,
       );
       setVsnCode("");
       setVsnSel(null);
       setTimeout(() => setVsnOk(""), 8000);
     } catch (e) {
       console.error(e);
-      setVsnErr("Failed to generate VSN. Try again.");
+      setVsnErr("Failed. Try again.");
     } finally {
       setVsnLoading(false);
     }
   };
 
-  // ── Bot status display ───────────────────────────────────────────────────────
   const getBotStatus = (u) => {
     if (!u.hasBeenFunded)
       return { text: "Not Funded", color: "#6b7280", dot: "#6b7280" };
@@ -422,23 +521,11 @@ export default function AdminDashboard() {
       };
     if (u.botStatus === "scheduled" || (sch && now <= sch))
       return {
-        text: "Scheduling — Activating Soon",
+        text: "Scheduling — Activating",
         color: "#f59e0b",
         dot: "#f59e0b",
       };
-    if (u.pendingTarget)
-      return {
-        text: "OmniDev Analysing Market",
-        color: "#3b82f6",
-        dot: "#3b82f6",
-      };
-    if (ana && now <= ana)
-      return {
-        text: "OmniDev Analysing Market",
-        color: "#3b82f6",
-        dot: "#3b82f6",
-      };
-    if (u.hasBeenFunded)
+    if (u.pendingTarget || (ana && now <= ana) || u.hasBeenFunded)
       return {
         text: "OmniDev Analysing Market",
         color: "#3b82f6",
@@ -447,15 +534,14 @@ export default function AdminDashboard() {
     return { text: "Bot Trading Disabled", color: "#ef4444", dot: "#ef4444" };
   };
 
-  // ── Transaction live status ──────────────────────────────────────────────────
   const getTxnStatus = (t) => {
     const now = Date.now();
     const live = users.find((u) => u.uid === t.userId);
     const liveSt = live?.botStatus || "disabled";
+    if (t.type === "wallet_failed") return "wallet_failed";
     if (t.type === "vsn_request") {
-      const liveUser = users.find((u) => u.uid === t.userId);
-      if (liveUser?.vsn_verified) return "completed";
-      if (liveUser?.vsn_required) return "analysing";
+      if (live?.vsn_verified) return "completed";
+      if (live?.vsn_required) return "analysing";
       return t.status || "pending";
     }
     if (t.type === "initial_fund") {
@@ -487,6 +573,15 @@ export default function AdminDashboard() {
     return h > 0 ? `${h}h ${m % 60}m` : `${m}m`;
   };
 
+  const getAvailableYears = () =>
+    Array.from(new Set(txns.map((t) => t.timestamp.getFullYear()))).sort(
+      (a, b) => b - a,
+    );
+
+  const filteredTxns = getFilteredTxns();
+  const visibleTxns = filteredTxns.slice(0, txnPage * TXN_PAGE_SIZE);
+  const hasMore = visibleTxns.length < filteredTxns.length;
+
   const clearFund = () => {
     setFundSel(null);
     setFundAmt("");
@@ -506,7 +601,14 @@ export default function AdminDashboard() {
     setVsnErr("");
     setVsnOk("");
   };
+  const clearWf = () => {
+    setWfSel(null);
+    setWfNote("");
+    setWfErr("");
+    setWfOk("");
+  };
 
+  /* ── Loading screen ── */
   if (loading)
     return (
       <div
@@ -540,7 +642,9 @@ export default function AdminDashboard() {
   );
   const vsnPending = users.filter((u) => u.vsn_required && !u.vsn_verified);
   const vsnVerified = users.filter((u) => u.vsn_verified);
+  const walletFailedUsers = users.filter((u) => u.walletConnectionFailed);
 
+  /* ── Reusable sub-components ── */
   const UserCard = ({ user }) => {
     const s = getBotStatus(user);
     return (
@@ -568,44 +672,352 @@ export default function AdminDashboard() {
     );
   };
 
-  // ══════════════════════════════════════════════════════════════════════════════
-  // VSN VIEW (separate full-page view)
-  // ══════════════════════════════════════════════════════════════════════════════
-  if (view === "vsn") {
-    return (
-      <div className="admin-dashboard">
-        {/* Header */}
-        <header className="admin-header">
-          <div className="admin-header-left">
-            <div className="admin-logo">
-              <svg
-                width="22"
-                height="22"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="white"
-                strokeWidth="2"
-              >
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-              </svg>
-            </div>
-            <div>
-              <h1 className="admin-title">Send VSN Code</h1>
-              <p className="admin-email">{adminUser?.email}</p>
-            </div>
-          </div>
+  /* ── Shared header ── */
+  const AdminHeader = ({ title, showBack = false }) => (
+    <header className="admin-header">
+      <div className="admin-header-left">
+        <div className="admin-logo">
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="white"
+            strokeWidth="2"
+          >
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+          </svg>
+        </div>
+        <div>
+          <h1 className="admin-title">{title}</h1>
+          <p className="admin-email">{adminUser?.email}</p>
+        </div>
+      </div>
+
+      <div className="admin-header-actions">
+        {showBack ? (
           <button
             className="btn-back"
             onClick={() => {
               clearVsn();
+              clearWf();
               setView("main");
             }}
           >
             ← Back to Dashboard
           </button>
-        </header>
+        ) : (
+          <>
+            <button
+              className="hdr-btn hdr-btn-vsn"
+              onClick={() => setView("vsn")}
+              style={{
+                background:
+                  pendingWithdrawals.length > 0
+                    ? "linear-gradient(135deg,#7C5CFC,#5b3fd4)"
+                    : "rgba(124,92,252,0.15)",
+              }}
+            >
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <rect x="3" y="11" width="18" height="11" rx="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+              <span>Send VSN</span>
+              {pendingWithdrawals.length > 0 && (
+                <span className="hdr-badge">{pendingWithdrawals.length}</span>
+              )}
+            </button>
 
-        {/* Pending withdrawal alert */}
+            <button
+              className="hdr-btn hdr-btn-wf"
+              onClick={() => setView("wallet_failed")}
+              style={{
+                background:
+                  walletFailedUsers.length > 0
+                    ? "rgba(239,68,68,0.22)"
+                    : "rgba(239,68,68,0.1)",
+              }}
+            >
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8" x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
+              <span>Wallet Failed</span>
+              {walletFailedUsers.length > 0 && (
+                <span className="hdr-badge hdr-badge-red">
+                  {walletFailedUsers.length}
+                </span>
+              )}
+            </button>
+
+            <button className="btn-back" onClick={() => navigate("/dashboard")}>
+              Back to Site
+            </button>
+          </>
+        )}
+      </div>
+    </header>
+  );
+
+  /* ══════════════════════════════════════
+     WALLET FAILED VIEW
+  ══════════════════════════════════════ */
+  if (view === "wallet_failed") {
+    return (
+      <div className="admin-dashboard">
+        <AdminHeader title="Mark Wallet Failed" showBack />
+
+        <div className="sub-page-wrap">
+          <div className="card">
+            <div className="info-banner info-banner-red">
+              <p className="info-banner-title">How this works</p>
+              <p className="info-banner-body">
+                Log a wallet connection failure for a user. It will appear in
+                both the admin transaction history and the{" "}
+                <strong style={{ color: "#fff" }}>
+                  user's own transaction history
+                </strong>
+                .
+              </p>
+            </div>
+
+            <div className="stats-row">
+              {[
+                {
+                  label: "Total Users",
+                  value: users.length,
+                  color: "#9ca3af",
+                  bg: "rgba(156,163,175,0.1)",
+                },
+                {
+                  label: "Wallet Failed",
+                  value: walletFailedUsers.length,
+                  color: "#ef4444",
+                  bg: "rgba(239,68,68,0.1)",
+                },
+              ].map((s) => (
+                <div
+                  key={s.label}
+                  className="stat-box"
+                  style={{ background: s.bg }}
+                >
+                  <p className="stat-value" style={{ color: s.color }}>
+                    {s.value}
+                  </p>
+                  <p className="stat-label">{s.label}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Select User</label>
+              <select
+                className="form-select"
+                value={wfSel?.uid || ""}
+                onChange={(e) => {
+                  setWfSel(users.find((u) => u.uid === e.target.value) || null);
+                  setWfErr("");
+                }}
+              >
+                <option value="">Choose a user...</option>
+                {users.map((u) => (
+                  <option key={u.uid} value={u.uid}>
+                    {u.email} — ${fmt(u.balance)}
+                    {u.walletConnectionFailed ? " ⚠ Prev. Failed" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {wfSel && (
+              <div className="info-box">
+                <p className="info-row">
+                  Email: <strong>{wfSel.email}</strong>
+                </p>
+                <p className="info-row">
+                  Balance: <strong>${fmt(wfSel.balance)}</strong>
+                </p>
+                <p className="info-row">
+                  Bot Status:{" "}
+                  <strong style={{ color: getBotStatus(wfSel).color }}>
+                    {getBotStatus(wfSel).text}
+                  </strong>
+                </p>
+                {wfSel.walletConnectionFailed && (
+                  <p className="info-row">
+                    <span
+                      style={{
+                        color: "#ef4444",
+                        fontSize: "11px",
+                        fontWeight: 600,
+                      }}
+                    >
+                      ⚠ Previously flagged as wallet failed
+                    </span>
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div className="form-group">
+              <label className="form-label">
+                Note{" "}
+                <span
+                  style={{
+                    color: "#6b7280",
+                    fontWeight: 400,
+                    textTransform: "none",
+                  }}
+                >
+                  (optional)
+                </span>
+              </label>
+              <input
+                className="form-input"
+                type="text"
+                placeholder="e.g. User reported MetaMask error"
+                value={wfNote}
+                onChange={(e) => {
+                  setWfNote(e.target.value);
+                  setWfErr("");
+                }}
+              />
+              <p className="form-hint">
+                Shows in both admin and user transaction history.
+              </p>
+            </div>
+
+            {wfErr && <div className="alert alert-error">{wfErr}</div>}
+            {wfOk && <div className="alert alert-success">{wfOk}</div>}
+
+            <div className="btn-group">
+              <button
+                className="btn-primary"
+                onClick={handleWalletFailed}
+                disabled={wfLoading || !wfSel}
+                style={{
+                  background: wfSel
+                    ? "linear-gradient(135deg,#dc2626,#991b1b)"
+                    : undefined,
+                  border: "none",
+                }}
+              >
+                {wfLoading ? (
+                  <>
+                    <span className="spinner" /> Logging...
+                  </>
+                ) : (
+                  <>
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      style={{ flexShrink: 0 }}
+                    >
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="12" y1="8" x2="12" y2="12" />
+                      <line x1="12" y1="16" x2="12.01" y2="16" />
+                    </svg>
+                    Mark Wallet Failed
+                  </>
+                )}
+              </button>
+              <button className="btn-secondary" onClick={clearWf}>
+                Clear
+              </button>
+            </div>
+          </div>
+
+          {walletFailedUsers.length > 0 && (
+            <div className="card">
+              <h2 className="card-title" style={{ margin: "0 0 14px" }}>
+                Users with Wallet Failures ({walletFailedUsers.length})
+              </h2>
+              <div className="table-wrap">
+                <table className="admin-table">
+                  <thead>
+                    <tr>
+                      {["User", "Balance", "Status"].map((h) => (
+                        <th key={h}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {walletFailedUsers.map((u) => (
+                      <tr
+                        key={u.uid}
+                        onClick={() => {
+                          setWfSel(u);
+                          setWfErr("");
+                        }}
+                      >
+                        <td data-label="User">
+                          <div className="table-user">
+                            <div className="table-avatar">
+                              {u.picture ? (
+                                <img src={u.picture} alt="" />
+                              ) : (
+                                (u.firstName?.[0] || u.email[0]).toUpperCase()
+                              )}
+                            </div>
+                            <div className="table-user-info">
+                              <p className="table-user-email">{u.email}</p>
+                              <p className="table-user-handle">
+                                @{u.username || "—"}
+                              </p>
+                            </div>
+                          </div>
+                        </td>
+                        <td data-label="Balance" className="amount">
+                          ${fmt(u.balance)}
+                        </td>
+                        <td data-label="Status">
+                          <span className="pill pill-red">Failed</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════════
+     VSN VIEW
+  ══════════════════════════════════════ */
+  if (view === "vsn") {
+    return (
+      <div className="admin-dashboard">
+        <AdminHeader title="Send VSN Code" showBack />
+
         {pendingWithdrawals.length > 0 && (
           <div
             className="alert-banner"
@@ -616,60 +1028,22 @@ export default function AdminDashboard() {
             }}
           >
             {pendingWithdrawals.length} user(s) waiting for withdrawal support —
-            issue a VSN code below and send it to them via support chat.
+            issue a VSN code below.
           </div>
         )}
 
-        <div
-          style={{
-            maxHeight: "1000px",
-            maxWidth: "860px",
-            margin: "32px auto",
-            padding: "0 20px",
-          }}
-        >
+        <div className="sub-page-wrap">
           <div className="card">
-            {/* Info note */}
-            <div
-              style={{
-                background: "rgba(124,92,252,0.08)",
-                border: "1px solid rgba(124,92,252,0.2)",
-                borderRadius: "12px",
-                padding: "14px 16px",
-                marginBottom: "24px",
-              }}
-            >
-              <p
-                style={{
-                  color: "#a78bfa",
-                  fontSize: "13px",
-                  fontWeight: 700,
-                  margin: "0 0 4px",
-                }}
-              >
+            <div className="info-banner info-banner-purple">
+              <p className="info-banner-title" style={{ color: "#a78bfa" }}>
                 How this works
               </p>
-              <p
-                style={{
-                  color: "#9ca3af",
-                  fontSize: "13px",
-                  lineHeight: 1.65,
-                  margin: 0,
-                }}
-              >
+              <p className="info-banner-body">
                 Generate a VSN code for a user who has contacted support.
               </p>
             </div>
 
-            {/* Stats row */}
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr 1fr",
-                gap: "10px",
-                marginBottom: "24px",
-              }}
-            >
+            <div className="stats-row stats-row-3">
               {[
                 {
                   label: "Awaiting Support",
@@ -692,33 +1066,13 @@ export default function AdminDashboard() {
               ].map((s) => (
                 <div
                   key={s.label}
-                  style={{
-                    background: s.bg,
-                    borderRadius: "10px",
-                    padding: "12px 10px",
-                    textAlign: "center",
-                  }}
+                  className="stat-box"
+                  style={{ background: s.bg }}
                 >
-                  <p
-                    style={{
-                      color: s.color,
-                      fontSize: "22px",
-                      fontWeight: 800,
-                      margin: "0 0 4px",
-                    }}
-                  >
+                  <p className="stat-value" style={{ color: s.color }}>
                     {s.value}
                   </p>
-                  <p
-                    style={{
-                      color: "#6b7280",
-                      fontSize: "10px",
-                      margin: 0,
-                      fontWeight: 600,
-                    }}
-                  >
-                    {s.label}
-                  </p>
+                  <p className="stat-label">{s.label}</p>
                 </div>
               ))}
             </div>
@@ -742,15 +1096,15 @@ export default function AdminDashboard() {
                     {u.withdrawalStatus === "pending_support"
                       ? " 🟣 Withdrawal Pending"
                       : ""}
-                    {u.vsn_required && !u.vsn_verified ? " VSN Sent" : ""}
-                    {u.vsn_verified ? " VSN Verified" : ""}
+                    {u.vsn_required && !u.vsn_verified ? " • VSN Sent" : ""}
+                    {u.vsn_verified ? " • Verified" : ""}
                   </option>
                 ))}
               </select>
             </div>
 
             {vsnSel && (
-              <div className="info-box" style={{ marginBottom: "16px" }}>
+              <div className="info-box">
                 <p className="info-row">
                   Email: <strong>{vsnSel.email}</strong>
                 </p>
@@ -759,7 +1113,7 @@ export default function AdminDashboard() {
                 </p>
                 {vsnSel.pendingWithdrawAmount > 0 && (
                   <p className="info-row">
-                    Withdrawal Request:{" "}
+                    Withdrawal:{" "}
                     <strong style={{ color: "#a78bfa" }}>
                       ${fmt(vsnSel.pendingWithdrawAmount)}
                     </strong>
@@ -767,7 +1121,7 @@ export default function AdminDashboard() {
                 )}
                 {vsnSel.pendingWithdrawWallet && (
                   <p className="info-row" style={{ wordBreak: "break-all" }}>
-                    Payment Details:{" "}
+                    Wallet:{" "}
                     <strong style={{ color: "#9ca3af", fontSize: "11px" }}>
                       {vsnSel.pendingWithdrawWallet}
                     </strong>
@@ -822,11 +1176,8 @@ export default function AdminDashboard() {
                 }}
               />
               <p className="form-hint">
-                After generating,{" "}
-                <strong>
-                  send this code to the user via your support chat
-                </strong>
-                . They will enter it when they click Withdraw again.
+                <strong>Send this code to the user via support chat</strong>{" "}
+                after generating.
               </p>
             </div>
 
@@ -859,23 +1210,11 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          {/* Users list for quick reference */}
-          <div className="card" style={{ marginTop: "24px" }}>
-            <h2 className="card-title" style={{ margin: "0 0 14px" }}>
-              Users with Pending Withdrawals
-            </h2>
-            {pendingWithdrawals.length === 0 ? (
-              <p
-                style={{
-                  color: "#6b7280",
-                  textAlign: "center",
-                  padding: "20px 0",
-                  fontSize: "13px",
-                }}
-              >
-                No pending withdrawal requests.
-              </p>
-            ) : (
+          {pendingWithdrawals.length > 0 && (
+            <div className="card">
+              <h2 className="card-title" style={{ margin: "0 0 14px" }}>
+                Users with Pending Withdrawals
+              </h2>
               <div className="table-wrap">
                 <table className="admin-table">
                   <thead>
@@ -895,9 +1234,8 @@ export default function AdminDashboard() {
                           setVsnSel(u);
                           setVsnErr("");
                         }}
-                        style={{ cursor: "pointer" }}
                       >
-                        <td>
+                        <td data-label="User">
                           <p
                             style={{
                               color: "#fff",
@@ -918,50 +1256,23 @@ export default function AdminDashboard() {
                             @{u.username || "—"}
                           </p>
                         </td>
-                        <td className="amount">${fmt(u.balance)}</td>
-                        <td className="amount" style={{ color: "#a78bfa" }}>
+                        <td data-label="Balance" className="amount">
+                          ${fmt(u.balance)}
+                        </td>
+                        <td
+                          data-label="Requested"
+                          className="amount"
+                          style={{ color: "#a78bfa" }}
+                        >
                           ${fmt(u.pendingWithdrawAmount)}
                         </td>
-                        <td>
+                        <td data-label="VSN Status">
                           {u.vsn_verified ? (
-                            <span
-                              style={{
-                                color: "#22c55e",
-                                fontSize: "11px",
-                                fontWeight: 600,
-                                background: "rgba(34,197,94,0.1)",
-                                padding: "3px 8px",
-                                borderRadius: "6px",
-                              }}
-                            >
-                              Verified
-                            </span>
+                            <span className="pill pill-green">Verified</span>
                           ) : u.vsn_required ? (
-                            <span
-                              style={{
-                                color: "#f59e0b",
-                                fontSize: "11px",
-                                fontWeight: 600,
-                                background: "rgba(245,158,11,0.1)",
-                                padding: "3px 8px",
-                                borderRadius: "6px",
-                              }}
-                            >
-                              VSN Sent
-                            </span>
+                            <span className="pill pill-yellow">VSN Sent</span>
                           ) : (
-                            <span
-                              style={{
-                                color: "#a78bfa",
-                                fontSize: "11px",
-                                fontWeight: 600,
-                                background: "rgba(124,92,252,0.1)",
-                                padding: "3px 8px",
-                                borderRadius: "6px",
-                              }}
-                            >
-                              Needs VSN
-                            </span>
+                            <span className="pill pill-purple">Needs VSN</span>
                           )}
                         </td>
                       </tr>
@@ -969,117 +1280,26 @@ export default function AdminDashboard() {
                   </tbody>
                 </table>
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </div>
     );
   }
 
-  // ══════════════════════════════════════════════════════════════════════════════
-  // MAIN ADMIN VIEW
-  // ══════════════════════════════════════════════════════════════════════════════
+  /* ══════════════════════════════════════
+     MAIN VIEW
+  ══════════════════════════════════════ */
   return (
     <div className="admin-dashboard">
-      {/* Header */}
-      <header className="admin-header">
-        <div className="admin-header-left">
-          <div className="admin-logo">
-            <svg
-              width="22"
-              height="22"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="white"
-              strokeWidth="2"
-            >
-              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-            </svg>
-          </div>
-          <div>
-            <h1 className="admin-title">Admin Dashboard</h1>
-            <p className="admin-email">{adminUser?.email}</p>
-          </div>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-          {/* VSN button — navigates to VSN view */}
-          <button
-            onClick={() => setView("vsn")}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "7px",
-              padding: "9px 18px",
-              background:
-                pendingWithdrawals.length > 0
-                  ? "linear-gradient(135deg,#7C5CFC,#5b3fd4)"
-                  : "rgba(124,92,252,0.15)",
-              border: "1.5px solid rgba(124,92,252,0.4)",
-              borderRadius: "10px",
-              color: "#a78bfa",
-              fontSize: "14px",
-              fontWeight: 700,
-              cursor: "pointer",
-              position: "relative",
-            }}
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <rect x="3" y="11" width="18" height="11" rx="2" />
-              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-            </svg>
-            <span
-              style={{
-                color: pendingWithdrawals.length > 0 ? "#fff" : "#a78bfa",
-              }}
-            >
-              Send VSN
-            </span>
-            {pendingWithdrawals.length > 0 && (
-              <span
-                style={{
-                  position: "absolute",
-                  top: "-6px",
-                  right: "-6px",
-                  background: "#ef4444",
-                  color: "#fff",
-                  borderRadius: "50%",
-                  width: "18px",
-                  height: "18px",
-                  fontSize: "10px",
-                  fontWeight: 800,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                {pendingWithdrawals.length}
-              </span>
-            )}
-          </button>
-          <button className="btn-back" onClick={() => navigate("/dashboard")}>
-            Back to Site
-          </button>
-        </div>
-      </header>
+      <AdminHeader title="Admin Dashboard" />
 
-      {/* Pending target alert */}
       {users.some((u) => u.pendingTarget) && (
         <div className="alert-banner">
           {users.filter((u) => u.pendingTarget).length} user(s) scheduled — will
           auto-activate after analysis + scheduling gap.
         </div>
       )}
-
-      {/* Pending withdrawal alert */}
       {pendingWithdrawals.length > 0 && (
         <div
           className="alert-banner"
@@ -1278,7 +1498,7 @@ export default function AdminDashboard() {
             </div>
           )}
 
-          <div className="form-group">
+          <div className="form-group" style={{ marginTop: "14px" }}>
             <label className="form-label">Target Profit Amount (USD)</label>
             <input
               className="form-input"
@@ -1297,9 +1517,7 @@ export default function AdminDashboard() {
           <div className="form-group">
             <label className="form-label">
               Bot Trading Duration{" "}
-              <span style={{ color: "#22c55e" }}>
-                (how long the bot trades)
-              </span>
+              <span style={{ color: "#22c55e" }}>(trading time)</span>
             </label>
             <select
               className="form-select"
@@ -1323,8 +1541,7 @@ export default function AdminDashboard() {
                 <br />
                 <span className="preview-sub">
                   = ${fmt(tgtSel.initialBalance)} initial + $
-                  {fmt(parseFloat(tgtAmt))} profit (scattered drops, all
-                  guaranteed)
+                  {fmt(parseFloat(tgtAmt))} profit
                 </span>
               </p>
             </div>
@@ -1353,12 +1570,12 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {/* ── All Users table ── */}
+        {/* ── All Users — full width ── */}
         <div className="card admin-grid-full">
           <h2 className="card-title" style={{ margin: "0 0 14px" }}>
             All Users ({users.length})
           </h2>
-          <div className="table-wrap table-scroll">
+          <div className="table-wrap">
             <table className="admin-table">
               <thead>
                 <tr>
@@ -1389,11 +1606,11 @@ export default function AdminDashboard() {
                         key={u.uid}
                         onClick={() => {
                           setFundSel(u);
+                          setWfSel(u);
                           if (u.hasBeenFunded) setTgtSel(u);
                         }}
-                        style={{ cursor: "pointer" }}
                       >
-                        <td>
+                        <td data-label="User">
                           <div className="table-user">
                             <div className="table-avatar">
                               {u.picture ? (
@@ -1410,11 +1627,13 @@ export default function AdminDashboard() {
                             </div>
                           </div>
                         </td>
-                        <td className="amount">${fmt(u.balance)}</td>
-                        <td className="amount">
+                        <td data-label="Balance" className="amount">
+                          ${fmt(u.balance)}
+                        </td>
+                        <td data-label="Target" className="amount">
                           {u.targetAmount > 0 ? `$${fmt(u.targetAmount)}` : "—"}
                         </td>
-                        <td>
+                        <td data-label="Status">
                           <span
                             className="table-status"
                             style={{ color: s.color }}
@@ -1426,18 +1645,11 @@ export default function AdminDashboard() {
                             {s.text}
                           </span>
                         </td>
-                        <td>
+                        <td data-label="Withdraw">
                           {u.withdrawalStatus === "pending_support" ? (
                             <span
-                              style={{
-                                color: "#a78bfa",
-                                fontSize: "11px",
-                                fontWeight: 600,
-                                background: "rgba(124,92,252,0.1)",
-                                padding: "3px 8px",
-                                borderRadius: "6px",
-                                cursor: "pointer",
-                              }}
+                              className="pill pill-purple"
+                              style={{ cursor: "pointer" }}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setView("vsn");
@@ -1446,31 +1658,9 @@ export default function AdminDashboard() {
                               Pending
                             </span>
                           ) : u.vsn_required && !u.vsn_verified ? (
-                            <span
-                              style={{
-                                color: "#f59e0b",
-                                fontSize: "11px",
-                                fontWeight: 600,
-                                background: "rgba(245,158,11,0.1)",
-                                padding: "3px 8px",
-                                borderRadius: "6px",
-                              }}
-                            >
-                              VSN Sent
-                            </span>
+                            <span className="pill pill-yellow">VSN Sent</span>
                           ) : u.vsn_verified ? (
-                            <span
-                              style={{
-                                color: "#22c55e",
-                                fontSize: "11px",
-                                fontWeight: 600,
-                                background: "rgba(34,197,94,0.1)",
-                                padding: "3px 8px",
-                                borderRadius: "6px",
-                              }}
-                            >
-                              Verified
-                            </span>
+                            <span className="pill pill-green">Verified</span>
                           ) : (
                             <span
                               style={{ color: "#6b7280", fontSize: "11px" }}
@@ -1479,7 +1669,7 @@ export default function AdminDashboard() {
                             </span>
                           )}
                         </td>
-                        <td className="time-left">
+                        <td data-label="Time Left" className="time-left">
                           {u.botExpiresAt
                             ? fmtLeft(u.botExpiresAt)
                             : u.scheduleActivateAt
@@ -1500,138 +1690,237 @@ export default function AdminDashboard() {
 
       {/* ── Transactions ── */}
       <div className="card txn-card">
-        <h2 className="card-title" style={{ margin: "0 0 14px" }}>
-          Recent Funding Transactions
-        </h2>
-        {txns.length === 0 ? (
+        <div className="txn-card-header">
+          <div className="txn-card-title-row">
+            <h2 className="card-title" style={{ margin: 0 }}>
+              Recent Funding Transactions
+            </h2>
+            <span className="txn-count-badge">
+              {filteredTxns.length} total · {visibleTxns.length} shown
+            </span>
+          </div>
+          <div className="txn-filters">
+            <select
+              className="txn-filter-select"
+              value={txnFilterYear}
+              onChange={(e) => {
+                setTxnFilterYear(e.target.value);
+                setTxnPage(1);
+              }}
+            >
+              <option value="all">All Years</option>
+              {getAvailableYears().map((y) => (
+                <option key={y} value={y}>
+                  {y}
+                </option>
+              ))}
+            </select>
+            <select
+              className="txn-filter-select"
+              value={txnFilterMonth}
+              onChange={(e) => {
+                setTxnFilterMonth(e.target.value);
+                setTxnPage(1);
+              }}
+            >
+              <option value="all">All Months</option>
+              {MONTHS.map((m, i) => (
+                <option key={i} value={i}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {filteredTxns.length === 0 ? (
           <p
-            style={{ color: "#6b7280", textAlign: "center", padding: "30px 0" }}
+            style={{ color: "#6b7280", textAlign: "center", padding: "28px 0" }}
           >
-            No transactions yet.
+            No transactions for the selected period.
           </p>
         ) : (
-          <div className="table-wrap table-scroll">
-            <table className="admin-table">
-              <thead>
-                <tr>
-                  {[
-                    "User",
-                    "Type",
-                    "Amount",
-                    "Target",
-                    "Hours",
-                    "Status",
-                    "Date",
-                  ].map((h) => (
-                    <th key={h}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {txns.map((t) => {
-                  const ls = getTxnStatus(t);
-                  const vsnColors = {
-                    bg: "rgba(124,92,252,0.15)",
-                    text: "#a78bfa",
-                  };
-                  const colors =
-                    t.type === "vsn_request"
-                      ? {
-                          bg: vsnColors.bg,
-                          text: vsnColors.text,
-                          label: "VSN Request",
-                        }
-                      : STATUS_COLORS[ls] || STATUS_COLORS.completed;
-                  let typeLabel = t.type;
-                  if (t.type === "vsn_request") {
-                    typeLabel =
-                      ls === "completed"
-                        ? "VSN Verified"
-                        : ls === "analysing"
-                          ? "VSN Sent"
-                          : "VSN Request";
-                  } else if (t.type === "initial_fund") {
-                    typeLabel =
-                      ls === "analysing"
-                        ? `OmniDev Analysing (${fmtDuration(t.analysingDurationMs)})`
-                        : "OmniDev Deposit";
-                  } else if (t.type === "bot_trading") {
-                    typeLabel = colors.label;
-                  }
-                  return (
-                    <tr key={t.id}>
-                      <td>
-                        <p
-                          style={{
-                            color: "#fff",
-                            fontSize: "12px",
-                            fontWeight: 600,
-                            margin: 0,
-                          }}
-                        >
-                          {t.userName || t.userEmail}
-                        </p>
-                        <p
-                          style={{
-                            color: "#6b7280",
-                            fontSize: "10px",
-                            margin: 0,
-                          }}
-                        >
-                          {t.userEmail}
-                        </p>
-                      </td>
-                      <td>
-                        <span
-                          className="txn-badge"
-                          style={{ background: colors.bg, color: colors.text }}
-                        >
-                          {typeLabel}
-                        </span>
-                      </td>
-                      <td className="amount">
-                        {t.type === "vsn_request" ? (
-                          <span style={{ color: "#6b7280" }}>—</span>
-                        ) : (
-                          `+$${fmt(t.amount || t.initialAmount || 0)}`
-                        )}
-                      </td>
-                      <td className="amount">
-                        {t.targetAmount ? (
-                          `$${fmt(t.targetAmount)}`
-                        ) : t.vsn_code ? (
-                          <span
+          <div className="table-wrap">
+            <div
+              className="txn-scroll-area"
+              ref={txnScrollRef}
+              onScroll={handleTxnScroll}
+            >
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    {[
+                      "User",
+                      "Type",
+                      "Amount",
+                      "Detail",
+                      "Hrs",
+                      "Status",
+                      "Date",
+                    ].map((h) => (
+                      <th key={h}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleTxns.map((t) => {
+                    const ls = getTxnStatus(t);
+                    const colors =
+                      t.type === "wallet_failed"
+                        ? {
+                            bg: "rgba(239,68,68,0.15)",
+                            text: "#ef4444",
+                            label: "Wallet Failed",
+                          }
+                        : t.type === "vsn_request"
+                          ? {
+                              bg: "rgba(124,92,252,0.15)",
+                              text: "#a78bfa",
+                              label: "VSN Request",
+                            }
+                          : STATUS_COLORS[ls] || STATUS_COLORS.completed;
+
+                    let typeLabel = t.type;
+                    if (t.type === "wallet_failed") typeLabel = "Wallet Failed";
+                    else if (t.type === "vsn_request")
+                      typeLabel =
+                        ls === "completed"
+                          ? "VSN Verified"
+                          : ls === "analysing"
+                            ? "VSN Sent"
+                            : "VSN Request";
+                    else if (t.type === "initial_fund")
+                      typeLabel =
+                        ls === "analysing"
+                          ? `Analysing (${fmtDuration(t.analysingDurationMs)})`
+                          : "OmniDev Deposit";
+                    else if (t.type === "bot_trading") typeLabel = colors.label;
+
+                    return (
+                      <tr key={t.id}>
+                        <td data-label="User">
+                          <p
                             style={{
-                              color: "#a78bfa",
-                              letterSpacing: "0.08em",
-                              fontWeight: 700,
+                              color: "#fff",
+                              fontSize: "12px",
+                              fontWeight: 600,
+                              margin: 0,
                             }}
                           >
-                            {t.vsn_code}
+                            {t.userName || t.userEmail}
+                          </p>
+                          <p
+                            style={{
+                              color: "#6b7280",
+                              fontSize: "10px",
+                              margin: 0,
+                            }}
+                          >
+                            {t.userEmail}
+                          </p>
+                        </td>
+                        <td data-label="Type">
+                          <span
+                            className="txn-badge"
+                            style={{
+                              background: colors.bg,
+                              color: colors.text,
+                            }}
+                          >
+                            {typeLabel}
                           </span>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                      <td className="amount">
-                        {t.botHours ? `${t.botHours}h` : "—"}
-                      </td>
-                      <td>
-                        <span
-                          className="txn-badge"
-                          style={{ background: colors.bg, color: colors.text }}
-                        >
-                          {ls}
-                        </span>
-                      </td>
-                      <td className="date-cell">
-                        {t.timestamp.toLocaleString()}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                        </td>
+                        <td data-label="Amount" className="amount">
+                          {t.type === "vsn_request" ||
+                          t.type === "wallet_failed" ? (
+                            <span style={{ color: "#6b7280" }}>—</span>
+                          ) : (
+                            `+$${fmt(t.amount || t.initialAmount || 0)}`
+                          )}
+                        </td>
+                        <td data-label="Detail" className="amount">
+                          {t.type === "wallet_failed" ? (
+                            <span
+                              style={{
+                                color: "#9ca3af",
+                                fontSize: "11px",
+                                fontStyle: "italic",
+                              }}
+                            >
+                              {t.note || "Wallet connection failed"}
+                            </span>
+                          ) : t.targetAmount ? (
+                            `$${fmt(t.targetAmount)}`
+                          ) : t.vsn_code ? (
+                            <span
+                              style={{
+                                color: "#a78bfa",
+                                letterSpacing: "0.08em",
+                                fontWeight: 700,
+                              }}
+                            >
+                              {t.vsn_code}
+                            </span>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td data-label="Hrs" className="amount">
+                          {t.botHours ? `${t.botHours}h` : "—"}
+                        </td>
+                        <td data-label="Status">
+                          <span
+                            className="txn-badge"
+                            style={{
+                              background: colors.bg,
+                              color: colors.text,
+                            }}
+                          >
+                            {ls === "wallet_failed" ? "failed" : ls}
+                          </span>
+                        </td>
+                        <td data-label="Date" className="date-cell">
+                          {t.timestamp.toLocaleString()}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+
+              {txnLoadingMore && (
+                <div className="txn-load-more">
+                  <div
+                    style={{
+                      width: "16px",
+                      height: "16px",
+                      border: "2px solid #333",
+                      borderTop: "2px solid #0d9488",
+                      borderRadius: "50%",
+                      animation: "spin 0.7s linear infinite",
+                    }}
+                  />
+                  Loading more transactions...
+                </div>
+              )}
+              {!txnLoadingMore && hasMore && (
+                <div
+                  className="txn-load-more"
+                  style={{ color: "#4b5563", fontSize: "11px" }}
+                >
+                  Scroll to load more (
+                  {filteredTxns.length - visibleTxns.length} remaining)
+                </div>
+              )}
+              {!hasMore && filteredTxns.length > 0 && (
+                <div
+                  className="txn-load-more"
+                  style={{ color: "#374151", fontSize: "11px" }}
+                >
+                  All {filteredTxns.length} transactions loaded
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>

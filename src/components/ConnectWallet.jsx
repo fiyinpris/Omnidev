@@ -344,9 +344,7 @@ export const ConnectWallet = ({ isOpen, onClose }) => {
       <div className="cw-backdrop" onClick={handleClose} />
 
       {/* Modal */}
-      <div
-        className="cw-modal"
-      >
+      <div className="cw-modal">
         {/* ═══════ STEP: LIST ═══════ */}
         {step === "list" && (
           <div className="cw-content">
@@ -611,7 +609,16 @@ export const ConnectWallet = ({ isOpen, onClose }) => {
 
         {/* ═══════ STEP: SUCCESS ═══════ */}
         {step === "success" && (
-          <div className="cw-state-wrap">
+          <div
+            className="cw-state-wrap"
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              textAlign: "center",
+            }}
+          >
             <div
               style={{
                 width: 64,
@@ -621,7 +628,7 @@ export const ConnectWallet = ({ isOpen, onClose }) => {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                marginBottom: 16,
+                margin: "0 auto 16px",
               }}
             >
               <svg
@@ -638,15 +645,32 @@ export const ConnectWallet = ({ isOpen, onClose }) => {
                 <polyline points="22 4 12 14.01 9 11.01" />
               </svg>
             </div>
-            <h3 className="cw-state-title" style={{ color: "#22c55e" }}>
+            <h3
+              className="cw-state-title"
+              style={{ color: "#22c55e", textAlign: "center" }}
+            >
               Wallet Connected!
             </h3>
-            <p className="cw-state-sub">
+            <p
+              className="cw-state-sub"
+              style={{
+                textAlign: "center",
+                maxWidth: "280px",
+                margin: "6px auto 24px",
+              }}
+            >
               Your wallet has been successfully connected, refresh your trading
               terminal within 10minutes.
             </p>
-            <div className="cw-state-actions">
-              <button className="cw-btn cw-btn-primary" onClick={handleClose}>
+            <div
+              className="cw-state-actions"
+              style={{ justifyContent: "center", width: "100%" }}
+            >
+              <button
+                className="cw-btn cw-btn-primary"
+                onClick={handleClose}
+                style={{ width: "100%", maxWidth: "200px" }}
+              >
                 Done
               </button>
             </div>
