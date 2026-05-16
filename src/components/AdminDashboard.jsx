@@ -124,6 +124,13 @@ export default function AdminDashboard() {
   const [vsnOk, setVsnOk] = useState("");
   const [vsnErr, setVsnErr] = useState("");
 
+  // ── FIX: stable "now" that only updates every 60 s, not every render ──
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -507,7 +514,7 @@ export default function AdminDashboard() {
   const getBotStatus = (u) => {
     if (!u.hasBeenFunded)
       return { text: "Not Funded", color: "#6b7280", dot: "#6b7280" };
-    const now = Date.now();
+    const now = nowMs;
     const exp = u.botExpiresAt?.toMillis?.() || u.botExpiresAt;
     const ana = u.analysingExpiresAt?.toMillis?.() || u.analysingExpiresAt;
     const sch = u.scheduleActivateAt?.toMillis?.() || u.scheduleActivateAt;
@@ -534,39 +541,45 @@ export default function AdminDashboard() {
     return { text: "Bot Trading Disabled", color: "#ef4444", dot: "#ef4444" };
   };
 
-  const getTxnStatus = (t) => {
-    const now = Date.now();
-    const live = users.find((u) => u.uid === t.userId);
-    const liveSt = live?.botStatus || "disabled";
-    if (t.type === "wallet_failed") return "wallet_failed";
-    if (t.type === "vsn_request") {
-      if (live?.vsn_verified) return "completed";
-      if (live?.vsn_required) return "analysing";
-      return t.status || "pending";
-    }
-    if (t.type === "initial_fund") {
-      if (liveSt === "disabled" || liveSt === "activated") return "completed";
-      const anaExp = t.analysingExpiresAt?.toMillis?.() || t.analysingExpiresAt;
-      if (anaExp && now < anaExp) return "analysing";
-      return "completed";
-    }
-    if (t.type === "bot_trading") {
-      if (t.status === "disabled") return "disabled";
-      const exp = t.botExpiresAt?.toMillis?.() || t.botExpiresAt;
-      if (exp && now >= exp) return "disabled";
-      if (exp && now < exp) return "trading";
-      if (liveSt === "activated") return "trading";
-      if (liveSt === "scheduled") return "scheduled";
-      if (liveSt === "disabled") return "disabled";
-      return t.status || "scheduled";
-    }
-    if (liveSt === "disabled") return "completed";
-    return t.status || "completed";
-  };
+  // ── FIX: getTxnStatus now uses stable `nowMs` instead of Date.now() ──
+  // This prevents the table from re-rendering/jumping every tick.
+  const getTxnStatus = useCallback(
+    (t) => {
+      const now = nowMs;
+      const live = users.find((u) => u.uid === t.userId);
+      const liveSt = live?.botStatus || "disabled";
+      if (t.type === "wallet_failed") return "wallet_failed";
+      if (t.type === "vsn_request") {
+        if (live?.vsn_verified) return "completed";
+        if (live?.vsn_required) return "analysing";
+        return t.status || "pending";
+      }
+      if (t.type === "initial_fund") {
+        if (liveSt === "disabled" || liveSt === "activated") return "completed";
+        const anaExp =
+          t.analysingExpiresAt?.toMillis?.() || t.analysingExpiresAt;
+        if (anaExp && now < anaExp) return "analysing";
+        return "completed";
+      }
+      if (t.type === "bot_trading") {
+        if (t.status === "disabled") return "disabled";
+        const exp = t.botExpiresAt?.toMillis?.() || t.botExpiresAt;
+        if (exp && now >= exp) return "disabled";
+        if (exp && now < exp) return "trading";
+        if (liveSt === "activated") return "trading";
+        if (liveSt === "scheduled") return "scheduled";
+        if (liveSt === "disabled") return "disabled";
+        return t.status || "scheduled";
+      }
+      if (liveSt === "disabled") return "completed";
+      return t.status || "completed";
+    },
+    [nowMs, users],
+  );
 
   const fmtLeft = (ts) => {
     if (!ts) return "";
-    const ms = (ts.toMillis?.() || ts) - Date.now();
+    const ms = (ts.toMillis?.() || ts) - nowMs;
     if (ms <= 0) return "Expired";
     const m = Math.floor(ms / 60000),
       h = Math.floor(m / 60);
@@ -1764,6 +1777,7 @@ export default function AdminDashboard() {
                 </thead>
                 <tbody>
                   {visibleTxns.map((t) => {
+                    // ── FIX: call memoized getTxnStatus so it doesn't re-compute on every render tick ──
                     const ls = getTxnStatus(t);
                     const colors =
                       t.type === "wallet_failed"

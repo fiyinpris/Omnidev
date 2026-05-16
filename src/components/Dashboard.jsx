@@ -143,8 +143,10 @@ export default function Dashboard() {
   const [profileSaved, setProfileSaved] = useState(false);
   const [profileError, setProfileError] = useState("");
   const fileInputRef = useRef(null);
-  /* ── ref for the main scrollable content div ── */
-  const mainScrollRef = useRef(null);
+
+  // ── FIX: ref now points directly at the inner scrollable content div ──
+  const contentScrollRef = useRef(null);
+
   const [profileLoading, setProfileLoading] = useState(true);
   const [botPhase, setBotPhase] = useState("disabled");
   const [userTransactions, setUserTransactions] = useState([]);
@@ -256,22 +258,54 @@ export default function Dashboard() {
   }, [session?.uid]);
 
   /* ─── Sidebar scroll lock ───
-     Locks BOTH <body> AND the inner scrollable div so nothing scrolls behind the overlay.
+     FIX: We lock body AND the inner scrollable content div (contentScrollRef).
+     We also save/restore the scroll position so the page doesn't jump.
+     touch-action: none is set via inline style on the overlay div itself.
   ─── */
   useEffect(() => {
-    const scrollEl = mainScrollRef.current;
+    const scrollEl = contentScrollRef.current;
     if (sidebarOpen) {
-      // Lock body
+      // Save current scroll position
+      const scrollY = scrollEl ? scrollEl.scrollTop : 0;
+
+      // Lock body scroll
       document.body.style.overflow = "hidden";
-      // Lock inner scroll container
-      if (scrollEl) scrollEl.style.overflow = "hidden";
+      document.body.style.position = "fixed";
+      document.body.style.top = `-${window.scrollY}px`;
+      document.body.style.width = "100%";
+
+      // Lock the inner content scroller
+      if (scrollEl) {
+        scrollEl.style.overflow = "hidden";
+        scrollEl.dataset.savedScroll = scrollY;
+      }
     } else {
+      // Restore body scroll
+      const savedTop = document.body.style.top;
       document.body.style.overflow = "";
-      if (scrollEl) scrollEl.style.overflow = "auto";
+      document.body.style.position = "";
+      document.body.style.top = "";
+      document.body.style.width = "";
+      if (savedTop) {
+        window.scrollTo(0, parseInt(savedTop || "0") * -1);
+      }
+
+      // Restore inner content scroller
+      if (scrollEl) {
+        scrollEl.style.overflow = "auto";
+        const saved = parseInt(scrollEl.dataset.savedScroll || "0");
+        scrollEl.scrollTop = saved;
+        delete scrollEl.dataset.savedScroll;
+      }
     }
     return () => {
       document.body.style.overflow = "";
-      if (scrollEl) scrollEl.style.overflow = "auto";
+      document.body.style.position = "";
+      document.body.style.top = "";
+      document.body.style.width = "";
+      if (scrollEl) {
+        scrollEl.style.overflow = "auto";
+      }
     };
   }, [sidebarOpen]);
 
@@ -825,7 +859,7 @@ export default function Dashboard() {
             position: "relative",
           }}
         >
-          {/* Overlay — closes sidebar on tap */}
+          {/* ── FIX: Overlay with touch-action none to block ALL touch scrolling behind it ── */}
           {sidebarOpen && (
             <div
               onClick={() => setSidebarOpen(false)}
@@ -837,7 +871,12 @@ export default function Dashboard() {
                 bottom: 0,
                 background: "rgba(0,0,0,0.72)",
                 zIndex: 50,
+                // Critical: block touch events from passing through to content below
+                touchAction: "none",
+                WebkitOverflowScrolling: "touch",
               }}
+              // Also block touch move events explicitly
+              onTouchMove={(e) => e.preventDefault()}
             />
           )}
 
@@ -860,7 +899,7 @@ export default function Dashboard() {
               height: "calc(100dvh - 58px)",
             }}
           >
-            {/* ── Close-only top row (NO OmniDev branding) ── */}
+            {/* ── Close row ── */}
             <div
               className="dash-sidebar-close-row"
               style={{
@@ -1146,9 +1185,9 @@ export default function Dashboard() {
               <TickerBar />
             </div>
 
-            {/* ── Scrollable content — locked via ref when sidebar open ── */}
+            {/* ── FIX: ref now attached to THIS div (the actual scrollable element) ── */}
             <div
-              ref={mainScrollRef}
+              ref={contentScrollRef}
               style={{
                 flex: 1,
                 overflowY: "auto",
