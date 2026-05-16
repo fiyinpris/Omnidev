@@ -1325,8 +1325,9 @@ section {
   margin-top: 24px;
 }
 
-/* The txn-card uses .txn-scroll-area as the real scroll container.
-   Neutralise .table-wrap so there's only ONE scrollbar. */
+/* FIX: Prevent scrollbar from causing layout shift.
+   Use overflow-y: scroll (always reserve space) instead of auto.
+   This stops the card from jumping when content changes. */
 .txn-card .table-wrap {
   overflow: visible;
   max-height: none;
@@ -1376,11 +1377,32 @@ section {
   background-position: right 7px center;
 }
 
+/* FIX: The txn-scroll-area is the ONLY scroll container.
+   Use overflow-y: scroll to ALWAYS reserve scrollbar space.
+   This prevents the card from jumping left/right when content
+   updates cause the scrollbar to appear/disappear. */
 .txn-scroll-area {
   max-height: 480px;
-  overflow-y: auto;
+  overflow-y: scroll; /* was: auto */
   -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable; /* reserve space for scrollbar */
 }
+
+/* Custom scrollbar styling for txn-scroll-area */
+.txn-scroll-area::-webkit-scrollbar {
+  width: 8px;
+}
+.txn-scroll-area::-webkit-scrollbar-track {
+  background: transparent;
+}
+.txn-scroll-area::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 4px;
+}
+.txn-scroll-area::-webkit-scrollbar-thumb:hover {
+  background: #444;
+}
+
 .txn-load-more {
   display: flex;
   align-items: center;

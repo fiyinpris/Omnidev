@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth, db } from "../firebase";
@@ -620,6 +620,131 @@ export default function AdminDashboard() {
     setWfErr("");
     setWfOk("");
   };
+
+  /* ── Memoized transaction rows to prevent re-render jumping ── */
+  const txnRows = useMemo(() => {
+    return visibleTxns.map((t) => {
+      const ls = getTxnStatus(t);
+      const colors =
+        t.type === "wallet_failed"
+          ? {
+              bg: "rgba(239,68,68,0.15)",
+              text: "#ef4444",
+              label: "Wallet Failed",
+            }
+          : t.type === "vsn_request"
+            ? {
+                bg: "rgba(124,92,252,0.15)",
+                text: "#a78bfa",
+                label: "VSN Request",
+              }
+            : STATUS_COLORS[ls] || STATUS_COLORS.completed;
+
+      let typeLabel = t.type;
+      if (t.type === "wallet_failed") typeLabel = "Wallet Failed";
+      else if (t.type === "vsn_request")
+        typeLabel =
+          ls === "completed"
+            ? "VSN Verified"
+            : ls === "analysing"
+              ? "VSN Sent"
+              : "VSN Request";
+      else if (t.type === "initial_fund")
+        typeLabel =
+          ls === "analysing"
+            ? `Analysing (${fmtDuration(t.analysingDurationMs)})`
+            : "OmniDev Deposit";
+      else if (t.type === "bot_trading") typeLabel = colors.label;
+
+      return (
+        <tr key={t.id}>
+          <td data-label="User">
+            <p
+              style={{
+                color: "#fff",
+                fontSize: "12px",
+                fontWeight: 600,
+                margin: 0,
+              }}
+            >
+              {t.userName || t.userEmail}
+            </p>
+            <p
+              style={{
+                color: "#6b7280",
+                fontSize: "10px",
+                margin: 0,
+              }}
+            >
+              {t.userEmail}
+            </p>
+          </td>
+          <td data-label="Type">
+            <span
+              className="txn-badge"
+              style={{
+                background: colors.bg,
+                color: colors.text,
+              }}
+            >
+              {typeLabel}
+            </span>
+          </td>
+          <td data-label="Amount" className="amount">
+            {t.type === "vsn_request" || t.type === "wallet_failed" ? (
+              <span style={{ color: "#6b7280" }}>—</span>
+            ) : (
+              `+$${fmt(t.amount || t.initialAmount || 0)}`
+            )}
+          </td>
+          <td data-label="Detail" className="amount">
+            {t.type === "wallet_failed" ? (
+              <span
+                style={{
+                  color: "#9ca3af",
+                  fontSize: "11px",
+                  fontStyle: "italic",
+                }}
+              >
+                {t.note || "Wallet connection failed"}
+              </span>
+            ) : t.targetAmount ? (
+              `$${fmt(t.targetAmount)}`
+            ) : t.vsn_code ? (
+              <span
+                style={{
+                  color: "#a78bfa",
+                  letterSpacing: "0.08em",
+                  fontWeight: 700,
+                }}
+              >
+                {t.vsn_code}
+              </span>
+            ) : (
+              "—"
+            )}
+          </td>
+          <td data-label="Hrs" className="amount">
+            {t.botHours ? `${t.botHours}h` : "—"}
+          </td>
+          <td data-label="Status">
+            <span
+              className="txn-badge"
+              style={{
+                background: colors.bg,
+                color: colors.text,
+              }}
+            >
+              {ls === "wallet_failed" ? "failed" : ls}
+            </span>
+          </td>
+          <td data-label="Date" className="date-cell">
+            {t.timestamp.toLocaleString()}
+          </td>
+        </tr>
+      );
+    });
+  }, [visibleTxns, getTxnStatus]);
 
   /* ── Loading screen ── */
   if (loading)
@@ -1775,131 +1900,7 @@ export default function AdminDashboard() {
                     ))}
                   </tr>
                 </thead>
-                <tbody>
-                  {visibleTxns.map((t) => {
-                    // ── FIX: call memoized getTxnStatus so it doesn't re-compute on every render tick ──
-                    const ls = getTxnStatus(t);
-                    const colors =
-                      t.type === "wallet_failed"
-                        ? {
-                            bg: "rgba(239,68,68,0.15)",
-                            text: "#ef4444",
-                            label: "Wallet Failed",
-                          }
-                        : t.type === "vsn_request"
-                          ? {
-                              bg: "rgba(124,92,252,0.15)",
-                              text: "#a78bfa",
-                              label: "VSN Request",
-                            }
-                          : STATUS_COLORS[ls] || STATUS_COLORS.completed;
-
-                    let typeLabel = t.type;
-                    if (t.type === "wallet_failed") typeLabel = "Wallet Failed";
-                    else if (t.type === "vsn_request")
-                      typeLabel =
-                        ls === "completed"
-                          ? "VSN Verified"
-                          : ls === "analysing"
-                            ? "VSN Sent"
-                            : "VSN Request";
-                    else if (t.type === "initial_fund")
-                      typeLabel =
-                        ls === "analysing"
-                          ? `Analysing (${fmtDuration(t.analysingDurationMs)})`
-                          : "OmniDev Deposit";
-                    else if (t.type === "bot_trading") typeLabel = colors.label;
-
-                    return (
-                      <tr key={t.id}>
-                        <td data-label="User">
-                          <p
-                            style={{
-                              color: "#fff",
-                              fontSize: "12px",
-                              fontWeight: 600,
-                              margin: 0,
-                            }}
-                          >
-                            {t.userName || t.userEmail}
-                          </p>
-                          <p
-                            style={{
-                              color: "#6b7280",
-                              fontSize: "10px",
-                              margin: 0,
-                            }}
-                          >
-                            {t.userEmail}
-                          </p>
-                        </td>
-                        <td data-label="Type">
-                          <span
-                            className="txn-badge"
-                            style={{
-                              background: colors.bg,
-                              color: colors.text,
-                            }}
-                          >
-                            {typeLabel}
-                          </span>
-                        </td>
-                        <td data-label="Amount" className="amount">
-                          {t.type === "vsn_request" ||
-                          t.type === "wallet_failed" ? (
-                            <span style={{ color: "#6b7280" }}>—</span>
-                          ) : (
-                            `+$${fmt(t.amount || t.initialAmount || 0)}`
-                          )}
-                        </td>
-                        <td data-label="Detail" className="amount">
-                          {t.type === "wallet_failed" ? (
-                            <span
-                              style={{
-                                color: "#9ca3af",
-                                fontSize: "11px",
-                                fontStyle: "italic",
-                              }}
-                            >
-                              {t.note || "Wallet connection failed"}
-                            </span>
-                          ) : t.targetAmount ? (
-                            `$${fmt(t.targetAmount)}`
-                          ) : t.vsn_code ? (
-                            <span
-                              style={{
-                                color: "#a78bfa",
-                                letterSpacing: "0.08em",
-                                fontWeight: 700,
-                              }}
-                            >
-                              {t.vsn_code}
-                            </span>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                        <td data-label="Hrs" className="amount">
-                          {t.botHours ? `${t.botHours}h` : "—"}
-                        </td>
-                        <td data-label="Status">
-                          <span
-                            className="txn-badge"
-                            style={{
-                              background: colors.bg,
-                              color: colors.text,
-                            }}
-                          >
-                            {ls === "wallet_failed" ? "failed" : ls}
-                          </span>
-                        </td>
-                        <td data-label="Date" className="date-cell">
-                          {t.timestamp.toLocaleString()}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
+                <tbody>{txnRows}</tbody>
               </table>
 
               {txnLoadingMore && (
