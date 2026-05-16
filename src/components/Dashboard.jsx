@@ -143,31 +143,33 @@ export default function Dashboard() {
   const [profileSaved, setProfileSaved] = useState(false);
   const [profileError, setProfileError] = useState("");
   const fileInputRef = useRef(null);
+  /* ── ref for the main scrollable content div ── */
+  const mainScrollRef = useRef(null);
   const [profileLoading, setProfileLoading] = useState(true);
   const [botPhase, setBotPhase] = useState("disabled");
   const [userTransactions, setUserTransactions] = useState([]);
   const [isAdmin, setIsAdmin] = useState(false);
   const [balance, setBalance] = useState(0);
 
-  // ── Withdraw form state ───────────────────────────────────────────────────────
-  const [withdrawStep, setWithdrawStep] = useState("form"); // "form" | "submitted"
+  /* ── Withdraw ── */
+  const [withdrawStep, setWithdrawStep] = useState("form");
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [withdrawWallet, setWithdrawWallet] = useState("");
   const [withdrawError, setWithdrawError] = useState("");
 
-  // ── VSN state (modal shown only when user clicks Withdraw again after vsn_required=true) ──
-  const [vsnRequired, setVsnRequired] = useState(false); // live from Firestore
-  const [showVsnModal, setShowVsnModal] = useState(false); // only open on user action
+  /* ── VSN ── */
+  const [vsnRequired, setVsnRequired] = useState(false);
+  const [showVsnModal, setShowVsnModal] = useState(false);
   const [vsnInput, setVsnInput] = useState("");
   const [vsnError, setVsnError] = useState("");
   const [vsnSuccess, setVsnSuccess] = useState(false);
   const [vsnLoading, setVsnLoading] = useState(false);
 
-  // ── Transaction filter state ──────────────────────────────────────────────────
+  /* ── Transaction filter ── */
   const [txnSearch, setTxnSearch] = useState("");
   const [txnFilter, setTxnFilter] = useState("All Types");
 
-  // ─── Auth + profile load ───
+  /* ─── Auth + profile load ─── */
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
       if (!user) {
@@ -215,7 +217,7 @@ export default function Dashboard() {
     return () => unsub();
   }, [navigate]);
 
-  // ─── Real-time balance + bot phase listener ───
+  /* ─── Real-time balance + bot phase ─── */
   useEffect(() => {
     if (!session?.uid) return;
     const userRef = doc(db, "users", session.uid);
@@ -232,13 +234,12 @@ export default function Dashboard() {
       const data = snap.data();
       setBalance(data.balance || 0);
       setBotPhase(computePhase(data));
-      // Track vsn_required silently — do NOT auto-show modal
       setVsnRequired(data.vsn_required === true && !data.vsn_verified);
     });
     return () => unsub();
   }, [session?.uid]);
 
-  // ─── Real-time transactions listener ───
+  /* ─── Real-time transactions ─── */
   useEffect(() => {
     if (!session?.uid) return;
     const txnRef = collection(db, "users", session.uid, "transactions");
@@ -254,10 +255,23 @@ export default function Dashboard() {
     return () => unsub();
   }, [session?.uid]);
 
+  /* ─── Sidebar scroll lock ───
+     Locks BOTH <body> AND the inner scrollable div so nothing scrolls behind the overlay.
+  ─── */
   useEffect(() => {
-    document.body.style.overflow = sidebarOpen ? "hidden" : "";
+    const scrollEl = mainScrollRef.current;
+    if (sidebarOpen) {
+      // Lock body
+      document.body.style.overflow = "hidden";
+      // Lock inner scroll container
+      if (scrollEl) scrollEl.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+      if (scrollEl) scrollEl.style.overflow = "auto";
+    }
     return () => {
       document.body.style.overflow = "";
+      if (scrollEl) scrollEl.style.overflow = "auto";
     };
   }, [sidebarOpen]);
 
@@ -375,20 +389,12 @@ export default function Dashboard() {
     }
   };
 
-  // ── Withdraw handler ──────────────────────────────────────────────────────────
-  // Step 1: User fills form and clicks Withdraw → save pending request → show "contact support" message
-  // Step 2: Admin generates VSN and tells user via support chat
-  // Step 3: User comes back, clicks Withdraw again → VSN modal appears (because vsn_required=true)
   const handleWithdrawClick = () => {
     setWithdrawError("");
-
-    // If admin has already set vsn_required=true, show the VSN modal instead of the form
     if (vsnRequired) {
       setShowVsnModal(true);
       return;
     }
-
-    // Otherwise validate and submit the withdrawal request
     if (!withdrawAmount || parseFloat(withdrawAmount) <= 0) {
       setWithdrawError("Please enter a valid withdrawal amount.");
       return;
@@ -418,7 +424,6 @@ export default function Dashboard() {
     navigate("/withdrawal-support");
   };
 
-  // ── VSN verification handler ──────────────────────────────────────────────────
   const handleVsnSubmit = async () => {
     if (!vsnInput.trim()) {
       setVsnError("Please enter your VSN code.");
@@ -430,20 +435,17 @@ export default function Dashboard() {
       const userRef = doc(db, "users", session.uid);
       const snap = await getDoc(userRef);
       const data = snap.data();
-
       if (data.vsn_code && vsnInput.trim() !== data.vsn_code) {
         setVsnError("Incorrect VSN code. Please contact support.");
         setVsnLoading(false);
         return;
       }
-
       await updateDoc(userRef, {
         vsn_required: false,
         vsn_verified: true,
         vsn_verified_at: Timestamp.now(),
         withdrawalStatus: "vsn_verified",
       });
-
       await setDoc(doc(collection(db, "users", session.uid, "transactions")), {
         type: "withdrawal",
         amount: data.pendingWithdrawAmount || 0,
@@ -451,7 +453,6 @@ export default function Dashboard() {
         timestamp: Timestamp.now(),
         description: `Withdrawal request verified via VSN`,
       });
-
       setVsnSuccess(true);
       setVsnInput("");
       setTimeout(() => {
@@ -474,8 +475,8 @@ export default function Dashboard() {
       let typeName = t.type || "";
       if (typeName === "solana") typeName = "Solana";
       else if (typeName === "deposit") typeName = "Deposit";
-      else if (typeName === "growth") typeName = "Solana";
-      else if (typeName === "bot_profit") typeName = "Solana";
+      else if (typeName === "growth" || typeName === "bot_profit")
+        typeName = "Solana";
       else if (typeName === "wallet_failed")
         typeName = "Wallet Connection Failed";
       else typeName = typeName.charAt(0).toUpperCase() + typeName.slice(1);
@@ -515,7 +516,6 @@ export default function Dashboard() {
     document.body.removeChild(link);
   };
 
-  // ── Filtered transactions (used in Transactions tab + export) ────────────────
   const filteredTransactions = userTransactions.filter((t) => {
     const typeLabel = (() => {
       if (t.type === "deposit") return "deposit";
@@ -525,13 +525,11 @@ export default function Dashboard() {
       if (t.type === "wallet_failed") return "wallet_failed";
       return t.type || "";
     })();
-
     const matchesFilter =
       txnFilter === "All Types" ||
       (txnFilter === "Deposit" && typeLabel === "deposit") ||
       (txnFilter === "Withdrawal" && typeLabel === "withdrawal") ||
       (txnFilter === "Solana" && typeLabel === "solana");
-
     const searchLower = txnSearch.toLowerCase();
     const matchesSearch =
       !searchLower ||
@@ -540,7 +538,6 @@ export default function Dashboard() {
       (t.status || "").toLowerCase().includes(searchLower) ||
       (t.description || "").toLowerCase().includes(searchLower) ||
       String(t.amount || "").includes(searchLower);
-
     return matchesFilter && matchesSearch;
   });
 
@@ -582,57 +579,38 @@ export default function Dashboard() {
   const botDisplay = getBotDisplay();
 
   const getStatusBadgeStyle = (status, type) => {
-    if (type === "wallet_failed" || status === "failed") {
-      return {
-        background: "rgba(239,68,68,0.15)",
-        color: "#ef4444",
-      };
-    }
-    if (status === "completed" || status === "processing") {
-      return {
-        background: "rgba(13,148,136,0.15)",
-        color: "#0d9488",
-      };
-    }
-    return {
-      background: "rgba(245,158,11,0.15)",
-      color: "#fbbf24",
-    };
+    if (type === "wallet_failed" || status === "failed")
+      return { background: "rgba(239,68,68,0.15)", color: "#ef4444" };
+    if (status === "completed" || status === "processing")
+      return { background: "rgba(13,148,136,0.15)", color: "#0d9488" };
+    return { background: "rgba(245,158,11,0.15)", color: "#fbbf24" };
   };
 
   const getTypeLabel = (type) => {
     if (type === "deposit") return "Deposit";
-    if (type === "solana") return "Solana";
-    if (type === "growth") return "Solana";
-    if (type === "bot_profit") return "Solana";
+    if (type === "solana" || type === "growth" || type === "bot_profit")
+      return "Solana";
     if (type === "withdrawal") return "Withdrawal";
     if (type === "wallet_failed") return "Wallet Connection";
     return type ? type.charAt(0).toUpperCase() + type.slice(1) : "—";
   };
 
-  const getAmountColor = (type) => {
-    if (
-      type === "deposit" ||
-      type === "solana" ||
-      type === "growth" ||
-      type === "bot_profit"
-    )
-      return "#22c55e";
-    if (type === "wallet_failed") return "#ef4444";
-    return "#ef4444";
-  };
-
-  const getAmountPrefix = (type) => {
-    if (
-      type === "deposit" ||
-      type === "solana" ||
-      type === "growth" ||
-      type === "bot_profit"
-    )
-      return "+";
-    if (type === "wallet_failed") return "";
-    return "-";
-  };
+  const getAmountColor = (type) =>
+    type === "deposit" ||
+    type === "solana" ||
+    type === "growth" ||
+    type === "bot_profit"
+      ? "#22c55e"
+      : "#ef4444";
+  const getAmountPrefix = (type) =>
+    type === "deposit" ||
+    type === "solana" ||
+    type === "growth" ||
+    type === "bot_profit"
+      ? "+"
+      : type === "wallet_failed"
+        ? ""
+        : "-";
 
   return (
     <>
@@ -648,7 +626,7 @@ export default function Dashboard() {
           .dash-sidebar { width: 280px !important; }
           .dash-logout-desktop { display: none !important; }
           .dash-hamburger { display: flex !important; }
-          .dash-sidebar-header-mobile { display: flex !important; }
+          .dash-sidebar-close-row { display: flex !important; }
           .dash-welcome-mobile { display: block !important; }
           .dash-logout-mobile { display: flex !important; }
           .dash-footer-desktop { display: none !important; }
@@ -661,35 +639,27 @@ export default function Dashboard() {
           .dash-hamburger { display: none !important; }
           .dash-logout-desktop { display: flex !important; }
           .dash-sidebar { position: relative !important; transform: none !important; height: auto !important; width: 260px !important; }
-          .dash-sidebar-header-mobile { display: none !important; }
+          .dash-sidebar-close-row { display: none !important; }
           .dash-welcome-mobile { display: none !important; }
           .dash-logout-mobile { display: none !important; }
           .dash-footer-desktop { display: block !important; }
           .dash-email-desktop { display: block !important; }
         }
-        @keyframes popIn { from { transform: scale(0); opacity: 0; } to { transform: scale(1); opacity: 1; } }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        @keyframes pulse-dot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.6; transform: scale(1.3); } }
-        @keyframes countUp { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
-        @keyframes balancePop { 0% { transform: scale(1); } 50% { transform: scale(1.04); color: #22c55e; } 100% { transform: scale(1); } }
-        @keyframes vsnSlideUp { from { opacity: 0; transform: translateY(24px) scale(0.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+        @keyframes popIn      { from { transform: scale(0); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        @keyframes spin       { to { transform: rotate(360deg); } }
+        @keyframes pulse-dot  { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:0.6; transform:scale(1.3); } }
+        @keyframes countUp    { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
+        @keyframes balancePop { 0% { transform:scale(1); } 50% { transform:scale(1.04); color:#22c55e; } 100% { transform:scale(1); } }
+        @keyframes vsnSlideUp { from { opacity:0; transform:translateY(24px) scale(0.97); } to { opacity:1; transform:translateY(0) scale(1); } }
         .balance-update { animation: balancePop 0.5s ease; }
-        .analysing-dots { display: inline-flex; align-items: center; min-width: 32px; height: 1.2em; vertical-align: middle; margin-left: 4px; }
+        .analysing-dots { display:inline-flex; align-items:center; min-width:32px; height:1.2em; vertical-align:middle; margin-left:4px; }
         .analysing-dots::after {
           content: "...";
-          animation: analysing-anim 1.5s steps(4, end) infinite;
-          color: #0d9488;
-          font-weight: 800;
-          font-size: 18px;
-          letter-spacing: 3px;
-          display: inline-block;
-          width: 32px;
-          white-space: nowrap;
-          overflow: hidden;
+          animation: analysing-anim 1.5s steps(4,end) infinite;
+          color: #0d9488; font-weight: 800; font-size: 18px; letter-spacing: 3px;
+          display: inline-block; width: 32px; white-space: nowrap; overflow: hidden;
         }
-        @keyframes analysing-anim {
-          0% { width: 0; } 25% { width: 10px; } 50% { width: 20px; } 75% { width: 30px; } 100% { width: 32px; }
-        }
+        @keyframes analysing-anim { 0%{width:0} 25%{width:10px} 50%{width:20px} 75%{width:30px} 100%{width:32px} }
         .vsn-input:focus { border-color: #7C5CFC !important; box-shadow: 0 0 0 3px rgba(124,92,252,0.15); }
       `}</style>
 
@@ -801,8 +771,9 @@ export default function Dashboard() {
             >
               Logout
             </button>
+            {/* Hamburger */}
             <button
-              onClick={() => setSidebarOpen((prev) => !prev)}
+              onClick={() => setSidebarOpen((p) => !p)}
               className="dash-hamburger"
               style={{
                 background: "rgba(255,255,255,0.15)",
@@ -854,6 +825,7 @@ export default function Dashboard() {
             position: "relative",
           }}
         >
+          {/* Overlay — closes sidebar on tap */}
           {sidebarOpen && (
             <div
               onClick={() => setSidebarOpen(false)}
@@ -888,50 +860,41 @@ export default function Dashboard() {
               height: "calc(100dvh - 58px)",
             }}
           >
+            {/* ── Close-only top row (NO OmniDev branding) ── */}
             <div
-              className="dash-sidebar-header-mobile"
+              className="dash-sidebar-close-row"
               style={{
                 flexShrink: 0,
-                display: "flex",
+                display: "none",
                 alignItems: "center",
-                justifyContent: "space-between",
-                padding: "16px 18px",
+                justifyContent: "flex-end",
+                padding: "12px 14px",
                 borderBottom: "1px solid #1a1a2e",
               }}
             >
-              <div
-                style={{ display: "flex", alignItems: "center", gap: "10px" }}
-              >
-                <img
-                  src={logo}
-                  alt="OmniDev"
-                  style={{ width: "28px", height: "28px", borderRadius: "50%" }}
-                />
-                <span
-                  style={{
-                    color: "#0d9488",
-                    fontWeight: 800,
-                    fontSize: "16px",
-                  }}
-                >
-                  OmniDev
-                </span>
-              </div>
               <button
                 onClick={() => setSidebarOpen(false)}
                 style={{
-                  background: "none",
-                  border: "none",
-                  color: "#6b7280",
+                  background: "rgba(255,255,255,0.07)",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  borderRadius: "8px",
+                  color: "#9ca3af",
                   cursor: "pointer",
-                  padding: "4px",
+                  padding: "6px 8px",
                   display: "flex",
                   alignItems: "center",
+                  transition: "background 0.15s",
                 }}
+                onMouseEnter={(e) =>
+                  (e.currentTarget.style.background = "rgba(255,255,255,0.12)")
+                }
+                onMouseLeave={(e) =>
+                  (e.currentTarget.style.background = "rgba(255,255,255,0.07)")
+                }
               >
                 <svg
-                  width="20"
-                  height="20"
+                  width="18"
+                  height="18"
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
@@ -944,11 +907,12 @@ export default function Dashboard() {
               </button>
             </div>
 
+            {/* Welcome */}
             <div
               className="dash-welcome-mobile"
               style={{
                 flexShrink: 0,
-                padding: "38px 20px 17px",
+                padding: "20px 20px 17px",
                 borderBottom: "1px solid #1a1a2e",
               }}
             >
@@ -974,6 +938,7 @@ export default function Dashboard() {
               </p>
             </div>
 
+            {/* Nav */}
             <nav
               style={{
                 flex: 1,
@@ -1055,6 +1020,7 @@ export default function Dashboard() {
               )}
             </nav>
 
+            {/* Mobile logout */}
             <div
               className="dash-logout-mobile"
               style={{
@@ -1101,6 +1067,7 @@ export default function Dashboard() {
               </button>
             </div>
 
+            {/* Desktop email */}
             <div
               className="dash-email-desktop"
               style={{
@@ -1174,10 +1141,14 @@ export default function Dashboard() {
                   "radial-gradient(ellipse 75% 75% at 50% 50%,transparent 35%,black 150%)",
               }}
             />
+
             <div style={{ position: "relative", zIndex: 2, flexShrink: 0 }}>
               <TickerBar />
             </div>
+
+            {/* ── Scrollable content — locked via ref when sidebar open ── */}
             <div
+              ref={mainScrollRef}
               style={{
                 flex: 1,
                 overflowY: "auto",
@@ -1187,7 +1158,7 @@ export default function Dashboard() {
             >
               <div
                 style={{
-                  padding: "28px 20px",
+                  padding: "28px 11px",
                   maxWidth: "900px",
                   margin: "0 auto",
                 }}
@@ -1504,7 +1475,7 @@ export default function Dashboard() {
                         )}
                       </div>
 
-                      {/* Total transactions card */}
+                      {/* Transactions count card */}
                       <div
                         style={{
                           background: "#111",
@@ -1811,8 +1782,6 @@ export default function Dashboard() {
                       Withdraw your USD into your bank account or preferred
                       payment method
                     </p>
-
-                    {/* ── Insufficient Balance ── */}
                     {balance <= 0 ? (
                       <div
                         style={{
@@ -1887,7 +1856,6 @@ export default function Dashboard() {
                         </div>
                       </div>
                     ) : (
-                      /* ── Has Balance ── */
                       <div
                         style={{
                           display: "flex",
@@ -1895,7 +1863,6 @@ export default function Dashboard() {
                           gap: "16px",
                         }}
                       >
-                        {/* If VSN has already been issued by admin, show a hint banner */}
                         {vsnRequired && (
                           <div
                             style={{
@@ -1945,12 +1912,11 @@ export default function Dashboard() {
                                 }}
                               >
                                 Your VSN code has been issued. Click Withdraw to
-                                enter it and complete your request.
+                                enter it.
                               </p>
                             </div>
                           </div>
                         )}
-
                         {withdrawError && (
                           <div
                             style={{
@@ -1987,8 +1953,6 @@ export default function Dashboard() {
                             </span>
                           </div>
                         )}
-
-                        {/* Only show form fields if VSN not yet required (first-time withdrawal request) */}
                         {!vsnRequired && (
                           <>
                             <div>
@@ -2076,7 +2040,6 @@ export default function Dashboard() {
                             </div>
                           </>
                         )}
-
                         <button
                           onClick={handleWithdrawClick}
                           style={{
@@ -2456,7 +2419,6 @@ export default function Dashboard() {
                             </p>
                           </div>
                         )}
-
                         {profileError && (
                           <div
                             style={{
@@ -2856,7 +2818,7 @@ export default function Dashboard() {
         })}
       </div>
 
-      {/* ══════════════ VSN CODE MODAL (triggered only on user action) ══════════════ */}
+      {/* ══ VSN CODE MODAL ══ */}
       {showVsnModal && (
         <div
           style={{
@@ -2931,10 +2893,9 @@ export default function Dashboard() {
                 margin: "0 0 28px",
               }}
             >
-              Enter the VSN code provided to you by our support team to complete
-              your withdrawal.
+              Enter the VSN code provided by our support team to complete your
+              withdrawal.
             </p>
-
             {vsnSuccess ? (
               <div
                 style={{
