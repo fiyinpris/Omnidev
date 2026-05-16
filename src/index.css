@@ -2250,3 +2250,11 @@ section {
     display: none !important;
   }
 }
+@media (max-width: 640px) {
+  .txn-card .table-wrap {
+    overflow: visible !important;
+    border: none !important;
+    border-radius: 0 !important;
+    max-height: none !important;
+  }
+}
