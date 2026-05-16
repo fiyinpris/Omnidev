@@ -32,7 +32,6 @@
 *::after {
   box-sizing: border-box;
 }
-
 html,
 body {
   overflow-x: clip;
@@ -40,11 +39,9 @@ body {
   margin: 0;
   padding: 0;
 }
-
 input {
   font-size: 16px;
 }
-
 section {
   width: 100%;
   max-width: 100vw;
@@ -695,7 +692,6 @@ section {
   padding-bottom: 14px;
   border-bottom: 1px solid #1a1a1a;
 }
-
 .admin-header-left {
   display: flex;
   align-items: center;
@@ -703,15 +699,12 @@ section {
   min-width: 0;
   flex: 1;
 }
-
-/* Actions row — stacks on mobile, inline on md+ */
 .admin-header-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
 }
-
 .admin-logo {
   width: 36px;
   height: 36px;
@@ -722,7 +715,6 @@ section {
   justify-content: center;
   flex-shrink: 0;
 }
-
 .admin-title {
   color: #fff;
   font-size: 16px;
@@ -732,7 +724,6 @@ section {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-
 .admin-email {
   color: #6b7280;
   font-size: 11px;
@@ -743,7 +734,6 @@ section {
   max-width: 180px;
 }
 
-/* Header action buttons */
 .hdr-btn {
   display: inline-flex;
   align-items: center;
@@ -764,14 +754,12 @@ section {
   opacity: 0.85;
   transform: translateY(-1px);
 }
-
 .hdr-btn-vsn {
   color: #a78bfa;
 }
 .hdr-btn-wf {
   color: #f87171;
 }
-
 .hdr-badge {
   display: inline-flex;
   align-items: center;
@@ -788,7 +776,6 @@ section {
 .hdr-badge-red {
   background: rgba(239, 68, 68, 0.35);
 }
-
 .btn-back {
   padding: 7px 14px;
   background: transparent;
@@ -852,14 +839,12 @@ section {
   margin-bottom: 12px;
   overflow: hidden;
 }
-
 .card-header {
   display: flex;
   align-items: center;
   gap: 10px;
   margin-bottom: 14px;
 }
-
 .card-badge {
   width: 24px;
   height: 24px;
@@ -872,7 +857,6 @@ section {
   font-size: 12px;
   flex-shrink: 0;
 }
-
 .card-title {
   color: #fff;
   font-size: 15px;
@@ -884,7 +868,6 @@ section {
 .form-group {
   margin-bottom: 12px;
 }
-
 .form-label {
   display: block;
   color: #9ca3af;
@@ -899,7 +882,6 @@ section {
   text-transform: none;
   font-weight: 400;
 }
-
 .form-select,
 .form-input {
   width: 100%;
@@ -934,7 +916,6 @@ section {
   font-size: 10px;
   margin: 4px 0 0;
 }
-
 .input-row {
   display: flex;
   gap: 8px;
@@ -1033,7 +1014,6 @@ section {
   font-size: 11px;
   margin: 4px 0 0;
 }
-
 .preview-box {
   background: rgba(13, 148, 136, 0.06);
   border: 1px solid rgba(13, 148, 136, 0.2);
@@ -1137,7 +1117,6 @@ section {
   flex: 1;
   min-width: 100px;
 }
-
 .btn-primary {
   padding: 11px 14px;
   background: #0d9488;
@@ -1161,7 +1140,6 @@ section {
   opacity: 0.6;
   cursor: not-allowed;
 }
-
 .btn-secondary {
   padding: 11px 14px;
   background: transparent;
@@ -1177,7 +1155,6 @@ section {
   border-color: #555;
   color: #fff;
 }
-
 .spinner {
   width: 13px;
   height: 13px;
@@ -1196,13 +1173,11 @@ section {
   width: 100%;
   -webkit-overflow-scrolling: touch;
 }
-
 .admin-table {
   width: 100%;
   border-collapse: collapse;
   min-width: 540px;
 }
-
 .admin-table th {
   text-align: left;
   padding: 10px 12px;
@@ -1217,7 +1192,6 @@ section {
   top: 0;
   z-index: 1;
 }
-
 .admin-table td {
   padding: 10px 12px;
   font-size: 12px;
@@ -1236,7 +1210,6 @@ section {
   color: #6b7280;
   font-size: 13px;
 }
-
 .table-user {
   display: flex;
   align-items: center;
@@ -1295,7 +1268,6 @@ section {
   display: inline-block;
   flex-shrink: 0;
 }
-
 .txn-badge {
   padding: 3px 8px;
   border-radius: 5px;
@@ -1325,9 +1297,9 @@ section {
   margin-top: 24px;
 }
 
-/* FIX: Prevent scrollbar from causing layout shift.
-   Use overflow-y: scroll (always reserve space) instead of auto.
-   This stops the card from jumping when content changes. */
+/* FIX: The txn-scroll-area is the ONLY scroll container.
+   The table-wrap inside txn-card must NOT scroll horizontally.
+   All horizontal scroll happens inside txn-scroll-area only. */
 .txn-card .table-wrap {
   overflow: visible;
   max-height: none;
@@ -1377,20 +1349,22 @@ section {
   background-position: right 7px center;
 }
 
-/* FIX: The txn-scroll-area is the ONLY scroll container.
-   Use overflow-y: scroll to ALWAYS reserve scrollbar space.
-   This prevents the card from jumping left/right when content
-   updates cause the scrollbar to appear/disappear. */
+/* FIX: Single scroll container for both X and Y.
+   overflow: auto allows both directions. 
+   The table has min-width so horizontal scroll works.
+   Header is sticky so it stays visible while scrolling. */
 .txn-scroll-area {
   max-height: 480px;
-  overflow-y: scroll; /* was: auto */
+  overflow: auto;
   -webkit-overflow-scrolling: touch;
-  scrollbar-gutter: stable; /* reserve space for scrollbar */
+  border-radius: 10px;
+  border: 1px solid #222;
 }
 
-/* Custom scrollbar styling for txn-scroll-area */
+/* Custom scrollbar styling */
 .txn-scroll-area::-webkit-scrollbar {
   width: 8px;
+  height: 8px;
 }
 .txn-scroll-area::-webkit-scrollbar-track {
   background: transparent;
@@ -1401,6 +1375,11 @@ section {
 }
 .txn-scroll-area::-webkit-scrollbar-thumb:hover {
   background: #444;
+}
+
+/* Ensure table inside txn-scroll-area has proper min-width */
+.txn-scroll-area .admin-table {
+  min-width: 700px;
 }
 
 .txn-load-more {
@@ -1418,7 +1397,6 @@ section {
   .admin-dashboard {
     padding: 16px 20px;
   }
-
   .admin-header {
     flex-direction: row;
     align-items: center;
@@ -1426,7 +1404,6 @@ section {
     margin-bottom: 24px;
     padding-bottom: 16px;
   }
-
   .admin-title {
     font-size: 18px;
   }
@@ -1438,7 +1415,6 @@ section {
     width: 38px;
     height: 38px;
   }
-
   .hdr-btn {
     padding: 8px 14px;
     font-size: 13px;
@@ -1447,18 +1423,15 @@ section {
     padding: 8px 16px;
     font-size: 12px;
   }
-
   .alert-banner {
     padding: 9px 14px;
     font-size: 12px;
     margin-bottom: 16px;
   }
-
   .admin-grid {
     grid-template-columns: 1fr 1fr;
     gap: 16px;
   }
-
   .card {
     padding: 18px;
     border-radius: 14px;
@@ -1475,7 +1448,6 @@ section {
   .card-title {
     font-size: 16px;
   }
-
   .form-group {
     margin-bottom: 13px;
   }
@@ -1495,7 +1467,6 @@ section {
   .form-hint {
     font-size: 10px;
   }
-
   .user-card {
     padding: 12px 14px;
     margin-bottom: 14px;
@@ -1508,7 +1479,6 @@ section {
   .user-name {
     font-size: 13px;
   }
-
   .info-box {
     padding: 12px 14px;
     margin-bottom: 14px;
@@ -1516,12 +1486,10 @@ section {
   .info-row {
     font-size: 12px;
   }
-
   .preview-box {
     padding: 12px 14px;
     margin-bottom: 14px;
   }
-
   .stats-row {
     gap: 12px;
     margin-bottom: 20px;
@@ -1532,13 +1500,11 @@ section {
   .stat-label {
     font-size: 11px;
   }
-
   .alert {
     padding: 10px 14px;
     font-size: 12px;
     margin-bottom: 11px;
   }
-
   .btn-group {
     gap: 9px;
   }
@@ -1552,7 +1518,6 @@ section {
     width: 14px;
     height: 14px;
   }
-
   .table-wrap {
     border-radius: 11px;
   }
@@ -1570,7 +1535,6 @@ section {
   .table-user-email {
     max-width: 160px;
   }
-
   .txn-card {
     margin-top: 18px;
     padding: 18px;
@@ -1583,7 +1547,6 @@ section {
   .txn-scroll-area {
     max-height: 520px;
   }
-
   .cw-modal {
     width: 480px;
   }
@@ -1605,7 +1568,6 @@ section {
     max-width: 1440px;
     margin: 0 auto;
   }
-
   .admin-header {
     margin-bottom: 28px;
     padding-bottom: 18px;
@@ -1621,7 +1583,6 @@ section {
     width: 42px;
     height: 42px;
   }
-
   .hdr-btn {
     padding: 9px 16px;
     font-size: 13px;
@@ -1631,19 +1592,16 @@ section {
     padding: 9px 18px;
     font-size: 13px;
   }
-
   .alert-banner {
     padding: 10px 16px;
     font-size: 13px;
     margin-bottom: 20px;
     border-radius: 10px;
   }
-
   .admin-grid {
     grid-template-columns: 1fr 1fr;
     gap: 22px;
   }
-
   .card {
     padding: 22px;
     border-radius: 16px;
@@ -1661,7 +1619,6 @@ section {
   .card-title {
     font-size: 17px;
   }
-
   .form-group {
     margin-bottom: 15px;
   }
@@ -1685,7 +1642,6 @@ section {
   .input-row {
     gap: 12px;
   }
-
   .user-card {
     padding: 14px 16px;
     margin-bottom: 16px;
@@ -1706,7 +1662,6 @@ section {
   .user-handle {
     font-size: 12px;
   }
-
   .info-box {
     padding: 14px 16px;
     margin-bottom: 16px;
@@ -1719,7 +1674,6 @@ section {
   .info-sub {
     font-size: 12px;
   }
-
   .preview-box {
     padding: 14px 16px;
     margin-bottom: 16px;
@@ -1734,7 +1688,6 @@ section {
   .preview-sub {
     font-size: 12px;
   }
-
   .info-banner {
     padding: 14px 16px;
     border-radius: 12px;
@@ -1745,7 +1698,6 @@ section {
   .info-banner-body {
     font-size: 13px;
   }
-
   .stats-row {
     gap: 14px;
     margin-bottom: 24px;
@@ -1756,14 +1708,12 @@ section {
   .stat-label {
     font-size: 12px;
   }
-
   .alert {
     padding: 11px 15px;
     font-size: 13px;
     border-radius: 10px;
     margin-bottom: 12px;
   }
-
   .btn-group {
     gap: 10px;
   }
@@ -1777,7 +1727,6 @@ section {
     width: 15px;
     height: 15px;
   }
-
   .table-wrap {
     border-radius: 12px;
     max-height: 520px;
@@ -1813,7 +1762,6 @@ section {
     width: 7px;
     height: 7px;
   }
-
   .txn-badge {
     padding: 4px 10px;
     font-size: 11px;
@@ -1826,7 +1774,6 @@ section {
   .date-cell {
     font-size: 12px;
   }
-
   .txn-card {
     margin-top: 22px;
     padding: 22px;
@@ -1850,7 +1797,6 @@ section {
     padding: 16px;
     font-size: 13px;
   }
-
   .cw-modal {
     width: 540px;
   }
@@ -1859,7 +1805,7 @@ section {
   }
 }
 
-/* ===== SMALL — ≤640px: cards replace tables ===== */
+/* ===== SMALL — ≤640px ===== */
 @media (max-width: 640px) {
   .hide-sm {
     display: none !important;
@@ -1867,12 +1813,9 @@ section {
   .mkt-grid {
     grid-template-columns: 1fr auto auto !important;
   }
-
   .admin-dashboard {
     padding: 8px;
   }
-
-  /* header stacks; actions fill row */
   .admin-header {
     flex-direction: column;
     align-items: flex-start;
@@ -1894,7 +1837,6 @@ section {
     text-align: center;
     font-size: 12px;
   }
-
   .admin-title {
     font-size: 15px;
   }
@@ -1906,18 +1848,15 @@ section {
     width: 32px;
     height: 32px;
   }
-
   .alert-banner {
     padding: 8px 10px;
     font-size: 11px;
     border-radius: 7px;
   }
-
   .admin-grid {
     grid-template-columns: 1fr;
     gap: 10px;
   }
-
   .card {
     padding: 12px;
     border-radius: 10px;
@@ -1935,7 +1874,6 @@ section {
   .card-title {
     font-size: 14px;
   }
-
   .form-group {
     margin-bottom: 10px;
   }
@@ -1960,7 +1898,6 @@ section {
   .input-row {
     gap: 6px;
   }
-
   .user-card {
     padding: 10px 12px;
     margin-bottom: 10px;
@@ -1974,7 +1911,6 @@ section {
   .user-name {
     font-size: 12px;
   }
-
   .info-box {
     padding: 10px 12px;
     margin-bottom: 10px;
@@ -1986,7 +1922,6 @@ section {
   .info-sub {
     font-size: 10px;
   }
-
   .preview-box {
     padding: 10px 12px;
     margin-bottom: 10px;
@@ -1998,7 +1933,6 @@ section {
   .preview-text {
     font-size: 11px;
   }
-
   .stats-row {
     grid-template-columns: 1fr 1fr;
     gap: 8px;
@@ -2013,7 +1947,6 @@ section {
   .stat-box {
     padding: 10px 12px;
   }
-
   .info-banner {
     padding: 10px 12px;
     margin-bottom: 12px;
@@ -2025,14 +1958,12 @@ section {
   .info-banner-body {
     font-size: 11px;
   }
-
   .alert {
     padding: 8px 10px;
     font-size: 11px;
     border-radius: 7px;
     margin-bottom: 8px;
   }
-
   .btn-group {
     gap: 6px;
     flex-direction: column;
@@ -2052,8 +1983,6 @@ section {
     height: 12px;
     border-width: 1.5px;
   }
-
-  /* ── Mobile tables: horizontal scroll (no card transform) ── */
   .table-wrap {
     overflow-x: auto !important;
     -webkit-overflow-scrolling: touch;
@@ -2070,7 +1999,6 @@ section {
   .table-user-email {
     max-width: 120px;
   }
-
   .txn-card {
     margin-top: 10px;
     padding: 12px;
@@ -2100,13 +2028,10 @@ section {
     padding: 12px;
     font-size: 11px;
   }
-
-  /* pills on mobile */
   .pill {
     font-size: 10px;
     padding: 2px 7px;
   }
-
   .cw-content {
     padding: 16px;
   }
@@ -2169,7 +2094,6 @@ section {
   .admin-email {
     font-size: 10px;
   }
-
   .card {
     padding: 10px;
     border-radius: 8px;
@@ -2177,7 +2101,6 @@ section {
   .card-title {
     font-size: 13px;
   }
-
   .form-select,
   .form-input {
     padding: 8px 22px 8px 9px;
@@ -2186,13 +2109,11 @@ section {
   .form-input {
     padding-right: 9px;
   }
-
   .btn-primary,
   .btn-secondary {
     padding: 10px;
     font-size: 12px;
   }
-
   .stats-row {
     grid-template-columns: 1fr 1fr;
     gap: 6px;
@@ -2209,12 +2130,10 @@ section {
   .stat-label {
     font-size: 10px;
   }
-
   .hdr-btn {
     font-size: 11px;
     padding: 7px 8px;
   }
-
   .cw-content {
     padding: 14px;
   }
@@ -2312,7 +2231,6 @@ section {
     width: 100% !important;
   }
 }
-
 @media (min-width: 768px) {
   .dash-logout-desktop {
     display: flex !important;
