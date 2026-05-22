@@ -2258,3 +2258,193 @@ section {
     max-height: none !important;
   }
 }
+
+.txn-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #333 #111;
+}
+.txn-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.txn-scroll::-webkit-scrollbar-track {
+  background: #111;
+}
+.txn-scroll::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 3px;
+}
+.txn-scroll::-webkit-scrollbar-thumb:hover {
+  background: #0d9488;
+}
+@media (max-width: 768px) {
+  .mobile-bottom-nav {
+    display: flex !important;
+  }
+  .dash-main {
+    padding-bottom: 68px !important;
+  }
+  .dash-sidebar {
+    width: 280px !important;
+  }
+  .dash-logout-desktop {
+    display: none !important;
+  }
+  .dash-hamburger {
+    display: flex !important;
+  }
+  .dash-sidebar-close-row {
+    display: flex !important;
+  }
+  .dash-welcome-mobile {
+    display: block !important;
+  }
+  .dash-logout-mobile {
+    display: flex !important;
+  }
+  .dash-footer-desktop {
+    display: none !important;
+  }
+  .dash-email-desktop {
+    display: none !important;
+  }
+  .txn-filter-bar {
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+  .txn-filter-bar > * {
+    width: 100% !important;
+  }
+}
+@media (min-width: 769px) {
+  .mobile-bottom-nav {
+    display: none !important;
+  }
+  .dash-hamburger {
+    display: none !important;
+  }
+  .dash-logout-desktop {
+    display: flex !important;
+  }
+  .dash-sidebar {
+    position: relative !important;
+    transform: none !important;
+    height: auto !important;
+    width: 260px !important;
+  }
+  .dash-sidebar-close-row {
+    display: none !important;
+  }
+  .dash-welcome-mobile {
+    display: none !important;
+  }
+  .dash-logout-mobile {
+    display: none !important;
+  }
+  .dash-footer-desktop {
+    display: block !important;
+  }
+  .dash-email-desktop {
+    display: block !important;
+  }
+}
+@keyframes popIn {
+  from {
+    transform: scale(0);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(1.3);
+  }
+}
+@keyframes countUp {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes balancePop {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.04);
+    color: #22c55e;
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+@keyframes vsnSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(24px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.balance-update {
+  animation: balancePop 0.5s ease;
+}
+.analysing-dots {
+  display: inline-flex;
+  align-items: center;
+  min-width: 32px;
+  height: 1.2em;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+.analysing-dots::after {
+  content: "...";
+  animation: analysing-anim 1.5s steps(4, end) infinite;
+  color: #0d9488;
+  font-weight: 800;
+  font-size: 18px;
+  letter-spacing: 3px;
+  display: inline-block;
+  width: 32px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+@keyframes analysing-anim {
+  0% {
+    width: 0;
+  }
+  25% {
+    width: 10px;
+  }
+  50% {
+    width: 20px;
+  }
+  75% {
+    width: 30px;
+  }
+  100% {
+    width: 32px;
+  }
+}
+.vsn-input:focus {
+  border-color: #7c5cfc !important;
+}

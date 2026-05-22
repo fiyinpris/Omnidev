@@ -88,7 +88,7 @@ export default function AdminDashboard() {
   const [adminUser, setAdminUser] = useState(null);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState("main"); // "main" | "vsn" | "wallet_failed"
+  const [view, setView] = useState("main"); // "main" | "vsn" | "wallet_failed" | "withdrawal_success"
 
   const [fundSel, setFundSel] = useState(null);
   const [fundAmt, setFundAmt] = useState("");
@@ -111,6 +111,12 @@ export default function AdminDashboard() {
   const [wfOk, setWfOk] = useState("");
   const [wfErr, setWfErr] = useState("");
 
+  // ── Withdrawal Success ──
+  const [wsSel, setWsSel] = useState(null);
+  const [wsLoading, setWsLoading] = useState(false);
+  const [wsOk, setWsOk] = useState("");
+  const [wsErr, setWsErr] = useState("");
+
   const [txns, setTxns] = useState([]);
   const [txnPage, setTxnPage] = useState(1);
   const [txnLoadingMore, setTxnLoadingMore] = useState(false);
@@ -124,7 +130,6 @@ export default function AdminDashboard() {
   const [vsnOk, setVsnOk] = useState("");
   const [vsnErr, setVsnErr] = useState("");
 
-  // ── FIX: stable "now" that only updates every 60 s, not every render ──
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
     const id = setInterval(() => setNowMs(Date.now()), 60_000);
@@ -191,6 +196,7 @@ export default function AdminDashboard() {
       setTgtSel((p) => (p ? list.find((u) => u.uid === p.uid) || p : null));
       setVsnSel((p) => (p ? list.find((u) => u.uid === p.uid) || p : null));
       setWfSel((p) => (p ? list.find((u) => u.uid === p.uid) || p : null));
+      setWsSel((p) => (p ? list.find((u) => u.uid === p.uid) || p : null));
     });
     return () => unsub();
   }, [adminUser]);
@@ -466,6 +472,68 @@ export default function AdminDashboard() {
     }
   };
 
+  const handleWithdrawalSuccess = async () => {
+    if (!wsSel) {
+      setWsErr("Select a user.");
+      return;
+    }
+    const withdrawAmount = wsSel.pendingWithdrawAmount || 0;
+    if (withdrawAmount <= 0) {
+      setWsErr("This user has no pending withdrawal amount.");
+      return;
+    }
+    setWsLoading(true);
+    setWsErr("");
+    setWsOk("");
+    try {
+      const now = Timestamp.now();
+      // Deduct the pending withdrawal amount from balance
+      const newBalance = Math.max(0, wsSel.balance - withdrawAmount);
+      await updateDoc(doc(db, "users", wsSel.uid), {
+        balance: newBalance,
+        withdrawalStatus: "successful",
+        pendingWithdrawAmount: 0,
+        pendingWithdrawWallet: "",
+        vsn_required: false,
+        vsn_verified: false,
+        withdrawalCompletedAt: now,
+      });
+      // Admin transaction log
+      await setDoc(doc(collection(db, "adminTransactions")), {
+        userId: wsSel.uid,
+        userEmail: wsSel.email,
+        userName:
+          `${wsSel.firstName} ${wsSel.lastName}`.trim() || wsSel.username,
+        type: "withdrawal_success",
+        amount: withdrawAmount,
+        timestamp: now,
+        status: "successful",
+        adminEmail: adminUser.email,
+        wallet: wsSel.pendingWithdrawWallet,
+        balanceBefore: wsSel.balance,
+        balanceAfter: newBalance,
+      });
+      // User-facing transaction — status "successful", description "Withdrawal Successful"
+      await setDoc(doc(collection(db, "users", wsSel.uid, "transactions")), {
+        type: "withdrawal",
+        amount: withdrawAmount,
+        status: "successful",
+        timestamp: now,
+        description: `Withdrawal Successful — $${fmt(withdrawAmount)} sent to your account`,
+      });
+      setWsOk(
+        `Withdrawal of $${fmt(withdrawAmount)} marked successful for ${wsSel.email}. New balance: $${fmt(newBalance)}.`,
+      );
+      setWsSel(null);
+      setTimeout(() => setWsOk(""), 7000);
+    } catch (e) {
+      console.error(e);
+      setWsErr("Failed. Try again.");
+    } finally {
+      setWsLoading(false);
+    }
+  };
+
   const handleSendVSN = async () => {
     if (!vsnSel) {
       setVsnErr("Select a user.");
@@ -541,14 +609,13 @@ export default function AdminDashboard() {
     return { text: "Bot Trading Disabled", color: "#ef4444", dot: "#ef4444" };
   };
 
-  // ── FIX: getTxnStatus now uses stable `nowMs` instead of Date.now() ──
-  // This prevents the table from re-rendering/jumping every tick.
   const getTxnStatus = useCallback(
     (t) => {
       const now = nowMs;
       const live = users.find((u) => u.uid === t.userId);
       const liveSt = live?.botStatus || "disabled";
       if (t.type === "wallet_failed") return "wallet_failed";
+      if (t.type === "withdrawal_success") return "successful";
       if (t.type === "vsn_request") {
         if (live?.vsn_verified) return "completed";
         if (live?.vsn_required) return "analysing";
@@ -620,8 +687,12 @@ export default function AdminDashboard() {
     setWfErr("");
     setWfOk("");
   };
+  const clearWs = () => {
+    setWsSel(null);
+    setWsErr("");
+    setWsOk("");
+  };
 
-  /* ── Memoized transaction rows to prevent re-render jumping ── */
   const txnRows = useMemo(() => {
     return visibleTxns.map((t) => {
       const ls = getTxnStatus(t);
@@ -638,10 +709,17 @@ export default function AdminDashboard() {
                 text: "#a78bfa",
                 label: "VSN Request",
               }
-            : STATUS_COLORS[ls] || STATUS_COLORS.completed;
+            : t.type === "withdrawal_success"
+              ? {
+                  bg: "rgba(13,148,136,0.15)",
+                  text: "#0d9488",
+                  label: "Withdrawal",
+                }
+              : STATUS_COLORS[ls] || STATUS_COLORS.completed;
 
       let typeLabel = t.type;
       if (t.type === "wallet_failed") typeLabel = "Wallet Failed";
+      else if (t.type === "withdrawal_success") typeLabel = "Withdrawal";
       else if (t.type === "vsn_request")
         typeLabel =
           ls === "completed"
@@ -669,23 +747,14 @@ export default function AdminDashboard() {
             >
               {t.userName || t.userEmail}
             </p>
-            <p
-              style={{
-                color: "#6b7280",
-                fontSize: "10px",
-                margin: 0,
-              }}
-            >
+            <p style={{ color: "#6b7280", fontSize: "10px", margin: 0 }}>
               {t.userEmail}
             </p>
           </td>
           <td data-label="Type">
             <span
               className="txn-badge"
-              style={{
-                background: colors.bg,
-                color: colors.text,
-              }}
+              style={{ background: colors.bg, color: colors.text }}
             >
               {typeLabel}
             </span>
@@ -693,6 +762,8 @@ export default function AdminDashboard() {
           <td data-label="Amount" className="amount">
             {t.type === "vsn_request" || t.type === "wallet_failed" ? (
               <span style={{ color: "#6b7280" }}>—</span>
+            ) : t.type === "withdrawal_success" ? (
+              <span style={{ color: "#ef4444" }}>-${fmt(t.amount || 0)}</span>
             ) : (
               `+$${fmt(t.amount || t.initialAmount || 0)}`
             )}
@@ -707,6 +778,10 @@ export default function AdminDashboard() {
                 }}
               >
                 {t.note || "Wallet connection failed"}
+              </span>
+            ) : t.type === "withdrawal_success" ? (
+              <span style={{ color: "#9ca3af", fontSize: "11px" }}>
+                {t.wallet ? t.wallet.slice(0, 16) + "…" : "—"}
               </span>
             ) : t.targetAmount ? (
               `$${fmt(t.targetAmount)}`
@@ -730,10 +805,7 @@ export default function AdminDashboard() {
           <td data-label="Status">
             <span
               className="txn-badge"
-              style={{
-                background: colors.bg,
-                color: colors.text,
-              }}
+              style={{ background: colors.bg, color: colors.text }}
             >
               {ls === "wallet_failed" ? "failed" : ls}
             </span>
@@ -781,6 +853,11 @@ export default function AdminDashboard() {
   const vsnPending = users.filter((u) => u.vsn_required && !u.vsn_verified);
   const vsnVerified = users.filter((u) => u.vsn_verified);
   const walletFailedUsers = users.filter((u) => u.walletConnectionFailed);
+  const pendingWithdrawalUsers = users.filter(
+    (u) =>
+      u.withdrawalStatus === "pending_support" ||
+      u.withdrawalStatus === "vsn_verified",
+  );
 
   /* ── Reusable sub-components ── */
   const UserCard = ({ user }) => {
@@ -839,6 +916,7 @@ export default function AdminDashboard() {
             onClick={() => {
               clearVsn();
               clearWf();
+              clearWs();
               setView("main");
             }}
           >
@@ -846,6 +924,7 @@ export default function AdminDashboard() {
           </button>
         ) : (
           <>
+            {/* Send VSN */}
             <button
               className="hdr-btn hdr-btn-vsn"
               onClick={() => setView("vsn")}
@@ -875,6 +954,41 @@ export default function AdminDashboard() {
               )}
             </button>
 
+            {/* Withdrawal */}
+            <button
+              className="hdr-btn"
+              onClick={() => setView("withdrawal_success")}
+              style={{
+                background:
+                  pendingWithdrawalUsers.length > 0
+                    ? "linear-gradient(135deg,#0d9488,#065f46)"
+                    : "rgba(13,148,136,0.15)",
+                color: "#fff",
+                border: "none",
+              }}
+            >
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                <polyline points="22 4 12 14.01 9 11.01" />
+              </svg>
+              <span>Withdrawal</span>
+              {pendingWithdrawalUsers.length > 0 && (
+                <span className="hdr-badge" style={{ background: "#0d9488" }}>
+                  {pendingWithdrawalUsers.length}
+                </span>
+              )}
+            </button>
+
+            {/* Wallet Failed */}
             <button
               className="hdr-btn hdr-btn-wf"
               onClick={() => setView("wallet_failed")}
@@ -915,6 +1029,266 @@ export default function AdminDashboard() {
       </div>
     </header>
   );
+
+  /* ══════════════════════════════════════
+     WITHDRAWAL SUCCESS VIEW
+  ══════════════════════════════════════ */
+  if (view === "withdrawal_success") {
+    return (
+      <div className="admin-dashboard">
+        <AdminHeader title="Withdrawal" showBack />
+
+        <div className="sub-page-wrap">
+          <div className="card">
+            <div
+              className="info-banner"
+              style={{
+                background: "rgba(13,148,136,0.08)",
+                border: "1px solid rgba(13,148,136,0.2)",
+                borderRadius: "10px",
+                padding: "12px 16px",
+                marginBottom: "18px",
+              }}
+            >
+              <p className="info-banner-title" style={{ color: "#0d9488" }}>
+                How this works
+              </p>
+              <p className="info-banner-body">
+                Mark a user's pending withdrawal as{" "}
+                <strong style={{ color: "#fff" }}>successful</strong>. The
+                withdrawal amount is deducted from their balance, their pending
+                status is cleared, and a{" "}
+                <strong style={{ color: "#fff" }}>Withdrawal Successful</strong>{" "}
+                transaction appears in their history.
+              </p>
+            </div>
+
+            <div className="stats-row">
+              {[
+                {
+                  label: "Pending Withdrawals",
+                  value: pendingWithdrawalUsers.length,
+                  color: "#0d9488",
+                  bg: "rgba(13,148,136,0.1)",
+                },
+                {
+                  label: "Total Users",
+                  value: users.length,
+                  color: "#9ca3af",
+                  bg: "rgba(156,163,175,0.1)",
+                },
+              ].map((s) => (
+                <div
+                  key={s.label}
+                  className="stat-box"
+                  style={{ background: s.bg }}
+                >
+                  <p className="stat-value" style={{ color: s.color }}>
+                    {s.value}
+                  </p>
+                  <p className="stat-label">{s.label}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Select User</label>
+              <select
+                className="form-select"
+                value={wsSel?.uid || ""}
+                onChange={(e) => {
+                  setWsSel(users.find((u) => u.uid === e.target.value) || null);
+                  setWsErr("");
+                }}
+              >
+                <option value="">
+                  Choose a user with pending withdrawal...
+                </option>
+                {users.map((u) => (
+                  <option key={u.uid} value={u.uid}>
+                    {u.email} — ${fmt(u.balance)}
+                    {u.pendingWithdrawAmount > 0
+                      ? ` (Pending $${fmt(u.pendingWithdrawAmount)})`
+                      : ""}
+                    {u.withdrawalStatus === "pending_support"
+                      ? " 🟣 Awaiting"
+                      : ""}
+                    {u.withdrawalStatus === "vsn_verified"
+                      ? " ✅ VSN Verified"
+                      : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {wsSel && (
+              <div className="info-box">
+                <p className="info-row">
+                  Email: <strong>{wsSel.email}</strong>
+                </p>
+                <p className="info-row">
+                  Current Balance: <strong>${fmt(wsSel.balance)}</strong>
+                </p>
+                <p className="info-row">
+                  Withdrawal Amount:{" "}
+                  <strong style={{ color: "#ef4444" }}>
+                    −${fmt(wsSel.pendingWithdrawAmount)}
+                  </strong>
+                </p>
+                <p className="info-row">
+                  Balance After:{" "}
+                  <strong style={{ color: "#22c55e" }}>
+                    $
+                    {fmt(
+                      Math.max(
+                        0,
+                        wsSel.balance - (wsSel.pendingWithdrawAmount || 0),
+                      ),
+                    )}
+                  </strong>
+                </p>
+                {wsSel.pendingWithdrawWallet && (
+                  <p className="info-row" style={{ wordBreak: "break-all" }}>
+                    Wallet:{" "}
+                    <strong style={{ color: "#9ca3af", fontSize: "11px" }}>
+                      {wsSel.pendingWithdrawWallet}
+                    </strong>
+                  </p>
+                )}
+                <p className="info-row">
+                  VSN Status:{" "}
+                  <strong
+                    style={{
+                      color: wsSel.vsn_verified ? "#22c55e" : "#f59e0b",
+                    }}
+                  >
+                    {wsSel.vsn_verified ? "Verified" : "Pending"}
+                  </strong>
+                </p>
+              </div>
+            )}
+
+            {wsErr && <div className="alert alert-error">{wsErr}</div>}
+            {wsOk && <div className="alert alert-success">{wsOk}</div>}
+
+            <div className="btn-group">
+              <button
+                className="btn-primary"
+                onClick={handleWithdrawalSuccess}
+                disabled={wsLoading || !wsSel}
+                style={{
+                  background: wsSel
+                    ? "linear-gradient(135deg,#0d9488,#065f46)"
+                    : undefined,
+                  border: "none",
+                }}
+              >
+                {wsLoading ? (
+                  <>
+                    <span className="spinner" /> Processing...
+                  </>
+                ) : (
+                  <>
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      style={{ flexShrink: 0 }}
+                    >
+                      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                      <polyline points="22 4 12 14.01 9 11.01" />
+                    </svg>
+                    Withdrawal Successful
+                  </>
+                )}
+              </button>
+              <button className="btn-secondary" onClick={clearWs}>
+                Clear
+              </button>
+            </div>
+          </div>
+
+          {pendingWithdrawalUsers.length > 0 && (
+            <div className="card">
+              <h2 className="card-title" style={{ margin: "0 0 14px" }}>
+                Pending Withdrawals ({pendingWithdrawalUsers.length})
+              </h2>
+              <div className="table-wrap">
+                <table className="admin-table">
+                  <thead>
+                    <tr>
+                      {["User", "Balance", "Requested", "VSN Status"].map(
+                        (h) => (
+                          <th key={h}>{h}</th>
+                        ),
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pendingWithdrawalUsers.map((u) => (
+                      <tr
+                        key={u.uid}
+                        onClick={() => {
+                          setWsSel(u);
+                          setWsErr("");
+                        }}
+                      >
+                        <td data-label="User">
+                          <p
+                            style={{
+                              color: "#fff",
+                              fontSize: "12px",
+                              fontWeight: 600,
+                              margin: 0,
+                            }}
+                          >
+                            {u.email}
+                          </p>
+                          <p
+                            style={{
+                              color: "#6b7280",
+                              fontSize: "10px",
+                              margin: 0,
+                            }}
+                          >
+                            @{u.username || "—"}
+                          </p>
+                        </td>
+                        <td data-label="Balance" className="amount">
+                          ${fmt(u.balance)}
+                        </td>
+                        <td
+                          data-label="Requested"
+                          className="amount"
+                          style={{ color: "#0d9488" }}
+                        >
+                          ${fmt(u.pendingWithdrawAmount)}
+                        </td>
+                        <td data-label="VSN Status">
+                          {u.vsn_verified ? (
+                            <span className="pill pill-green">Verified</span>
+                          ) : u.vsn_required ? (
+                            <span className="pill pill-yellow">VSN Sent</span>
+                          ) : (
+                            <span className="pill pill-purple">Needs VSN</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   /* ══════════════════════════════════════
      WALLET FAILED VIEW
