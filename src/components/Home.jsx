@@ -155,7 +155,7 @@ const MARKET_DATA = {
       change: "+1.73%",
       up: true,
       color: "#00AAE4",
-      icon: "✕",
+      icon: "X",
       path: "M0,30 C12,28 18,24 28,20 C38,16 44,20 54,14 C64,8 72,12 82,10 C90,8 95,6 100,4",
     },
   ],

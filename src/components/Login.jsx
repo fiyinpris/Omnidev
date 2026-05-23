@@ -151,7 +151,7 @@ export default function Login() {
         {registered && (
           <div className="w-full bg-teal-500/10 border border-teal-500/30 rounded-xl px-4 py-3 mb-4">
             <p className="text-teal-400 text-sm">
-              ✅ Account created! Check your email to verify before logging in.
+              Account created! Check your email to verify before logging in.
             </p>
           </div>
         )}

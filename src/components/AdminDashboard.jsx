@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth, db } from "../firebase";
+import emailjs from "@emailjs/browser";
 import {
   collection,
   getDocs,
@@ -81,6 +82,26 @@ const STATUS_COLORS = {
     bg: "rgba(239,68,68,.15)",
     text: "#ef4444",
     label: "Wallet Connection Failed",
+  },
+  processing: {
+    bg: "rgba(13,148,136,.15)",
+    text: "#0d9488",
+    label: "Processing",
+  },
+  successful: {
+    bg: "rgba(34,197,94,.15)",
+    text: "#22c55e",
+    label: "Successful",
+  },
+  failed: {
+    bg: "rgba(239,68,68,0.15)",
+    text: "#ef4444",
+    label: "Failed",
+  },
+  Sent: {
+    bg: "rgba(124,92,252,0.15)",
+    text: "#a78bfa",
+    label: "Sent",
   },
 };
 
@@ -565,9 +586,26 @@ export default function AdminDashboard() {
         status: "pending",
         adminEmail: adminUser.email,
       });
-      setVsnOk(
-        `VSN "${vsnCode.trim()}" generated for ${vsnSel.email}. Send via support chat.`,
-      );
+      // Send VSN code to user's email
+      try {
+        await emailjs.send(
+          "service_iaukz5q",
+          "template_hqjxv6g",
+          {
+            email: vsnSel.email,
+            passcode: vsnCode.trim(),
+            time: new Date(Date.now() + 30 * 60 * 1000).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+          },
+          "Zjh3-YGuzQVKNSkoO",
+        );
+      } catch (emailErr) {
+        console.error("EmailJS error:", emailErr);
+      }
+
+      setVsnOk(`VSN "${vsnCode.trim()}" sent to ${vsnSel.email} via email.`);
       setVsnCode("");
       setVsnSel(null);
       setTimeout(() => setVsnOk(""), 8000);
@@ -614,13 +652,26 @@ export default function AdminDashboard() {
       const now = nowMs;
       const live = users.find((u) => u.uid === t.userId);
       const liveSt = live?.botStatus || "disabled";
-      if (t.type === "wallet_failed") return "wallet_failed";
-      if (t.type === "withdrawal_success") return "successful";
       if (t.type === "vsn_request") {
-        if (live?.vsn_verified) return "completed";
-        if (live?.vsn_required) return "analysing";
+        if (live?.withdrawalStatus === "successful") return "successful";
+        if (
+          live?.vsn_verified ||
+          (!live?.vsn_required && !live?.vsn_verified && t.status !== "pending")
+        ) {
+          // Use timestamp + 10 mins as the fail deadline
+          const failsAtMs =
+            t.failsAt?.toMillis?.() ||
+            t.failsAt ||
+            (t.timestamp instanceof Date
+              ? t.timestamp.getTime() + 10 * 60 * 1000
+              : null);
+          if (failsAtMs && Date.now() >= failsAtMs) return "failed";
+          return "processing";
+        }
+        if (live?.vsn_required) return "Sent";
         return t.status || "pending";
       }
+
       if (t.type === "initial_fund") {
         if (liveSt === "disabled" || liveSt === "activated") return "completed";
         const anaExp =
@@ -803,12 +854,20 @@ export default function AdminDashboard() {
             {t.botHours ? `${t.botHours}h` : "—"}
           </td>
           <td data-label="Status">
-            <span
-              className="txn-badge"
-              style={{ background: colors.bg, color: colors.text }}
-            >
-              {ls === "wallet_failed" ? "failed" : ls}
-            </span>
+            {(() => {
+              const statusColors = STATUS_COLORS[ls] || STATUS_COLORS.completed;
+              return (
+                <span
+                  className="txn-badge"
+                  style={{
+                    background: statusColors.bg,
+                    color: statusColors.text,
+                  }}
+                >
+                  {ls === "wallet_failed" ? "failed" : ls}
+                </span>
+              );
+            })()}
           </td>
           <td data-label="Date" className="date-cell">
             {t.timestamp.toLocaleString()}
@@ -1030,9 +1089,7 @@ export default function AdminDashboard() {
     </header>
   );
 
-  /* ══════════════════════════════════════
-     WITHDRAWAL SUCCESS VIEW
-  ══════════════════════════════════════ */
+  /* WITHDRAWAL SUCCESS VIEW*/
   if (view === "withdrawal_success") {
     return (
       <div className="admin-dashboard">
@@ -1111,10 +1168,10 @@ export default function AdminDashboard() {
                       ? ` (Pending $${fmt(u.pendingWithdrawAmount)})`
                       : ""}
                     {u.withdrawalStatus === "pending_support"
-                      ? " 🟣 Awaiting"
+                      ? " Awaiting"
                       : ""}
                     {u.withdrawalStatus === "vsn_verified"
-                      ? " ✅ VSN Verified"
+                      ? " VSN Verified"
                       : ""}
                   </option>
                 ))}
@@ -1290,9 +1347,7 @@ export default function AdminDashboard() {
     );
   }
 
-  /* ══════════════════════════════════════
-     WALLET FAILED VIEW
-  ══════════════════════════════════════ */
+  /* WALLET FAILED VIEW */
   if (view === "wallet_failed") {
     return (
       <div className="admin-dashboard">
@@ -1354,7 +1409,7 @@ export default function AdminDashboard() {
                 {users.map((u) => (
                   <option key={u.uid} value={u.uid}>
                     {u.email} — ${fmt(u.balance)}
-                    {u.walletConnectionFailed ? " ⚠ Prev. Failed" : ""}
+                    {u.walletConnectionFailed ? " Prev. Failed" : ""}
                   </option>
                 ))}
               </select>
@@ -1383,7 +1438,7 @@ export default function AdminDashboard() {
                         fontWeight: 600,
                       }}
                     >
-                      ⚠ Previously flagged as wallet failed
+                      Previously flagged as wallet failed
                     </span>
                   </p>
                 )}
@@ -1522,9 +1577,7 @@ export default function AdminDashboard() {
     );
   }
 
-  /* ══════════════════════════════════════
-     VSN VIEW
-  ══════════════════════════════════════ */
+  /* VSN VIEW */
   if (view === "vsn") {
     return (
       <div className="admin-dashboard">
@@ -1606,7 +1659,7 @@ export default function AdminDashboard() {
                   <option key={u.uid} value={u.uid}>
                     {u.email} — ${fmt(u.balance)}
                     {u.withdrawalStatus === "pending_support"
-                      ? " 🟣 Withdrawal Pending"
+                      ? " Withdrawal Pending"
                       : ""}
                     {u.vsn_required && !u.vsn_verified ? " • VSN Sent" : ""}
                     {u.vsn_verified ? " • Verified" : ""}
@@ -1799,9 +1852,7 @@ export default function AdminDashboard() {
     );
   }
 
-  /* ══════════════════════════════════════
-     MAIN VIEW
-  ══════════════════════════════════════ */
+  /* MAIN VIEW */
   return (
     <div className="admin-dashboard">
       <AdminHeader title="Admin Dashboard" />
@@ -2046,7 +2097,7 @@ export default function AdminDashboard() {
 
           {tgtSel?.hasBeenFunded && tgtAmt && parseFloat(tgtAmt) > 0 && (
             <div className="preview-box">
-              <p className="preview-title">📈 Growth Preview</p>
+              <p className="preview-title">Growth Preview</p>
               <p className="preview-text">
                 ${fmt(tgtSel.initialBalance)} → $
                 {fmt(tgtSel.initialBalance + parseFloat(tgtAmt))} over {botHrs}h

