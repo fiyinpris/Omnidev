@@ -47,7 +47,7 @@ export default function WithdrawalSupport() {
         </p>
 
         <a
-          href="https://t.me/your_telegram_username"
+          href="https://t.me/omnidev_support"
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center justify-center gap-2.5 px-5 sm:px-7 py-3.5 bg-[#0d9488] rounded-xl text-white font-bold text-sm sm:text-[15px] cursor-pointer no-underline mb-4 w-full sm:w-auto"

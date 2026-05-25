@@ -1946,8 +1946,9 @@ export default function Dashboard() {
                                   margin: 0,
                                 }}
                               >
-                                Your VSN code has been issued. Click Withdraw to
-                                enter it.
+                                Your VSN code has been issued. Kindly check your
+                                gmail for the code and Click Withdraw to enter
+                                it.
                               </p>
                             </div>
                           </div>
