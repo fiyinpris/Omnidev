@@ -143,35 +143,27 @@ export default function Dashboard() {
   const [profileSaved, setProfileSaved] = useState(false);
   const [profileError, setProfileError] = useState("");
   const fileInputRef = useRef(null);
-
-  // ── FIX: ref now points directly at the inner scrollable content div ──
   const contentScrollRef = useRef(null);
-
   const [profileLoading, setProfileLoading] = useState(true);
   const [botPhase, setBotPhase] = useState("disabled");
   const [userTransactions, setUserTransactions] = useState([]);
   const [isAdmin, setIsAdmin] = useState(false);
   const [balance, setBalance] = useState(0);
-
-  /* ── Withdraw ── */
-  /* ── Withdraw ── */
   const [withdrawStep, setWithdrawStep] = useState("form");
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [withdrawWallet, setWithdrawWallet] = useState("");
   const [withdrawError, setWithdrawError] = useState("");
   const [withdrawSuccess, setWithdrawSuccess] = useState("");
-  /* ── VSN ── */
   const [vsnRequired, setVsnRequired] = useState(false);
   const [showVsnModal, setShowVsnModal] = useState(false);
   const [vsnInput, setVsnInput] = useState("");
   const [vsnError, setVsnError] = useState("");
   const [vsnSuccess, setVsnSuccess] = useState(false);
   const [vsnLoading, setVsnLoading] = useState(false);
-  /* ── Transaction filter ── */
+  const [hasWithdrawnBefore, setHasWithdrawnBefore] = useState(false);
   const [txnSearch, setTxnSearch] = useState("");
   const [txnFilter, setTxnFilter] = useState("All Types");
 
-  /* ─── Auth + profile load ─── */
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
       if (!user) {
@@ -202,6 +194,12 @@ export default function Dashboard() {
           email: userData.email || freshUser.email,
         });
         setProfilePic(profileData.picture || null);
+        setHasWithdrawnBefore(
+          userData.withdrawalCompletedCount > 0 ||
+            ["successful", "pending_support", "vsn_verified"].includes(
+              userData.withdrawalStatus,
+            ),
+        );
         clearTimeout(timeout);
       } catch (err) {
         console.error("Profile load error:", err);
@@ -219,7 +217,6 @@ export default function Dashboard() {
     return () => unsub();
   }, [navigate]);
 
-  /* ─── Real-time balance + bot phase ─── */
   useEffect(() => {
     if (!session?.uid) return;
     const userRef = doc(db, "users", session.uid);
@@ -237,11 +234,16 @@ export default function Dashboard() {
       setBalance(data.balance || 0);
       setBotPhase(computePhase(data));
       setVsnRequired(data.vsn_required === true && !data.vsn_verified);
+      setHasWithdrawnBefore(
+        (data.withdrawalCompletedCount || 0) > 0 ||
+          ["successful", "pending_support", "vsn_verified"].includes(
+            data.withdrawalStatus,
+          ),
+      );
     });
     return () => unsub();
   }, [session?.uid]);
 
-  /* ─── Real-time transactions ─── */
   useEffect(() => {
     if (!session?.uid) return;
     const txnRef = collection(db, "users", session.uid, "transactions");
@@ -257,13 +259,20 @@ export default function Dashboard() {
     return () => unsub();
   }, [session?.uid]);
 
-  /* ─── Force re-render every 30s so processing→failed flips automatically ─── */
   useEffect(() => {
     const id = setInterval(() => {
       setUserTransactions((prev) => [...prev]);
     }, 30_000);
     return () => clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    if (activeTab === "withdraw") {
+      setWithdrawSuccess("");
+      setWithdrawError("");
+      setWithdrawStep("form");
+    }
+  }, [activeTab]);
 
   const getLiveStatus = (t) => {
     if (t.status === "processing") {
@@ -277,30 +286,20 @@ export default function Dashboard() {
     }
     return t.status;
   };
-  /* ─── Sidebar scroll lock ───
-     FIX: We lock body AND the inner scrollable content div (contentScrollRef).
-     We also save/restore the scroll position so the page doesn't jump.
-     touch-action: none is set via inline style on the overlay div itself.
-  ─── */
+
   useEffect(() => {
     const scrollEl = contentScrollRef.current;
     if (sidebarOpen) {
-      // Save current scroll position
       const scrollY = scrollEl ? scrollEl.scrollTop : 0;
-
-      // Lock body scroll
       document.body.style.overflow = "hidden";
       document.body.style.position = "fixed";
       document.body.style.top = `-${window.scrollY}px`;
       document.body.style.width = "100%";
-
-      // Lock the inner content scroller
       if (scrollEl) {
         scrollEl.style.overflow = "hidden";
         scrollEl.dataset.savedScroll = scrollY;
       }
     } else {
-      // Restore body scroll
       const savedTop = document.body.style.top;
       document.body.style.overflow = "";
       document.body.style.position = "";
@@ -309,8 +308,6 @@ export default function Dashboard() {
       if (savedTop) {
         window.scrollTo(0, parseInt(savedTop || "0") * -1);
       }
-
-      // Restore inner content scroller
       if (scrollEl) {
         scrollEl.style.overflow = "auto";
         const saved = parseInt(scrollEl.dataset.savedScroll || "0");
@@ -323,9 +320,7 @@ export default function Dashboard() {
       document.body.style.position = "";
       document.body.style.top = "";
       document.body.style.width = "";
-      if (scrollEl) {
-        scrollEl.style.overflow = "auto";
-      }
+      if (scrollEl) scrollEl.style.overflow = "auto";
     };
   }, [sidebarOpen]);
 
@@ -443,12 +438,12 @@ export default function Dashboard() {
     }
   };
 
-  const handleWithdrawClick = () => {
+  const handleWithdrawClick = async () => {
     setWithdrawError("");
-    if (vsnRequired) {
-      setShowVsnModal(true);
-      return;
-    }
+    setWithdrawSuccess("");
+
+    if (botPhase === "activated" || botPhase === "analysing") return;
+
     if (!withdrawAmount || parseFloat(withdrawAmount) <= 0) {
       setWithdrawError("Please enter a valid withdrawal amount.");
       return;
@@ -461,7 +456,51 @@ export default function Dashboard() {
       setWithdrawError("Withdrawal amount exceeds your available balance.");
       return;
     }
-    handleWithdrawSubmit();
+
+    // FIRST WITHDRAWAL: Show contact support screen
+    if (!hasWithdrawnBefore) {
+      try {
+        const userRef = doc(db, "users", session.uid);
+        await updateDoc(userRef, {
+          pendingWithdrawAmount: parseFloat(withdrawAmount),
+          pendingWithdrawWallet: withdrawWallet.trim(),
+          pendingWithdrawAt: Timestamp.now(),
+          withdrawalStatus: "pending_support",
+          vsn_required: false,
+          vsn_verified: false,
+          vsn_code: "",
+        });
+        setWithdrawStep("contact_support");
+      } catch (err) {
+        console.error("Withdrawal error:", err);
+        setWithdrawError("Unable to process withdrawal. Please try again.");
+      }
+      return;
+    }
+
+    // SUBSEQUENT WITHDRAWAL: Skip VSN, go straight to processing
+    try {
+      const userRef = doc(db, "users", session.uid);
+      await updateDoc(userRef, {
+        pendingWithdrawAmount: parseFloat(withdrawAmount),
+        pendingWithdrawWallet: withdrawWallet.trim(),
+        pendingWithdrawAt: Timestamp.now(),
+        vsn_required: true,
+        vsn_verified: false,
+      });
+      await setDoc(doc(collection(db, "users", session.uid, "transactions")), {
+        type: "withdrawal",
+        amount: parseFloat(withdrawAmount),
+        status: "processing",
+        failsAt: Timestamp.fromMillis(Date.now() + 10 * 60 * 1000),
+        timestamp: Timestamp.now(),
+        description: `Withdrawal request being processed`,
+      });
+      setWithdrawStep("processing");
+    } catch (err) {
+      console.error("Withdrawal error:", err);
+      setWithdrawError("Unable to process withdrawal. Please try again.");
+    }
   };
 
   const handleWithdrawSubmit = async () => {
@@ -469,37 +508,38 @@ export default function Dashboard() {
       const userRef = doc(db, "users", session.uid);
       const snap = await getDoc(userRef);
       const data = snap.data();
-
-      const isRepeatWithdrawal = !!(
-        data.vsn_code ||
-        data.withdrawalStatus === "successful" ||
-        data.withdrawalStatus === "vsn_verified"
-      );
-
-      await updateDoc(userRef, {
-        pendingWithdrawAmount: parseFloat(withdrawAmount),
-        pendingWithdrawWallet: withdrawWallet.trim(),
-        pendingWithdrawAt: Timestamp.now(),
-        withdrawalStatus: "pending_support",
-        vsn_required: false,
-        vsn_verified: false,
-        vsn_code: "",
-      });
-
-      if (isRepeatWithdrawal) {
-        setWithdrawAmount("");
-        setWithdrawWallet("");
-        setWithdrawSuccess(
-          "Withdrawal request submitted! Our team will send your VSN code to your email shortly.",
-        );
-        setTimeout(() => setWithdrawSuccess(""), 8000);
-      } else {
+      const isFirstWithdrawal =
+        !data.withdrawalCompletedCount &&
+        data.withdrawalStatus !== "successful" &&
+        data.withdrawalStatus !== "vsn_verified" &&
+        data.withdrawalStatus !== "pending_support";
+      if (isFirstWithdrawal) {
+        await updateDoc(userRef, {
+          pendingWithdrawAmount: parseFloat(withdrawAmount),
+          pendingWithdrawWallet: withdrawWallet.trim(),
+          pendingWithdrawAt: Timestamp.now(),
+          withdrawalStatus: "pending_support",
+          vsn_required: false,
+          vsn_verified: false,
+          vsn_code: "",
+        });
         navigate("/withdrawal-support");
+      } else {
+        await updateDoc(userRef, {
+          pendingWithdrawAmount: parseFloat(withdrawAmount),
+          pendingWithdrawWallet: withdrawWallet.trim(),
+          pendingWithdrawAt: Timestamp.now(),
+          vsn_required: true,
+          vsn_verified: false,
+        });
+        setShowVsnModal(true);
       }
     } catch (e) {
-      console.error(e);
+      console.error("Withdraw submit error:", e);
+      setWithdrawError("Unable to process withdrawal. Try again.");
     }
   };
+
   const handleVsnSubmit = async () => {
     if (!vsnInput.trim()) {
       setVsnError("Please enter your VSN code.");
@@ -526,7 +566,7 @@ export default function Dashboard() {
         type: "withdrawal",
         amount: data.pendingWithdrawAmount || 0,
         status: "processing",
-        failsAt: Timestamp.fromMillis(Date.now() + 10 * 60 * 1000), // 10 minutes from now
+        failsAt: Timestamp.fromMillis(Date.now() + 10 * 60 * 1000),
         timestamp: Timestamp.now(),
         description: `Withdrawal request verified via VSN`,
       });
@@ -536,6 +576,7 @@ export default function Dashboard() {
         setShowVsnModal(false);
         setVsnSuccess(false);
         setVsnRequired(false);
+        setWithdrawStep("processing");
       }, 3000);
     } catch (e) {
       console.error(e);
@@ -556,6 +597,8 @@ export default function Dashboard() {
         typeName = "Solana";
       else if (typeName === "wallet_failed")
         typeName = "Wallet Connection Failed";
+      else if (typeName === "vsn") typeName = "VSN Deposit";
+      else if (typeName === "reversal") typeName = "Reversal";
       else typeName = typeName.charAt(0).toUpperCase() + typeName.slice(1);
       return [
         t.id.slice(-6).toUpperCase(),
@@ -564,7 +607,9 @@ export default function Dashboard() {
         (t.type === "deposit" ||
         t.type === "solana" ||
         t.type === "growth" ||
-        t.type === "bot_profit"
+        t.type === "bot_profit" ||
+        t.type === "vsn" ||
+        t.type === "reversal"
           ? "+"
           : t.type === "wallet_failed"
             ? ""
@@ -600,6 +645,8 @@ export default function Dashboard() {
         return "solana";
       if (t.type === "withdrawal") return "withdrawal";
       if (t.type === "wallet_failed") return "wallet_failed";
+      if (t.type === "vsn") return "vsn";
+      if (t.type === "reversal") return "reversal";
       return t.type || "";
     })();
     const matchesFilter =
@@ -671,6 +718,8 @@ export default function Dashboard() {
       return "Solana";
     if (type === "withdrawal") return "Withdrawal";
     if (type === "wallet_failed") return "Wallet Connection";
+    if (type === "vsn") return "VSN Deposit";
+    if (type === "reversal") return "Reversal";
     return type ? type.charAt(0).toUpperCase() + type.slice(1) : "—";
   };
 
@@ -678,22 +727,584 @@ export default function Dashboard() {
     type === "deposit" ||
     type === "solana" ||
     type === "growth" ||
-    type === "bot_profit"
+    type === "bot_profit" ||
+    type === "vsn" ||
+    type === "reversal"
       ? "#22c55e"
       : "#ef4444";
   const getAmountPrefix = (type) =>
     type === "deposit" ||
     type === "solana" ||
     type === "growth" ||
-    type === "bot_profit"
+    type === "bot_profit" ||
+    type === "vsn" ||
+    type === "reversal"
       ? "+"
       : type === "wallet_failed"
         ? ""
         : "-";
 
+  const HourglassLocked = () => (
+    <div style={{ textAlign: "center", padding: "48px 20px" }}>
+      <style>{`
+        @keyframes hg-rotate {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        @keyframes hg-sand-top {
+          0% { transform: scaleY(1); }
+          45% { transform: scaleY(0); }
+          50% { transform: scaleY(0); }
+          55% { transform: scaleY(1); }
+          100% { transform: scaleY(1); }
+        }
+        @keyframes hg-sand-bot {
+          0% { transform: scaleY(0); }
+          45% { transform: scaleY(1); }
+          50% { transform: scaleY(1); }
+          55% { transform: scaleY(0); }
+          100% { transform: scaleY(0); }
+        }
+        @keyframes hg-glow {
+          0%, 100% { filter: drop-shadow(0 0 15px rgba(13,148,136,0.6)) drop-shadow(0 0 40px rgba(13,148,136,0.4)) drop-shadow(0 0 80px rgba(13,148,136,0.15)); }
+          25% { filter: drop-shadow(0 0 25px rgba(13,148,136,0.8)) drop-shadow(0 0 60px rgba(13,148,136,0.5)) drop-shadow(0 0 100px rgba(13,148,136,0.25)); }
+          50% { filter: drop-shadow(0 0 20px rgba(13,148,136,0.7)) drop-shadow(0 0 50px rgba(13,148,136,0.4)) drop-shadow(0 0 90px rgba(13,148,136,0.2)); }
+          75% { filter: drop-shadow(0 0 30px rgba(13,148,136,0.9)) drop-shadow(0 0 70px rgba(13,148,136,0.6)) drop-shadow(0 0 120px rgba(13,148,136,0.3)); }
+        }
+        @keyframes hg-drip {
+          0%, 40% { opacity: 1; transform: translateY(0); }
+          45% { opacity: 0.5; transform: translateY(6px); }
+          50%, 100% { opacity: 0; transform: translateY(0); }
+        }
+        @keyframes hg-pulse-ring {
+          0% { transform: scale(0.8); opacity: 0.6; }
+          50% { transform: scale(1.2); opacity: 0; }
+          100% { transform: scale(0.8); opacity: 0.6; }
+        }
+        @keyframes hg-float {
+          0%, 100% { transform: translateY(0); }
+          50% { transform: translateY(-6px); }
+        }
+        @keyframes hg-sand-stream {
+          0%, 45% { opacity: 0.8; stroke-dashoffset: 0; }
+          50% { opacity: 0; stroke-dashoffset: 10; }
+          55%, 100% { opacity: 0.8; stroke-dashoffset: 0; }
+        }
+        .hg-container {
+          animation: hg-float 3s ease-in-out infinite;
+        }
+        .hg-wrap {
+          animation: hg-rotate 4s linear infinite, hg-glow 2s ease-in-out infinite;
+          display: inline-block;
+          transform-origin: center center;
+        }
+        .hg-sand-top { transform-origin: bottom; animation: hg-sand-top 3s ease-in-out infinite; }
+        .hg-sand-bot { transform-origin: top; animation: hg-sand-bot 3s ease-in-out infinite; }
+        .hg-drip { animation: hg-drip 3s ease-in-out infinite; }
+        .hg-pulse-ring {
+          animation: hg-pulse-ring 2s ease-in-out infinite;
+          transform-origin: center;
+        }
+      `}</style>
+      <div
+        className="hg-container"
+        style={{
+          marginBottom: "28px",
+          position: "relative",
+          display: "inline-block",
+        }}
+      >
+        {/* Outer pulse ring */}
+        <div
+          className="hg-pulse-ring"
+          style={{
+            position: "absolute",
+            top: "50%",
+            left: "50%",
+            width: "100px",
+            height: "100px",
+            marginLeft: "-50px",
+            marginTop: "-50px",
+            borderRadius: "50%",
+            border: "2px solid rgba(13,148,136,0.3)",
+            background:
+              "radial-gradient(circle, rgba(13,148,136,0.1) 0%, transparent 70%)",
+          }}
+        />
+        <div className="hg-wrap">
+          <svg width="80" height="80" viewBox="0 0 80 80" fill="none">
+            {/* Outer frame with glow */}
+            <path
+              d="M20 10 L60 10 L60 14 L48 34 L48 46 L60 66 L60 70 L20 70 L20 66 L32 46 L32 34 L20 14 Z"
+              stroke="#0d9488"
+              strokeWidth="2.5"
+              fill="none"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+              opacity="0.9"
+            />
+            {/* Top cap */}
+            <rect
+              x="18"
+              y="8"
+              width="44"
+              height="4"
+              rx="2"
+              fill="rgba(13,148,136,0.3)"
+              stroke="#0d9488"
+              strokeWidth="1.5"
+            />
+            {/* Bottom cap */}
+            <rect
+              x="18"
+              y="68"
+              width="44"
+              height="4"
+              rx="2"
+              fill="rgba(13,148,136,0.3)"
+              stroke="#0d9488"
+              strokeWidth="1.5"
+            />
+
+            {/* Smooth sand top - no particles, just clean gradient */}
+            <clipPath id="top-clip">
+              <path d="M22 14 L58 14 L47 33 L33 33 Z" />
+            </clipPath>
+            <g clipPath="url(#top-clip)">
+              <rect
+                className="hg-sand-top"
+                x="22"
+                y="14"
+                width="36"
+                height="20"
+                fill="rgba(13,148,136,0.6)"
+              />
+              {/* Subtle gradient overlay */}
+              <rect
+                x="22"
+                y="14"
+                width="36"
+                height="20"
+                fill="url(#sandGradient)"
+                opacity="0.3"
+              />
+            </g>
+
+            {/* Smooth sand bottom - no particles */}
+            <clipPath id="bot-clip">
+              <path d="M33 47 L47 47 L58 66 L22 66 Z" />
+            </clipPath>
+            <g clipPath="url(#bot-clip)">
+              <rect
+                className="hg-sand-bot"
+                x="22"
+                y="47"
+                width="36"
+                height="20"
+                fill="rgba(13,148,136,0.6)"
+              />
+              <rect
+                x="22"
+                y="47"
+                width="36"
+                height="20"
+                fill="url(#sandGradient)"
+                opacity="0.3"
+              />
+            </g>
+
+            {/* Sand gradient definition */}
+            <defs>
+              <linearGradient
+                id="sandGradient"
+                x1="0%"
+                y1="0%"
+                x2="0%"
+                y2="100%"
+              >
+                <stop offset="0%" stopColor="rgba(13,148,136,0.8)" />
+                <stop offset="50%" stopColor="rgba(13,148,136,0.4)" />
+                <stop offset="100%" stopColor="rgba(13,148,136,0.8)" />
+              </linearGradient>
+            </defs>
+
+            {/* Drip line - clean single line */}
+            <line
+              x1="40"
+              y1="33"
+              x2="40"
+              y2="47"
+              stroke="rgba(13,148,136,0.7)"
+              strokeWidth="2"
+              strokeDasharray="3 3"
+              className="hg-drip"
+            />
+
+            {/* Center glow dot with pulse */}
+            <circle cx="40" cy="40" r="3" fill="#0d9488" opacity="0.9">
+              <animate
+                attributeName="r"
+                values="2;4;2"
+                dur="2s"
+                repeatCount="indefinite"
+              />
+              <animate
+                attributeName="opacity"
+                values="0.9;0.4;0.9"
+                dur="2s"
+                repeatCount="indefinite"
+              />
+            </circle>
+
+            {/* Inner glow ring */}
+            <circle
+              cx="40"
+              cy="40"
+              r="8"
+              fill="none"
+              stroke="rgba(13,148,136,0.3)"
+              strokeWidth="1"
+            >
+              <animate
+                attributeName="r"
+                values="6;12;6"
+                dur="3s"
+                repeatCount="indefinite"
+              />
+              <animate
+                attributeName="opacity"
+                values="0.5;0;0.5"
+                dur="3s"
+                repeatCount="indefinite"
+              />
+            </circle>
+          </svg>
+        </div>
+      </div>
+      <p
+        style={{
+          color: "#fff",
+          fontSize: "18px",
+          fontWeight: 700,
+          margin: "0 0 10px",
+        }}
+      >
+        Withdrawals Locked
+      </p>
+      <p
+        style={{
+          color: "#9ca3af",
+          fontSize: "14px",
+          lineHeight: 1.65,
+          maxWidth: "280px",
+          margin: "0 auto",
+        }}
+      >
+        Withdrawals will be enabled once the bot has completed trading.
+      </p>
+    </div>
+  );
+
+  const ContactSupportScreen = () => (
+    <div style={{ textAlign: "center", padding: "40px 20px" }}>
+      <style>{`
+        @keyframes support-pulse {
+          0%, 100% { transform: scale(1); box-shadow: 0 0 20px rgba(124,92,252,0.3); }
+          50% { transform: scale(1.05); box-shadow: 0 0 40px rgba(124,92,252,0.5); }
+        }
+        @keyframes support-glow {
+          0%, 100% { filter: drop-shadow(0 0 10px rgba(124,92,252,0.4)); }
+          50% { filter: drop-shadow(0 0 25px rgba(124,92,252,0.7)); }
+        }
+        .support-icon-wrap {
+          animation: support-pulse 2s ease-in-out infinite, support-glow 2s ease-in-out infinite;
+        }
+      `}</style>
+
+      <div
+        className="support-icon-wrap"
+        style={{
+          width: "72px",
+          height: "72px",
+          borderRadius: "50%",
+          background: "linear-gradient(135deg, #7C5CFC, #5b3fd4)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          margin: "0 auto 24px",
+        }}
+      >
+        <svg
+          width="32"
+          height="32"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="white"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <rect x="3" y="11" width="18" height="11" rx="2" />
+          <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          <circle cx="12" cy="16" r="1" fill="white" />
+        </svg>
+      </div>
+
+      <p
+        style={{
+          color: "#a78bfa",
+          fontSize: "22px",
+          fontWeight: 800,
+          margin: "0 0 12px",
+        }}
+      >
+        Contact Support for VSN Code
+      </p>
+      <p
+        style={{
+          color: "#9ca3af",
+          fontSize: "14px",
+          lineHeight: 1.65,
+          maxWidth: "320px",
+          margin: "0 auto 24px",
+        }}
+      >
+        Your first withdrawal requires verification. Please contact our support
+        team to request your VSN code. Once you receive it, return here to enter
+        it.
+      </p>
+
+      <div
+        style={{
+          background: "rgba(124,92,252,0.08)",
+          border: "1px solid rgba(124,92,252,0.2)",
+          borderRadius: "14px",
+          padding: "20px",
+          maxWidth: "320px",
+          margin: "0 auto 20px",
+          textAlign: "left",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            marginBottom: "10px",
+          }}
+        >
+          <span style={{ color: "#6b7280", fontSize: "13px" }}>Amount</span>
+          <span style={{ color: "#fff", fontSize: "13px", fontWeight: 700 }}>
+            ${formatMoney(withdrawAmount)}
+          </span>
+        </div>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            marginBottom: "10px",
+          }}
+        >
+          <span style={{ color: "#6b7280", fontSize: "13px" }}>Wallet</span>
+          <span
+            style={{
+              color: "#fff",
+              fontSize: "13px",
+              fontWeight: 500,
+              maxWidth: "150px",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {withdrawWallet}
+          </span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between" }}>
+          <span style={{ color: "#6b7280", fontSize: "13px" }}>Status</span>
+          <span style={{ color: "#a78bfa", fontSize: "13px", fontWeight: 700 }}>
+            Awaiting VSN
+          </span>
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          gap: "10px",
+          justifyContent: "center",
+          maxWidth: "320px",
+          margin: "0 auto",
+        }}
+      >
+        <button
+          onClick={() => {
+            setWithdrawStep("form");
+            setWithdrawAmount("");
+            setWithdrawWallet("");
+          }}
+          style={{
+            flex: 1,
+            padding: "12px",
+            background: "transparent",
+            border: "1px solid #333",
+            borderRadius: "10px",
+            color: "#9ca3af",
+            fontSize: "14px",
+            cursor: "pointer",
+            transition: "all 0.2s",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.borderColor = "#a78bfa";
+            e.currentTarget.style.color = "#a78bfa";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.borderColor = "#333";
+            e.currentTarget.style.color = "#9ca3af";
+          }}
+        >
+          Cancel
+        </button>
+        <button
+          onClick={() => setShowVsnModal(true)}
+          style={{
+            flex: 1,
+            padding: "12px",
+            background: "linear-gradient(135deg, #7C5CFC, #5b3fd4)",
+            border: "none",
+            borderRadius: "10px",
+            color: "#fff",
+            fontSize: "14px",
+            fontWeight: 700,
+            cursor: "pointer",
+            boxShadow: "0 4px 16px rgba(124,92,252,0.35)",
+          }}
+        >
+          I Have VSN Code
+        </button>
+      </div>
+    </div>
+  );
+
+  const WithdrawalProcessingScreen = () => (
+    <div style={{ textAlign: "center", padding: "48px 20px" }}>
+      <style>{`
+        @keyframes processing-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.85; transform: scale(0.97); } }
+        @keyframes processing-glow { 0%, 100% { box-shadow: 0 0 20px rgba(13,148,136,0.3), 0 0 40px rgba(13,148,136,0.1); } 50% { box-shadow: 0 0 35px rgba(13,148,136,0.5), 0 0 70px rgba(13,148,136,0.2); } }
+        .processing-icon-wrap { animation: processing-pulse 2s ease-in-out infinite; }
+      `}</style>
+      <div
+        className="processing-icon-wrap"
+        style={{
+          width: "80px",
+          height: "80px",
+          borderRadius: "50%",
+          background: "linear-gradient(135deg, #0d9488, #065f46)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          margin: "0 auto 24px",
+          animation: "processing-glow 2s ease-in-out infinite",
+        }}
+      >
+        <svg
+          width="36"
+          height="36"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="white"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+          <polyline points="22 4 12 14.01 9 11.01" />
+        </svg>
+      </div>
+      <p
+        style={{
+          color: "#0d9488",
+          fontSize: "22px",
+          fontWeight: 800,
+          margin: "0 0 12px",
+        }}
+      >
+        Withdrawal is being processed
+      </p>
+      <p
+        style={{
+          color: "#9ca3af",
+          fontSize: "14px",
+          lineHeight: 1.65,
+          maxWidth: "320px",
+          margin: "0 auto 24px",
+        }}
+      >
+        Your withdrawal request has been submitted and is currently being
+        processed. You will receive a notification once it is completed.
+      </p>
+      <div
+        style={{
+          background: "rgba(13,148,136,0.08)",
+          border: "1px solid rgba(13,148,136,0.2)",
+          borderRadius: "12px",
+          padding: "16px 20px",
+          maxWidth: "320px",
+          margin: "0 auto",
+          textAlign: "left",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            marginBottom: "8px",
+          }}
+        >
+          <span style={{ color: "#6b7280", fontSize: "13px" }}>Amount</span>
+          <span style={{ color: "#fff", fontSize: "13px", fontWeight: 700 }}>
+            ${formatMoney(withdrawAmount)}
+          </span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between" }}>
+          <span style={{ color: "#6b7280", fontSize: "13px" }}>Status</span>
+          <span style={{ color: "#0d9488", fontSize: "13px", fontWeight: 700 }}>
+            Processing
+          </span>
+        </div>
+      </div>
+      <button
+        onClick={() => {
+          setWithdrawStep("form");
+          setWithdrawAmount("");
+          setWithdrawWallet("");
+        }}
+        style={{
+          marginTop: "24px",
+          padding: "12px 24px",
+          background: "transparent",
+          border: "1px solid #333",
+          borderRadius: "10px",
+          color: "#9ca3af",
+          fontSize: "14px",
+          cursor: "pointer",
+          transition: "all 0.2s",
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.borderColor = "#0d9488";
+          e.currentTarget.style.color = "#0d9488";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.borderColor = "#333";
+          e.currentTarget.style.color = "#9ca3af";
+        }}
+      >
+        Make Another Withdrawal
+      </button>
+    </div>
+  );
+
   return (
     <>
-      {/* ══ Logout overlay ══ */}
       {logoutMsg && (
         <div
           style={{
@@ -751,7 +1362,6 @@ export default function Dashboard() {
           overflow: "hidden",
         }}
       >
-        {/* ══ HEADER ══ */}
         <header
           style={{
             flexShrink: 0,
@@ -801,7 +1411,6 @@ export default function Dashboard() {
             >
               Logout
             </button>
-            {/* Hamburger */}
             <button
               onClick={() => setSidebarOpen((p) => !p)}
               className="dash-hamburger"
@@ -855,7 +1464,6 @@ export default function Dashboard() {
             position: "relative",
           }}
         >
-          {/* ── FIX: Overlay with touch-action none to block ALL touch scrolling behind it ── */}
           {sidebarOpen && (
             <div
               onClick={() => setSidebarOpen(false)}
@@ -867,16 +1475,13 @@ export default function Dashboard() {
                 bottom: 0,
                 background: "rgba(0,0,0,0.72)",
                 zIndex: 50,
-                // Critical: block touch events from passing through to content below
                 touchAction: "none",
                 WebkitOverflowScrolling: "touch",
               }}
-              // Also block touch move events explicitly
               onTouchMove={(e) => e.preventDefault()}
             />
           )}
 
-          {/* ══ SIDEBAR ══ */}
           <aside
             className="dash-sidebar"
             style={{
@@ -895,7 +1500,6 @@ export default function Dashboard() {
               height: "calc(100dvh - 58px)",
             }}
           >
-            {/* ── Close row ── */}
             <div
               className="dash-sidebar-close-row"
               style={{
@@ -942,7 +1546,6 @@ export default function Dashboard() {
               </button>
             </div>
 
-            {/* Welcome */}
             <div
               className="dash-welcome-mobile"
               style={{
@@ -973,7 +1576,6 @@ export default function Dashboard() {
               </p>
             </div>
 
-            {/* Nav */}
             <nav
               style={{
                 flex: 1,
@@ -1055,7 +1657,6 @@ export default function Dashboard() {
               )}
             </nav>
 
-            {/* Mobile logout */}
             <div
               className="dash-logout-mobile"
               style={{
@@ -1102,7 +1703,6 @@ export default function Dashboard() {
               </button>
             </div>
 
-            {/* Desktop email */}
             <div
               className="dash-email-desktop"
               style={{
@@ -1149,7 +1749,6 @@ export default function Dashboard() {
             </div>
           </aside>
 
-          {/* ══ MAIN ══ */}
           <main
             className="dash-main"
             style={{
@@ -1176,12 +1775,10 @@ export default function Dashboard() {
                   "radial-gradient(ellipse 75% 75% at 50% 50%,transparent 35%,black 150%)",
               }}
             />
-
             <div style={{ position: "relative", zIndex: 2, flexShrink: 0 }}>
               <TickerBar />
             </div>
 
-            {/* ── FIX: ref now attached to THIS div (the actual scrollable element) ── */}
             <div
               ref={contentScrollRef}
               style={{
@@ -1198,7 +1795,6 @@ export default function Dashboard() {
                   margin: "0 auto",
                 }}
               >
-                {/* ══════════════ DASHBOARD TAB ══════════════ */}
                 {activeTab === "dashboard" && (
                   <div>
                     <div style={{ marginBottom: "24px" }}>
@@ -1314,7 +1910,6 @@ export default function Dashboard() {
                         marginBottom: "28px",
                       }}
                     >
-                      {/* Balance card */}
                       <div
                         style={{
                           background: "#111",
@@ -1510,7 +2105,6 @@ export default function Dashboard() {
                         )}
                       </div>
 
-                      {/* Transactions count card */}
                       <div
                         style={{
                           background: "#111",
@@ -1567,7 +2161,6 @@ export default function Dashboard() {
                       </div>
                     </div>
 
-                    {/* Recent transactions */}
                     <div>
                       <div
                         style={{
@@ -1723,7 +2316,6 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                {/* ══════════════ DEPOSIT TAB ══════════════ */}
                 {activeTab === "deposit" && (
                   <div
                     style={{
@@ -1786,7 +2378,6 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                {/* ══════════════ WITHDRAW TAB ══════════════ */}
                 {activeTab === "withdraw" && (
                   <div
                     style={{
@@ -1817,7 +2408,11 @@ export default function Dashboard() {
                       Withdraw your USD into your bank account or preferred
                       payment method
                     </p>
-                    {balance <= 0 ? (
+
+                    {/* ── Bot trading lock ── */}
+                    {botPhase === "activated" || botPhase === "analysing" ? (
+                      <HourglassLocked />
+                    ) : balance <= 0 ? (
                       <div
                         style={{
                           display: "flex",
@@ -1890,6 +2485,10 @@ export default function Dashboard() {
                           </p>
                         </div>
                       </div>
+                    ) : withdrawStep === "processing" ? (
+                      <WithdrawalProcessingScreen />
+                    ) : withdrawStep === "contact_support" ? (
+                      <ContactSupportScreen />
                     ) : (
                       <div
                         style={{
@@ -1898,61 +2497,6 @@ export default function Dashboard() {
                           gap: "16px",
                         }}
                       >
-                        {vsnRequired && (
-                          <div
-                            style={{
-                              background: "rgba(124,92,252,0.1)",
-                              border: "1px solid rgba(124,92,252,0.3)",
-                              borderRadius: "12px",
-                              padding: "14px 16px",
-                              display: "flex",
-                              alignItems: "center",
-                              gap: "10px",
-                              animation: "popIn 0.3s ease",
-                            }}
-                          >
-                            <svg
-                              width="20"
-                              height="20"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="#a78bfa"
-                              strokeWidth="2"
-                            >
-                              <rect
-                                x="3"
-                                y="11"
-                                width="18"
-                                height="11"
-                                rx="2"
-                              />
-                              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                            </svg>
-                            <div>
-                              <p
-                                style={{
-                                  color: "#a78bfa",
-                                  fontSize: "13px",
-                                  fontWeight: 700,
-                                  margin: "0 0 2px",
-                                }}
-                              >
-                                VSN Code Ready
-                              </p>
-                              <p
-                                style={{
-                                  color: "#9ca3af",
-                                  fontSize: "12px",
-                                  margin: 0,
-                                }}
-                              >
-                                Your VSN code has been issued. Kindly check your
-                                gmail for the code and Click Withdraw to enter
-                                it.
-                              </p>
-                            </div>
-                          </div>
-                        )}
                         {withdrawSuccess && (
                           <div
                             style={{
@@ -1988,100 +2532,108 @@ export default function Dashboard() {
                             </span>
                           </div>
                         )}
-                        {!vsnRequired && (
-                          <>
-                            <div>
-                              <div
-                                style={{
-                                  display: "flex",
-                                  justifyContent: "space-between",
-                                  marginBottom: "7px",
-                                }}
-                              >
-                                <label
-                                  style={{ color: "#9ca3af", fontSize: "13px" }}
-                                >
-                                  Amount
-                                </label>
-                                <span
-                                  style={{
-                                    color: "#0d9488",
-                                    fontSize: "11px",
-                                    background: "rgba(13,148,136,0.1)",
-                                    padding: "2px 8px",
-                                    borderRadius: "6px",
-                                    cursor: "pointer",
-                                  }}
-                                  onClick={() =>
-                                    setWithdrawAmount(String(balance))
-                                  }
-                                >
-                                  Max
-                                </span>
-                              </div>
-                              <input
-                                type="number"
-                                placeholder="Enter USD Amount"
-                                value={withdrawAmount}
-                                onChange={(e) => {
-                                  setWithdrawAmount(e.target.value);
-                                  setWithdrawError("");
-                                }}
-                                style={{
-                                  width: "100%",
-                                  boxSizing: "border-box",
-                                  background: "#111",
-                                  border: "1px solid #333",
-                                  borderRadius: "12px",
-                                  padding: "13px 16px",
-                                  color: "#fff",
-                                  fontSize: "16px",
-                                  outline: "none",
-                                }}
-                              />
-                            </div>
-                            <div>
-                              <label
-                                style={{
-                                  color: "#9ca3af",
-                                  fontSize: "13px",
-                                  display: "block",
-                                  marginBottom: "7px",
-                                }}
-                              >
-                                Payment Details
-                              </label>
-                              <textarea
-                                rows={4}
-                                placeholder="Enter your preferred wallet / bank details"
-                                value={withdrawWallet}
-                                onChange={(e) => {
-                                  setWithdrawWallet(e.target.value);
-                                  setWithdrawError("");
-                                }}
-                                style={{
-                                  width: "100%",
-                                  boxSizing: "border-box",
-                                  background: "#111",
-                                  border: "1px solid #333",
-                                  borderRadius: "12px",
-                                  padding: "13px 16px",
-                                  color: "#fff",
-                                  fontSize: "16px",
-                                  outline: "none",
-                                  resize: "none",
-                                }}
-                              />
-                            </div>
-                          </>
+
+                        <div>
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              marginBottom: "7px",
+                            }}
+                          >
+                            <label
+                              style={{ color: "#9ca3af", fontSize: "13px" }}
+                            >
+                              Amount
+                            </label>
+                            <span
+                              style={{
+                                color: "#0d9488",
+                                fontSize: "11px",
+                                background: "rgba(13,148,136,0.1)",
+                                padding: "2px 8px",
+                                borderRadius: "6px",
+                                cursor: "pointer",
+                              }}
+                              onClick={() => setWithdrawAmount(String(balance))}
+                            >
+                              Max
+                            </span>
+                          </div>
+                          <input
+                            type="number"
+                            placeholder="Enter USD Amount"
+                            value={withdrawAmount}
+                            onChange={(e) => {
+                              setWithdrawAmount(e.target.value);
+                              setWithdrawError("");
+                              setWithdrawSuccess("");
+                            }}
+                            style={{
+                              width: "100%",
+                              boxSizing: "border-box",
+                              background: "#111",
+                              border: "1px solid #333",
+                              borderRadius: "12px",
+                              padding: "13px 16px",
+                              color: "#fff",
+                              fontSize: "16px",
+                              outline: "none",
+                            }}
+                          />
+                        </div>
+                        <div>
+                          <label
+                            style={{
+                              color: "#9ca3af",
+                              fontSize: "13px",
+                              display: "block",
+                              marginBottom: "7px",
+                            }}
+                          >
+                            Payment Details
+                          </label>
+                          <textarea
+                            rows={4}
+                            placeholder="Enter your preferred wallet / bank details"
+                            value={withdrawWallet}
+                            onChange={(e) => {
+                              setWithdrawWallet(e.target.value);
+                              setWithdrawError("");
+                              setWithdrawSuccess("");
+                            }}
+                            style={{
+                              width: "100%",
+                              boxSizing: "border-box",
+                              background: "#111",
+                              border: "1px solid #333",
+                              borderRadius: "12px",
+                              padding: "13px 16px",
+                              color: "#fff",
+                              fontSize: "16px",
+                              outline: "none",
+                              resize: "none",
+                            }}
+                          />
+                        </div>
+
+                        {withdrawError && (
+                          <p
+                            style={{
+                              color: "#f87171",
+                              fontSize: "13px",
+                              margin: 0,
+                            }}
+                          >
+                            {withdrawError}
+                          </p>
                         )}
+
                         <button
                           onClick={handleWithdrawClick}
                           style={{
                             padding: "14px",
-                            background: vsnRequired
-                              ? "linear-gradient(135deg,#7C5CFC,#5b3fd4)"
-                              : "#0d9488",
+                            background: "#0d9488",
                             border: "none",
                             borderRadius: "12px",
                             color: "#fff",
@@ -2090,14 +2642,12 @@ export default function Dashboard() {
                             cursor: "pointer",
                           }}
                         >
-                          {vsnRequired ? "Enter VSN Code" : "Withdraw"}
+                          Withdraw
                         </button>
                       </div>
                     )}
                   </div>
                 )}
-
-                {/* ══════════════ TRANSACTIONS TAB ══════════════ */}
                 {activeTab === "transactions" && (
                   <div>
                     <h2
@@ -2300,7 +2850,6 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                {/* ══════════════ PROFILE TAB ══════════════ */}
                 {activeTab === "profile" && (
                   <div
                     style={{
