@@ -636,7 +636,7 @@ export default function Dashboard() {
       case "analysing":
         return {
           text: "OmniDev Analysing Market",
-          subText: "Please wait while we analyze market conditions",
+          subText: "Please wait while OmniDev analyzes the market conditions",
           dotColor: "#0d9488",
           bgColor: "rgba(13,148,136,0.1)",
           borderColor: "rgba(13,148,136,0.3)",
