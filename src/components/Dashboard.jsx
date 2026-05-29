@@ -627,7 +627,7 @@ export default function Dashboard() {
       case "activated":
         return {
           text: "Bot Trading Activated",
-          subText: "OmniDev is actively trading on your behalf",
+          subText: "OmniDev is actively analysing the market",
           dotColor: "#22c55e",
           bgColor: "rgba(34,197,94,0.1)",
           borderColor: "rgba(34,197,94,0.3)",
