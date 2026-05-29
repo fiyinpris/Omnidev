@@ -2341,9 +2341,6 @@ export default function AdminDashboard() {
 
           <div className="card">
             <div className="card-header">
-              <span className="card-badge" style={{ background: "#7C5CFC" }}>
-                🔐
-              </span>
               <h2 className="card-title">Generate VSN Code</h2>
             </div>
             <div className="info-banner info-banner-purple">
