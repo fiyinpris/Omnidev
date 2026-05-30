@@ -101,10 +101,9 @@ export default function Signup() {
       });
 
       await sendEmailVerification(user, {
-        url: "https://omnidev-two.vercel.app/login?verified=true",
+        url: "https://www.omnidevpro.com/verify-email",
         handleCodeInApp: false,
       });
-
       setVerificationSent(true);
     } catch (err) {
       console.error("SIGNUP ERROR:", err.code, err.message);
