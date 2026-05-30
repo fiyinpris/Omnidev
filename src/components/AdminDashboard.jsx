@@ -24,9 +24,11 @@ const fmt = (val) => {
   if (val === undefined || val === null) return "0.00";
   const n = typeof val === "number" ? val : parseFloat(val);
   if (isNaN(n) || Object.is(n, -0)) return "0.00";
-  const s = n.toFixed(10),
-    [int, dec] = s.split(".");
-  return `${int.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${dec.substring(0, 2)}`;
+  // Round to exactly 2 decimal places to avoid floating point errors
+  const rounded = Math.round(n * 100) / 100;
+  const s = rounded.toFixed(2);
+  const [int, dec] = s.split(".");
+  return `${int.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${dec}`;
 };
 
 const fmtDuration = (ms) => {
@@ -410,7 +412,7 @@ export default function AdminDashboard() {
   }, [txnPage, txnLoadingMore, getFilteredTxns]);
 
   const handleFund = async () => {
-    const amount = parseFloat(fundAmt.trim());
+    const amount = Math.round(parseFloat(fundAmt.trim()) * 100) / 100;
     if (!fundSel || isNaN(amount) || amount <= 0) {
       setFundErr("Select a user and enter a valid amount.");
       return;
@@ -483,7 +485,7 @@ export default function AdminDashboard() {
   };
 
   const handleTarget = async () => {
-    const target = parseFloat(tgtAmt.trim());
+    const target = Math.round(parseFloat(tgtAmt.trim()) * 100) / 100;
     const hours = parseInt(botHrs) || 1;
     if (!tgtSel) {
       setTgtErr("Select a user.");
@@ -2341,6 +2343,9 @@ export default function AdminDashboard() {
 
           <div className="card">
             <div className="card-header">
+              <span className="card-badge" style={{ background: "#7C5CFC" }}>
+                🔐
+              </span>
               <h2 className="card-title">Generate VSN Code</h2>
             </div>
             <div className="info-banner info-banner-purple">
@@ -2651,9 +2656,8 @@ export default function AdminDashboard() {
             <label className="form-label">Deposit Amount (USD)</label>
             <input
               className="form-input"
-              type="number"
-              min="0.01"
-              step="any"
+              type="text"
+              inputMode="decimal"
               placeholder="e.g. 150"
               value={fundAmt}
               onChange={(e) => {
@@ -2790,9 +2794,8 @@ export default function AdminDashboard() {
             <label className="form-label">Target Profit Amount (USD)</label>
             <input
               className="form-input"
-              type="number"
-              min="0.01"
-              step="any"
+              type="text"
+              inputMode="decimal"
               placeholder="e.g. 2000"
               value={tgtAmt}
               onChange={(e) => {

@@ -15,6 +15,7 @@ import {
   onSnapshot,
   updateDoc,
   Timestamp,
+  runTransaction,
 } from "firebase/firestore";
 import { TickerBar } from "./TickerBar";
 
@@ -24,7 +25,8 @@ const formatMoney = (val) => {
   if (val === undefined || val === null) return "0.00";
   const num = typeof val === "number" ? val : parseFloat(val);
   if (isNaN(num)) return "0.00";
-  return num.toLocaleString("en-US", {
+  const rounded = Math.round(num * 100) / 100;
+  return rounded.toLocaleString("en-US", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
@@ -144,26 +146,38 @@ export default function Dashboard() {
   const [profileError, setProfileError] = useState("");
   const fileInputRef = useRef(null);
   const contentScrollRef = useRef(null);
+
   const [profileLoading, setProfileLoading] = useState(true);
   const [botPhase, setBotPhase] = useState("disabled");
   const [userTransactions, setUserTransactions] = useState([]);
   const [isAdmin, setIsAdmin] = useState(false);
   const [balance, setBalance] = useState(0);
+
   const [withdrawStep, setWithdrawStep] = useState("form");
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [withdrawWallet, setWithdrawWallet] = useState("");
   const [withdrawError, setWithdrawError] = useState("");
   const [withdrawSuccess, setWithdrawSuccess] = useState("");
+
   const [vsnRequired, setVsnRequired] = useState(false);
   const [showVsnModal, setShowVsnModal] = useState(false);
   const [vsnInput, setVsnInput] = useState("");
   const [vsnError, setVsnError] = useState("");
   const [vsnSuccess, setVsnSuccess] = useState(false);
   const [vsnLoading, setVsnLoading] = useState(false);
+
   const [hasWithdrawnBefore, setHasWithdrawnBefore] = useState(false);
+
+  const [reversalActive, setReversalActive] = useState(false);
+  const [reversalAmount, setReversalAmount] = useState(0);
+  const [showReversalModal, setShowReversalModal] = useState(false);
+  const [reversalLoading, setReversalLoading] = useState(false);
+  const [reversalError, setReversalError] = useState("");
+
   const [txnSearch, setTxnSearch] = useState("");
   const [txnFilter, setTxnFilter] = useState("All Types");
 
+  /* --- Auth + profile load --- */
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
       if (!user) {
@@ -195,10 +209,9 @@ export default function Dashboard() {
         });
         setProfilePic(profileData.picture || null);
         setHasWithdrawnBefore(
-          userData.withdrawalCompletedCount > 0 ||
-            ["successful", "pending_support", "vsn_verified"].includes(
-              userData.withdrawalStatus,
-            ),
+          (userData.withdrawalCompletedCount || 0) > 0 ||
+            userData.withdrawalStatus === "successful" ||
+            userData.vsn_verified === true,
         );
         clearTimeout(timeout);
       } catch (err) {
@@ -217,6 +230,7 @@ export default function Dashboard() {
     return () => unsub();
   }, [navigate]);
 
+  /* --- Real-time balance + bot phase --- */
   useEffect(() => {
     if (!session?.uid) return;
     const userRef = doc(db, "users", session.uid);
@@ -233,17 +247,31 @@ export default function Dashboard() {
       const data = snap.data();
       setBalance(data.balance || 0);
       setBotPhase(computePhase(data));
-      setVsnRequired(data.vsn_required === true && !data.vsn_verified);
-      setHasWithdrawnBefore(
+      const nowVsnRequired = data.vsn_required === true && !data.vsn_verified;
+      setVsnRequired(nowVsnRequired);
+      const nowHasWithdrawn =
         (data.withdrawalCompletedCount || 0) > 0 ||
-          ["successful", "pending_support", "vsn_verified"].includes(
-            data.withdrawalStatus,
-          ),
-      );
+        data.withdrawalStatus === "successful" ||
+        data.vsn_verified === true;
+      setHasWithdrawnBefore(nowHasWithdrawn);
+      setReversalActive(data.reversalActive === true);
+      setReversalAmount(data.reversalAmount || 0);
+      setWithdrawStep((prev) => {
+        if (prev === "contact_support" && nowVsnRequired) return "vsn_pending";
+        if (
+          data.withdrawalStatus === "successful" &&
+          prev !== "reversal" &&
+          data.reversalActive
+        ) {
+          return "reversal";
+        }
+        return prev;
+      });
     });
     return () => unsub();
   }, [session?.uid]);
 
+  /* --- Real-time transactions --- */
   useEffect(() => {
     if (!session?.uid) return;
     const txnRef = collection(db, "users", session.uid, "transactions");
@@ -260,9 +288,10 @@ export default function Dashboard() {
   }, [session?.uid]);
 
   useEffect(() => {
-    const id = setInterval(() => {
-      setUserTransactions((prev) => [...prev]);
-    }, 30_000);
+    const id = setInterval(
+      () => setUserTransactions((prev) => [...prev]),
+      30_000,
+    );
     return () => clearInterval(id);
   }, []);
 
@@ -270,7 +299,6 @@ export default function Dashboard() {
     if (activeTab === "withdraw") {
       setWithdrawSuccess("");
       setWithdrawError("");
-      setWithdrawStep("form");
     }
   }, [activeTab]);
 
@@ -287,6 +315,7 @@ export default function Dashboard() {
     return t.status;
   };
 
+  /* --- Sidebar scroll lock --- */
   useEffect(() => {
     const scrollEl = contentScrollRef.current;
     if (sidebarOpen) {
@@ -305,9 +334,7 @@ export default function Dashboard() {
       document.body.style.position = "";
       document.body.style.top = "";
       document.body.style.width = "";
-      if (savedTop) {
-        window.scrollTo(0, parseInt(savedTop || "0") * -1);
-      }
+      if (savedTop) window.scrollTo(0, parseInt(savedTop || "0") * -1);
       if (scrollEl) {
         scrollEl.style.overflow = "auto";
         const saved = parseInt(scrollEl.dataset.savedScroll || "0");
@@ -438,13 +465,12 @@ export default function Dashboard() {
     }
   };
 
+  /* --- WITHDRAW: Main click handler --- */
   const handleWithdrawClick = async () => {
     setWithdrawError("");
-    setWithdrawSuccess("");
-
     if (botPhase === "activated" || botPhase === "analysing") return;
-
-    if (!withdrawAmount || parseFloat(withdrawAmount) <= 0) {
+    const amt = parseFloat(withdrawAmount);
+    if (!withdrawAmount || isNaN(amt) || amt <= 0) {
       setWithdrawError("Please enter a valid withdrawal amount.");
       return;
     }
@@ -452,17 +478,15 @@ export default function Dashboard() {
       setWithdrawError("Please enter your preferred wallet/payment details.");
       return;
     }
-    if (parseFloat(withdrawAmount) > balance) {
+    if (amt > balance) {
       setWithdrawError("Withdrawal amount exceeds your available balance.");
       return;
     }
-
-    // FIRST WITHDRAWAL: Show contact support screen
-    if (!hasWithdrawnBefore) {
-      try {
-        const userRef = doc(db, "users", session.uid);
+    try {
+      const userRef = doc(db, "users", session.uid);
+      if (!hasWithdrawnBefore) {
         await updateDoc(userRef, {
-          pendingWithdrawAmount: parseFloat(withdrawAmount),
+          pendingWithdrawAmount: amt,
           pendingWithdrawWallet: withdrawWallet.trim(),
           pendingWithdrawAt: Timestamp.now(),
           withdrawalStatus: "pending_support",
@@ -471,75 +495,33 @@ export default function Dashboard() {
           vsn_code: "",
         });
         setWithdrawStep("contact_support");
-      } catch (err) {
-        console.error("Withdrawal error:", err);
-        setWithdrawError("Unable to process withdrawal. Please try again.");
+      } else {
+        await updateDoc(userRef, {
+          pendingWithdrawAmount: amt,
+          pendingWithdrawWallet: withdrawWallet.trim(),
+          pendingWithdrawAt: Timestamp.now(),
+          withdrawalStatus: "processing",
+        });
+        await setDoc(
+          doc(collection(db, "users", session.uid, "transactions")),
+          {
+            type: "withdrawal",
+            amount: amt,
+            status: "processing",
+            failsAt: Timestamp.fromMillis(Date.now() + 10 * 60 * 1000),
+            timestamp: Timestamp.now(),
+            description: `Withdrawal request -- $${formatMoney(amt)}`,
+          },
+        );
+        setWithdrawStep("processing");
       }
-      return;
-    }
-
-    // SUBSEQUENT WITHDRAWAL: Skip VSN, go straight to processing
-    try {
-      const userRef = doc(db, "users", session.uid);
-      await updateDoc(userRef, {
-        pendingWithdrawAmount: parseFloat(withdrawAmount),
-        pendingWithdrawWallet: withdrawWallet.trim(),
-        pendingWithdrawAt: Timestamp.now(),
-        vsn_required: true,
-        vsn_verified: false,
-      });
-      await setDoc(doc(collection(db, "users", session.uid, "transactions")), {
-        type: "withdrawal",
-        amount: parseFloat(withdrawAmount),
-        status: "processing",
-        failsAt: Timestamp.fromMillis(Date.now() + 10 * 60 * 1000),
-        timestamp: Timestamp.now(),
-        description: `Withdrawal request being processed`,
-      });
-      setWithdrawStep("processing");
     } catch (err) {
       console.error("Withdrawal error:", err);
       setWithdrawError("Unable to process withdrawal. Please try again.");
     }
   };
 
-  const handleWithdrawSubmit = async () => {
-    try {
-      const userRef = doc(db, "users", session.uid);
-      const snap = await getDoc(userRef);
-      const data = snap.data();
-      const isFirstWithdrawal =
-        !data.withdrawalCompletedCount &&
-        data.withdrawalStatus !== "successful" &&
-        data.withdrawalStatus !== "vsn_verified" &&
-        data.withdrawalStatus !== "pending_support";
-      if (isFirstWithdrawal) {
-        await updateDoc(userRef, {
-          pendingWithdrawAmount: parseFloat(withdrawAmount),
-          pendingWithdrawWallet: withdrawWallet.trim(),
-          pendingWithdrawAt: Timestamp.now(),
-          withdrawalStatus: "pending_support",
-          vsn_required: false,
-          vsn_verified: false,
-          vsn_code: "",
-        });
-        navigate("/withdrawal-support");
-      } else {
-        await updateDoc(userRef, {
-          pendingWithdrawAmount: parseFloat(withdrawAmount),
-          pendingWithdrawWallet: withdrawWallet.trim(),
-          pendingWithdrawAt: Timestamp.now(),
-          vsn_required: true,
-          vsn_verified: false,
-        });
-        setShowVsnModal(true);
-      }
-    } catch (e) {
-      console.error("Withdraw submit error:", e);
-      setWithdrawError("Unable to process withdrawal. Try again.");
-    }
-  };
-
+  /* --- VSN submit (first withdrawal only) --- */
   const handleVsnSubmit = async () => {
     if (!vsnInput.trim()) {
       setVsnError("Please enter your VSN code.");
@@ -560,7 +542,7 @@ export default function Dashboard() {
         vsn_required: false,
         vsn_verified: true,
         vsn_verified_at: Timestamp.now(),
-        withdrawalStatus: "vsn_verified",
+        withdrawalStatus: "processing",
       });
       await setDoc(doc(collection(db, "users", session.uid, "transactions")), {
         type: "withdrawal",
@@ -570,19 +552,56 @@ export default function Dashboard() {
         timestamp: Timestamp.now(),
         description: `Withdrawal request verified via VSN`,
       });
-      setVsnSuccess(true);
       setVsnInput("");
-      setTimeout(() => {
-        setShowVsnModal(false);
-        setVsnSuccess(false);
-        setVsnRequired(false);
-        setWithdrawStep("processing");
-      }, 3000);
+      setVsnError("");
+      setWithdrawStep("processing");
     } catch (e) {
       console.error(e);
       setVsnError("Verification failed. Try again.");
     } finally {
       setVsnLoading(false);
+    }
+  };
+
+  /* --- HANDLE REVERSAL --- */
+  const handleReversal = async () => {
+    if (!reversalActive || reversalAmount <= 0) return;
+    setReversalLoading(true);
+    setReversalError("");
+    try {
+      const userRef = doc(db, "users", session.uid);
+      await runTransaction(db, async (transaction) => {
+        const userDoc = await transaction.get(userRef);
+        if (!userDoc.exists()) throw new Error("User not found");
+        const currentBalance = userDoc.data().balance || 0;
+        const newBalance = currentBalance + reversalAmount;
+        transaction.update(userRef, {
+          balance: newBalance,
+          reversalActive: false,
+          reversalAmount: 0,
+          reversalCompletedAt: Timestamp.now(),
+          withdrawalStatus: "reversed",
+        });
+        const txnRef = doc(
+          collection(db, "users", session.uid, "transactions"),
+        );
+        transaction.set(txnRef, {
+          type: "reversal",
+          amount: reversalAmount,
+          status: "completed",
+          timestamp: Timestamp.now(),
+          description: `Reversal of $${formatMoney(reversalAmount)} -- funds returned to balance`,
+        });
+      });
+      setShowReversalModal(false);
+      setWithdrawStep("form");
+      setWithdrawAmount("");
+      setWithdrawWallet("");
+    } catch (err) {
+      console.error("Reversal error:", err);
+      setReversalError("Reversal failed. Please try again.");
+    } finally {
+      setReversalLoading(false);
     }
   };
 
@@ -653,7 +672,9 @@ export default function Dashboard() {
       txnFilter === "All Types" ||
       (txnFilter === "Deposit" && typeLabel === "deposit") ||
       (txnFilter === "Withdrawal" && typeLabel === "withdrawal") ||
-      (txnFilter === "Solana" && typeLabel === "solana");
+      (txnFilter === "Solana" && typeLabel === "solana") ||
+      (txnFilter === "Reversal" && typeLabel === "reversal") ||
+      (txnFilter === "VSN" && typeLabel === "vsn");
     const searchLower = txnSearch.toLowerCase();
     const matchesSearch =
       !searchLower ||
@@ -709,7 +730,9 @@ export default function Dashboard() {
       return { background: "rgba(13,148,136,0.15)", color: "#0d9488" };
     if (status === "successful")
       return { background: "rgba(34,197,94,0.15)", color: "#22c55e" };
-    return { background: "rgba(245,158,11,0.15)", color: "#fbbf24" };
+    if (status === "reversed")
+      return { background: "rgba(245,158,11,0.15)", color: "#fbbf24" };
+    return { background: "rgba(13,148,136,0.15)", color: "#0d9488" };
   };
 
   const getTypeLabel = (type) => {
@@ -720,7 +743,7 @@ export default function Dashboard() {
     if (type === "wallet_failed") return "Wallet Connection";
     if (type === "vsn") return "VSN Deposit";
     if (type === "reversal") return "Reversal";
-    return type ? type.charAt(0).toUpperCase() + type.slice(1) : "—";
+    return type ? type.charAt(0).toUpperCase() + type.slice(1) : "--";
   };
 
   const getAmountColor = (type) =>
@@ -744,67 +767,23 @@ export default function Dashboard() {
         ? ""
         : "-";
 
+  /* == HOURGLASS (bot trading lock) -- TEAL THEME == */
   const HourglassLocked = () => (
     <div style={{ textAlign: "center", padding: "48px 20px" }}>
       <style>{`
-        @keyframes hg-rotate {
-          0% { transform: rotate(0deg); }
-          100% { transform: rotate(360deg); }
-        }
-        @keyframes hg-sand-top {
-          0% { transform: scaleY(1); }
-          45% { transform: scaleY(0); }
-          50% { transform: scaleY(0); }
-          55% { transform: scaleY(1); }
-          100% { transform: scaleY(1); }
-        }
-        @keyframes hg-sand-bot {
-          0% { transform: scaleY(0); }
-          45% { transform: scaleY(1); }
-          50% { transform: scaleY(1); }
-          55% { transform: scaleY(0); }
-          100% { transform: scaleY(0); }
-        }
-        @keyframes hg-glow {
-          0%, 100% { filter: drop-shadow(0 0 15px rgba(13,148,136,0.6)) drop-shadow(0 0 40px rgba(13,148,136,0.4)) drop-shadow(0 0 80px rgba(13,148,136,0.15)); }
-          25% { filter: drop-shadow(0 0 25px rgba(13,148,136,0.8)) drop-shadow(0 0 60px rgba(13,148,136,0.5)) drop-shadow(0 0 100px rgba(13,148,136,0.25)); }
-          50% { filter: drop-shadow(0 0 20px rgba(13,148,136,0.7)) drop-shadow(0 0 50px rgba(13,148,136,0.4)) drop-shadow(0 0 90px rgba(13,148,136,0.2)); }
-          75% { filter: drop-shadow(0 0 30px rgba(13,148,136,0.9)) drop-shadow(0 0 70px rgba(13,148,136,0.6)) drop-shadow(0 0 120px rgba(13,148,136,0.3)); }
-        }
-        @keyframes hg-drip {
-          0%, 40% { opacity: 1; transform: translateY(0); }
-          45% { opacity: 0.5; transform: translateY(6px); }
-          50%, 100% { opacity: 0; transform: translateY(0); }
-        }
-        @keyframes hg-pulse-ring {
-          0% { transform: scale(0.8); opacity: 0.6; }
-          50% { transform: scale(1.2); opacity: 0; }
-          100% { transform: scale(0.8); opacity: 0.6; }
-        }
-        @keyframes hg-float {
-          0%, 100% { transform: translateY(0); }
-          50% { transform: translateY(-6px); }
-        }
-        @keyframes hg-sand-stream {
-          0%, 45% { opacity: 0.8; stroke-dashoffset: 0; }
-          50% { opacity: 0; stroke-dashoffset: 10; }
-          55%, 100% { opacity: 0.8; stroke-dashoffset: 0; }
-        }
-        .hg-container {
-          animation: hg-float 3s ease-in-out infinite;
-        }
-        .hg-wrap {
-          animation: hg-rotate 4s linear infinite, hg-glow 2s ease-in-out infinite;
-          display: inline-block;
-          transform-origin: center center;
-        }
+        @keyframes hg-rotate { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        @keyframes hg-sand-top { 0% { transform: scaleY(1); } 45% { transform: scaleY(0); } 50% { transform: scaleY(0); } 55% { transform: scaleY(1); } 100% { transform: scaleY(1); } }
+        @keyframes hg-sand-bot { 0% { transform: scaleY(0); } 45% { transform: scaleY(1); } 50% { transform: scaleY(1); } 55% { transform: scaleY(0); } 100% { transform: scaleY(0); } }
+        @keyframes hg-glow { 0%, 100% { filter: drop-shadow(0 0 15px rgba(13,148,136,0.6)) drop-shadow(0 0 40px rgba(13,148,136,0.4)); } 50% { filter: drop-shadow(0 0 25px rgba(13,148,136,0.8)) drop-shadow(0 0 60px rgba(13,148,136,0.5)); } }
+        @keyframes hg-drip { 0%, 40% { opacity: 1; transform: translateY(0); } 45% { opacity: 0.5; transform: translateY(6px); } 50%, 100% { opacity: 0; transform: translateY(0); } }
+        @keyframes hg-pulse-ring { 0% { transform: scale(0.8); opacity: 0.6; } 50% { transform: scale(1.2); opacity: 0; } 100% { transform: scale(0.8); opacity: 0.6; } }
+        @keyframes hg-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+        .hg-container { animation: hg-float 3s ease-in-out infinite; }
+        .hg-wrap { animation: hg-rotate 4s linear infinite, hg-glow 2s ease-in-out infinite; display: inline-block; transform-origin: center center; }
         .hg-sand-top { transform-origin: bottom; animation: hg-sand-top 3s ease-in-out infinite; }
         .hg-sand-bot { transform-origin: top; animation: hg-sand-bot 3s ease-in-out infinite; }
         .hg-drip { animation: hg-drip 3s ease-in-out infinite; }
-        .hg-pulse-ring {
-          animation: hg-pulse-ring 2s ease-in-out infinite;
-          transform-origin: center;
-        }
+        .hg-pulse-ring { animation: hg-pulse-ring 2s ease-in-out infinite; transform-origin: center; }
       `}</style>
       <div
         className="hg-container"
@@ -814,7 +793,6 @@ export default function Dashboard() {
           display: "inline-block",
         }}
       >
-        {/* Outer pulse ring */}
         <div
           className="hg-pulse-ring"
           style={{
@@ -833,7 +811,6 @@ export default function Dashboard() {
         />
         <div className="hg-wrap">
           <svg width="80" height="80" viewBox="0 0 80 80" fill="none">
-            {/* Outer frame with glow */}
             <path
               d="M20 10 L60 10 L60 14 L48 34 L48 46 L60 66 L60 70 L20 70 L20 66 L32 46 L32 34 L20 14 Z"
               stroke="#0d9488"
@@ -843,7 +820,6 @@ export default function Dashboard() {
               strokeLinecap="round"
               opacity="0.9"
             />
-            {/* Top cap */}
             <rect
               x="18"
               y="8"
@@ -854,7 +830,6 @@ export default function Dashboard() {
               stroke="#0d9488"
               strokeWidth="1.5"
             />
-            {/* Bottom cap */}
             <rect
               x="18"
               y="68"
@@ -865,8 +840,6 @@ export default function Dashboard() {
               stroke="#0d9488"
               strokeWidth="1.5"
             />
-
-            {/* Smooth sand top - no particles, just clean gradient */}
             <clipPath id="top-clip">
               <path d="M22 14 L58 14 L47 33 L33 33 Z" />
             </clipPath>
@@ -879,18 +852,7 @@ export default function Dashboard() {
                 height="20"
                 fill="rgba(13,148,136,0.6)"
               />
-              {/* Subtle gradient overlay */}
-              <rect
-                x="22"
-                y="14"
-                width="36"
-                height="20"
-                fill="url(#sandGradient)"
-                opacity="0.3"
-              />
             </g>
-
-            {/* Smooth sand bottom - no particles */}
             <clipPath id="bot-clip">
               <path d="M33 47 L47 47 L58 66 L22 66 Z" />
             </clipPath>
@@ -903,32 +865,7 @@ export default function Dashboard() {
                 height="20"
                 fill="rgba(13,148,136,0.6)"
               />
-              <rect
-                x="22"
-                y="47"
-                width="36"
-                height="20"
-                fill="url(#sandGradient)"
-                opacity="0.3"
-              />
             </g>
-
-            {/* Sand gradient definition */}
-            <defs>
-              <linearGradient
-                id="sandGradient"
-                x1="0%"
-                y1="0%"
-                x2="0%"
-                y2="100%"
-              >
-                <stop offset="0%" stopColor="rgba(13,148,136,0.8)" />
-                <stop offset="50%" stopColor="rgba(13,148,136,0.4)" />
-                <stop offset="100%" stopColor="rgba(13,148,136,0.8)" />
-              </linearGradient>
-            </defs>
-
-            {/* Drip line - clean single line */}
             <line
               x1="40"
               y1="33"
@@ -939,8 +876,6 @@ export default function Dashboard() {
               strokeDasharray="3 3"
               className="hg-drip"
             />
-
-            {/* Center glow dot with pulse */}
             <circle cx="40" cy="40" r="3" fill="#0d9488" opacity="0.9">
               <animate
                 attributeName="r"
@@ -952,29 +887,6 @@ export default function Dashboard() {
                 attributeName="opacity"
                 values="0.9;0.4;0.9"
                 dur="2s"
-                repeatCount="indefinite"
-              />
-            </circle>
-
-            {/* Inner glow ring */}
-            <circle
-              cx="40"
-              cy="40"
-              r="8"
-              fill="none"
-              stroke="rgba(13,148,136,0.3)"
-              strokeWidth="1"
-            >
-              <animate
-                attributeName="r"
-                values="6;12;6"
-                dur="3s"
-                repeatCount="indefinite"
-              />
-              <animate
-                attributeName="opacity"
-                values="0.5;0;0.5"
-                dur="3s"
                 repeatCount="indefinite"
               />
             </circle>
@@ -1005,24 +917,266 @@ export default function Dashboard() {
     </div>
   );
 
+  /* == CONTACT SUPPORT SCREEN -- PURPLE THEME -- INLINE VSN INPUT == */
   const ContactSupportScreen = () => (
-    <div style={{ textAlign: "center", padding: "40px 20px" }}>
-      <style>{`
-        @keyframes support-pulse {
-          0%, 100% { transform: scale(1); box-shadow: 0 0 20px rgba(124,92,252,0.3); }
-          50% { transform: scale(1.05); box-shadow: 0 0 40px rgba(124,92,252,0.5); }
-        }
-        @keyframes support-glow {
-          0%, 100% { filter: drop-shadow(0 0 10px rgba(124,92,252,0.4)); }
-          50% { filter: drop-shadow(0 0 25px rgba(124,92,252,0.7)); }
-        }
-        .support-icon-wrap {
-          animation: support-pulse 2s ease-in-out infinite, support-glow 2s ease-in-out infinite;
-        }
-      `}</style>
-
+    <div
+      style={{
+        position: "relative",
+        textAlign: "center",
+        padding: "40px 20px",
+      }}
+    >
       <div
-        className="support-icon-wrap"
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          pointerEvents: "none",
+          zIndex: 0,
+          backgroundImage:
+            "linear-gradient(rgba(124,92,252,0.28) 1px,transparent 1px),linear-gradient(90deg,rgba(124,92,252,0.28) 1px,transparent 1px)",
+          backgroundSize: "80px 80px",
+          maskImage:
+            "radial-gradient(ellipse 75% 75% at 50% 50%,transparent 35%,black 100%)",
+          WebkitMaskImage:
+            "radial-gradient(ellipse 75% 75% at 50% 50%,transparent 35%,black 70%)",
+        }}
+      />
+      <div style={{ position: "relative", zIndex: 1 }}>
+        <style>{`
+          @keyframes support-pulse { 0%, 100% { transform: scale(1); box-shadow: 0 0 20px rgba(124,92,252,0.3); } 50% { transform: scale(1.05); box-shadow: 0 0 40px rgba(124,92,252,0.5); } }
+          @keyframes support-glow { 0%, 100% { filter: drop-shadow(0 0 10px rgba(124,92,252,0.4)); } 50% { filter: drop-shadow(0 0 25px rgba(124,92,252,0.7)); } }
+          .support-icon-wrap { animation: support-pulse 2s ease-in-out infinite, support-glow 2s ease-in-out infinite; }
+        `}</style>
+        <div
+          className="support-icon-wrap"
+          style={{
+            width: "72px",
+            height: "72px",
+            borderRadius: "50%",
+            background: "linear-gradient(135deg, #7C5CFC, #5b3fd4)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            margin: "0 auto 24px",
+          }}
+        >
+          <svg
+            width="32"
+            height="32"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="white"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <rect x="3" y="11" width="18" height="11" rx="2" />
+            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            <circle cx="12" cy="16" r="1" fill="white" />
+          </svg>
+        </div>
+        <p
+          style={{
+            color: "#a78bfa",
+            fontSize: "22px",
+            fontWeight: 800,
+            margin: "0 0 12px",
+          }}
+        >
+          Contact Support for VSN Code
+        </p>
+        <p
+          style={{
+            color: "#9ca3af",
+            fontSize: "14px",
+            lineHeight: 1.65,
+            maxWidth: "320px",
+            margin: "0 auto 24px",
+          }}
+        >
+          Your first withdrawal requires verification. Please contact our
+          support team to request your VSN code. Once you receive it, enter it
+          below.
+        </p>
+        <div
+          style={{
+            background: "rgba(124,92,252,0.08)",
+            border: "1px solid rgba(124,92,252,0.2)",
+            borderRadius: "14px",
+            padding: "20px",
+            maxWidth: "320px",
+            margin: "0 auto 20px",
+            textAlign: "left",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              marginBottom: "10px",
+            }}
+          >
+            <span style={{ color: "#6b7280", fontSize: "13px" }}>Amount</span>
+            <span style={{ color: "#fff", fontSize: "13px", fontWeight: 700 }}>
+              ${formatMoney(withdrawAmount)}
+            </span>
+          </div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              marginBottom: "10px",
+            }}
+          >
+            <span style={{ color: "#6b7280", fontSize: "13px" }}>Wallet</span>
+            <span
+              style={{
+                color: "#fff",
+                fontSize: "13px",
+                fontWeight: 500,
+                maxWidth: "150px",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {withdrawWallet}
+            </span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <span style={{ color: "#6b7280", fontSize: "13px" }}>Status</span>
+            <span
+              style={{ color: "#a78bfa", fontSize: "13px", fontWeight: 700 }}
+            >
+              Awaiting VSN
+            </span>
+          </div>
+        </div>
+        <div style={{ maxWidth: "320px", margin: "0 auto 16px" }}>
+          <input
+            type="text"
+            placeholder="Enter your VSN code"
+            value={vsnInput}
+            onChange={(e) => {
+              setVsnInput(e.target.value);
+              setVsnError("");
+            }}
+            onKeyDown={(e) => e.key === "Enter" && handleVsnSubmit()}
+            style={{
+              width: "100%",
+              boxSizing: "border-box",
+              background: "#1a1a2e",
+              border: vsnError
+                ? "1.5px solid #ef4444"
+                : "1.5px solid rgba(124,92,252,0.3)",
+              borderRadius: "12px",
+              padding: "15px 16px",
+              color: "#fff",
+              fontSize: "18px",
+              outline: "none",
+              textAlign: "center",
+              letterSpacing: "0.2em",
+              fontWeight: 700,
+              transition: "border-color 0.2s",
+              marginBottom: "10px",
+            }}
+          />
+          {vsnError && (
+            <p
+              style={{
+                color: "#f87171",
+                fontSize: "13px",
+                margin: "0 0 10px",
+                fontWeight: 500,
+              }}
+            >
+              {vsnError}
+            </p>
+          )}
+          <button
+            onClick={handleVsnSubmit}
+            disabled={vsnLoading}
+            style={{
+              width: "100%",
+              padding: "14px",
+              background: vsnLoading
+                ? "rgba(124,92,252,0.5)"
+                : "linear-gradient(135deg,#7C5CFC,#5b3fd4)",
+              border: "none",
+              borderRadius: "12px",
+              color: "#fff",
+              fontWeight: 700,
+              fontSize: "16px",
+              cursor: vsnLoading ? "default" : "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "8px",
+              boxShadow: vsnLoading
+                ? "none"
+                : "0 4px 16px rgba(124,92,252,0.35)",
+              transition: "all 0.2s",
+            }}
+          >
+            {vsnLoading ? (
+              <>
+                <div
+                  style={{
+                    width: "16px",
+                    height: "16px",
+                    border: "2.5px solid rgba(255,255,255,0.3)",
+                    borderTop: "2.5px solid #fff",
+                    borderRadius: "50%",
+                    animation: "spin 0.7s linear infinite",
+                  }}
+                />
+                Verifying...
+              </>
+            ) : (
+              "Proceed"
+            )}
+          </button>
+        </div>
+        <button
+          onClick={() => {
+            setWithdrawStep("form");
+            setWithdrawAmount("");
+            setWithdrawWallet("");
+            setVsnInput("");
+            setVsnError("");
+          }}
+          style={{
+            padding: "10px 20px",
+            background: "transparent",
+            border: "1px solid #333",
+            borderRadius: "10px",
+            color: "#9ca3af",
+            fontSize: "14px",
+            cursor: "pointer",
+            transition: "all 0.2s",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.borderColor = "#7C5CFC";
+            e.currentTarget.style.color = "#a78bfa";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.borderColor = "#333";
+            e.currentTarget.style.color = "#9ca3af";
+          }}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+
+  /* == VSN PENDING SCREEN -- PURPLE THEME -- INLINE VSN INPUT == */
+  const VsnPendingScreen = () => (
+    <div style={{ textAlign: "center", padding: "40px 20px" }}>
+      <div
         style={{
           width: "72px",
           height: "72px",
@@ -1032,6 +1186,7 @@ export default function Dashboard() {
           alignItems: "center",
           justifyContent: "center",
           margin: "0 auto 24px",
+          boxShadow: "0 8px 24px rgba(124,92,252,0.4)",
         }}
       >
         <svg
@@ -1049,7 +1204,6 @@ export default function Dashboard() {
           <circle cx="12" cy="16" r="1" fill="white" />
         </svg>
       </div>
-
       <p
         style={{
           color: "#a78bfa",
@@ -1058,7 +1212,7 @@ export default function Dashboard() {
           margin: "0 0 12px",
         }}
       >
-        Contact Support for VSN Code
+        VSN Code Ready
       </p>
       <p
         style={{
@@ -1069,141 +1223,227 @@ export default function Dashboard() {
           margin: "0 auto 24px",
         }}
       >
-        Your first withdrawal requires verification. Please contact our support
-        team to request your VSN code. Once you receive it, return here to enter
-        it.
+        Your VSN code has been issued. Kindly check your email for the code,
+        then enter it below.
       </p>
-
-      <div
-        style={{
-          background: "rgba(124,92,252,0.08)",
-          border: "1px solid rgba(124,92,252,0.2)",
-          borderRadius: "14px",
-          padding: "20px",
-          maxWidth: "320px",
-          margin: "0 auto 20px",
-          textAlign: "left",
-        }}
-      >
-        <div
+      <div style={{ maxWidth: "320px", margin: "0 auto 16px" }}>
+        <input
+          type="text"
+          placeholder="Enter your VSN code"
+          value={vsnInput}
+          onChange={(e) => {
+            setVsnInput(e.target.value);
+            setVsnError("");
+          }}
+          onKeyDown={(e) => e.key === "Enter" && handleVsnSubmit()}
           style={{
-            display: "flex",
-            justifyContent: "space-between",
+            width: "100%",
+            boxSizing: "border-box",
+            background: "#1a1a2e",
+            border: vsnError
+              ? "1.5px solid #ef4444"
+              : "1.5px solid rgba(124,92,252,0.3)",
+            borderRadius: "12px",
+            padding: "15px 16px",
+            color: "#fff",
+            fontSize: "18px",
+            outline: "none",
+            textAlign: "center",
+            letterSpacing: "0.2em",
+            fontWeight: 700,
+            transition: "border-color 0.2s",
             marginBottom: "10px",
           }}
-        >
-          <span style={{ color: "#6b7280", fontSize: "13px" }}>Amount</span>
-          <span style={{ color: "#fff", fontSize: "13px", fontWeight: 700 }}>
-            ${formatMoney(withdrawAmount)}
-          </span>
-        </div>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            marginBottom: "10px",
-          }}
-        >
-          <span style={{ color: "#6b7280", fontSize: "13px" }}>Wallet</span>
-          <span
+        />
+        {vsnError && (
+          <p
             style={{
-              color: "#fff",
+              color: "#f87171",
               fontSize: "13px",
+              margin: "0 0 10px",
               fontWeight: 500,
-              maxWidth: "150px",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
             }}
           >
-            {withdrawWallet}
-          </span>
-        </div>
-        <div style={{ display: "flex", justifyContent: "space-between" }}>
-          <span style={{ color: "#6b7280", fontSize: "13px" }}>Status</span>
-          <span style={{ color: "#a78bfa", fontSize: "13px", fontWeight: 700 }}>
-            Awaiting VSN
-          </span>
-        </div>
-      </div>
-
-      <div
-        style={{
-          display: "flex",
-          gap: "10px",
-          justifyContent: "center",
-          maxWidth: "320px",
-          margin: "0 auto",
-        }}
-      >
+            {vsnError}
+          </p>
+        )}
         <button
-          onClick={() => {
-            setWithdrawStep("form");
-            setWithdrawAmount("");
-            setWithdrawWallet("");
-          }}
+          onClick={handleVsnSubmit}
+          disabled={vsnLoading}
           style={{
-            flex: 1,
-            padding: "12px",
-            background: "transparent",
-            border: "1px solid #333",
-            borderRadius: "10px",
-            color: "#9ca3af",
-            fontSize: "14px",
-            cursor: "pointer",
+            width: "100%",
+            padding: "14px",
+            background: vsnLoading
+              ? "rgba(124,92,252,0.5)"
+              : "linear-gradient(135deg,#7C5CFC,#5b3fd4)",
+            border: "none",
+            borderRadius: "12px",
+            color: "#fff",
+            fontWeight: 700,
+            fontSize: "16px",
+            cursor: vsnLoading ? "default" : "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "8px",
+            boxShadow: vsnLoading ? "none" : "0 4px 16px rgba(124,92,252,0.35)",
             transition: "all 0.2s",
           }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.borderColor = "#a78bfa";
-            e.currentTarget.style.color = "#a78bfa";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.borderColor = "#333";
-            e.currentTarget.style.color = "#9ca3af";
-          }}
         >
-          Cancel
-        </button>
-        <button
-          onClick={() => setShowVsnModal(true)}
-          style={{
-            flex: 1,
-            padding: "12px",
-            background: "linear-gradient(135deg, #7C5CFC, #5b3fd4)",
-            border: "none",
-            borderRadius: "10px",
-            color: "#fff",
-            fontSize: "14px",
-            fontWeight: 700,
-            cursor: "pointer",
-            boxShadow: "0 4px 16px rgba(124,92,252,0.35)",
-          }}
-        >
-          I Have VSN Code
+          {vsnLoading ? (
+            <>
+              <div
+                style={{
+                  width: "16px",
+                  height: "16px",
+                  border: "2.5px solid rgba(255,255,255,0.3)",
+                  borderTop: "2.5px solid #fff",
+                  borderRadius: "50%",
+                  animation: "spin 0.7s linear infinite",
+                }}
+              />
+              Verifying...
+            </>
+          ) : (
+            "Proceed"
+          )}
         </button>
       </div>
     </div>
   );
 
+  /* == WITHDRAWAL PROCESSING SCREEN -- "VSN Verified -- Queued" == */
   const WithdrawalProcessingScreen = () => (
     <div style={{ textAlign: "center", padding: "48px 20px" }}>
+      <p
+        style={{
+          color: "#fff",
+          fontSize: "35px",
+          fontWeight: 800,
+          margin: "0 0 12px",
+        }}
+      >
+        Withdraw USD
+      </p>
+      <p
+        style={{
+          color: "#9ca3af",
+          fontSize: "18px",
+          margin: "0 0 32px",
+          lineHeight: 1.5,
+        }}
+      >
+        Withdraw your USD into your bank account or preferred payment method
+      </p>
+      <div
+        style={{
+          background: "rgba(34,197,94,0.08)",
+          border: "1px solid rgba(34,197,94,0.25)",
+          borderRadius: "18px",
+          padding: "40px 32px",
+          maxWidth: "380px",
+          margin: "0 auto",
+          textAlign: "center",
+        }}
+      >
+        <div
+          style={{
+            width: "64px",
+            height: "64px",
+            borderRadius: "50%",
+            background: "linear-gradient(135deg, #22c55e, #15803d)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            margin: "0 auto 20px",
+          }}
+        >
+          <svg
+            width="32"
+            height="32"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="white"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+            <polyline points="22 4 12 14.01 9 11.01" />
+          </svg>
+        </div>
+        <p
+          style={{
+            color: "#22c55e",
+            fontSize: "20px",
+            fontWeight: 800,
+            margin: "0 0 10px",
+          }}
+        >
+          VSN Verified -- Queued
+        </p>
+        <p
+          style={{
+            color: "#9ca3af",
+            fontSize: "14px",
+            lineHeight: 1.65,
+            margin: 0,
+          }}
+        >
+          Your withdrawal has been verified and is queued for processing.
+        </p>
+      </div>
+      <button
+        onClick={() => {
+          setWithdrawStep("form");
+          setWithdrawAmount("");
+          setWithdrawWallet("");
+        }}
+        style={{
+          marginTop: "28px",
+          padding: "12px 24px",
+          background: "transparent",
+          border: "1px solid #333",
+          borderRadius: "10px",
+          color: "#9ca3af",
+          fontSize: "14px",
+          cursor: "pointer",
+          transition: "all 0.2s",
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.borderColor = "#22c55e";
+          e.currentTarget.style.color = "#22c55e";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.borderColor = "#333";
+          e.currentTarget.style.color = "#9ca3af";
+        }}
+      >
+        Make Another Withdrawal
+      </button>
+    </div>
+  );
+
+  /* == REVERSAL SCREEN -- AMBER THEME == */
+  const ReversalScreen = () => (
+    <div style={{ textAlign: "center", padding: "48px 20px" }}>
       <style>{`
-        @keyframes processing-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.85; transform: scale(0.97); } }
-        @keyframes processing-glow { 0%, 100% { box-shadow: 0 0 20px rgba(13,148,136,0.3), 0 0 40px rgba(13,148,136,0.1); } 50% { box-shadow: 0 0 35px rgba(13,148,136,0.5), 0 0 70px rgba(13,148,136,0.2); } }
-        .processing-icon-wrap { animation: processing-pulse 2s ease-in-out infinite; }
+        @keyframes reversal-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.85; transform: scale(0.97); } }
+        @keyframes reversal-glow { 0%, 100% { box-shadow: 0 0 20px rgba(245,158,11,0.3), 0 0 40px rgba(245,158,11,0.1); } 50% { box-shadow: 0 0 35px rgba(245,158,11,0.5), 0 0 70px rgba(245,158,11,0.2); } }
+        .reversal-icon-wrap { animation: reversal-pulse 2s ease-in-out infinite; }
       `}</style>
       <div
-        className="processing-icon-wrap"
+        className="reversal-icon-wrap"
         style={{
           width: "80px",
           height: "80px",
           borderRadius: "50%",
-          background: "linear-gradient(135deg, #0d9488, #065f46)",
+          background: "linear-gradient(135deg, #f59e0b, #b45309)",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
           margin: "0 auto 24px",
-          animation: "processing-glow 2s ease-in-out infinite",
+          animation: "reversal-glow 2s ease-in-out infinite",
         }}
       >
         <svg
@@ -1216,19 +1456,19 @@ export default function Dashboard() {
           strokeLinecap="round"
           strokeLinejoin="round"
         >
-          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-          <polyline points="22 4 12 14.01 9 11.01" />
+          <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+          <path d="M3 3v5h5" />
         </svg>
       </div>
       <p
         style={{
-          color: "#0d9488",
+          color: "#fbbf24",
           fontSize: "22px",
           fontWeight: 800,
           margin: "0 0 12px",
         }}
       >
-        Withdrawal is being processed
+        Withdrawal Reversal Available
       </p>
       <p
         style={{
@@ -1239,17 +1479,17 @@ export default function Dashboard() {
           margin: "0 auto 24px",
         }}
       >
-        Your withdrawal request has been submitted and is currently being
-        processed. You will receive a notification once it is completed.
+        A reversal has been initiated for your recent withdrawal. Click below to
+        return the funds to your balance.
       </p>
       <div
         style={{
-          background: "rgba(13,148,136,0.08)",
-          border: "1px solid rgba(13,148,136,0.2)",
+          background: "rgba(245,158,11,0.08)",
+          border: "1px solid rgba(245,158,11,0.2)",
           borderRadius: "12px",
           padding: "16px 20px",
           maxWidth: "320px",
-          margin: "0 auto",
+          margin: "0 auto 20px",
           textAlign: "left",
         }}
       >
@@ -1260,45 +1500,35 @@ export default function Dashboard() {
             marginBottom: "8px",
           }}
         >
-          <span style={{ color: "#6b7280", fontSize: "13px" }}>Amount</span>
-          <span style={{ color: "#fff", fontSize: "13px", fontWeight: 700 }}>
-            ${formatMoney(withdrawAmount)}
+          <span style={{ color: "#6b7280", fontSize: "13px" }}>
+            Reversal Amount
+          </span>
+          <span style={{ color: "#fbbf24", fontSize: "13px", fontWeight: 700 }}>
+            ${formatMoney(reversalAmount)}
           </span>
         </div>
         <div style={{ display: "flex", justifyContent: "space-between" }}>
           <span style={{ color: "#6b7280", fontSize: "13px" }}>Status</span>
-          <span style={{ color: "#0d9488", fontSize: "13px", fontWeight: 700 }}>
-            Processing
+          <span style={{ color: "#fbbf24", fontSize: "13px", fontWeight: 700 }}>
+            Pending Reversal
           </span>
         </div>
       </div>
       <button
-        onClick={() => {
-          setWithdrawStep("form");
-          setWithdrawAmount("");
-          setWithdrawWallet("");
-        }}
+        onClick={() => setShowReversalModal(true)}
         style={{
-          marginTop: "24px",
-          padding: "12px 24px",
-          background: "transparent",
-          border: "1px solid #333",
-          borderRadius: "10px",
-          color: "#9ca3af",
-          fontSize: "14px",
+          padding: "14px 32px",
+          background: "linear-gradient(135deg, #f59e0b, #b45309)",
+          border: "none",
+          borderRadius: "12px",
+          color: "#fff",
+          fontWeight: 700,
+          fontSize: "16px",
           cursor: "pointer",
-          transition: "all 0.2s",
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.borderColor = "#0d9488";
-          e.currentTarget.style.color = "#0d9488";
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.borderColor = "#333";
-          e.currentTarget.style.color = "#9ca3af";
+          boxShadow: "0 4px 16px rgba(245,158,11,0.35)",
         }}
       >
-        Make Another Withdrawal
+        Confirm Reversal
       </button>
     </div>
   );
@@ -1367,7 +1597,7 @@ export default function Dashboard() {
             flexShrink: 0,
             height: "58px",
             background: "#0d9488",
-            borderBottom: "1px solid #0b7b72",
+            borderBottom: "1px solid #065f46",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
@@ -1545,7 +1775,6 @@ export default function Dashboard() {
                 </svg>
               </button>
             </div>
-
             <div
               className="dash-welcome-mobile"
               style={{
@@ -1575,7 +1804,6 @@ export default function Dashboard() {
                 {displayName}!
               </p>
             </div>
-
             <nav
               style={{
                 flex: 1,
@@ -1656,7 +1884,6 @@ export default function Dashboard() {
                 </button>
               )}
             </nav>
-
             <div
               className="dash-logout-mobile"
               style={{
@@ -1702,7 +1929,6 @@ export default function Dashboard() {
                 Logout
               </button>
             </div>
-
             <div
               className="dash-email-desktop"
               style={{
@@ -1767,7 +1993,7 @@ export default function Dashboard() {
                 pointerEvents: "none",
                 zIndex: 0,
                 backgroundImage:
-                  "linear-gradient(rgba(13,148,136,0.28) 1px,transparent 1px),linear-gradient(90deg,rgba(13,148,136,0.28) 1px,transparent 1px)",
+                  "linear-gradient(rgba(13,148,136,0.18) 1px,transparent 1px),linear-gradient(90deg,rgba(13,148,136,0.18) 1px,transparent 1px)",
                 backgroundSize: "80px 80px",
                 maskImage:
                   "radial-gradient(ellipse 75% 75% at 50% 50%,transparent 65%,black 100%)",
@@ -1778,7 +2004,6 @@ export default function Dashboard() {
             <div style={{ position: "relative", zIndex: 2, flexShrink: 0 }}>
               <TickerBar />
             </div>
-
             <div
               ref={contentScrollRef}
               style={{
@@ -1795,6 +2020,7 @@ export default function Dashboard() {
                   margin: "0 auto",
                 }}
               >
+                {/* == DASHBOARD TAB == */}
                 {activeTab === "dashboard" && (
                   <div>
                     <div style={{ marginBottom: "24px" }}>
@@ -1900,7 +2126,6 @@ export default function Dashboard() {
                         trading.
                       </p>
                     </div>
-
                     <div
                       style={{
                         display: "grid",
@@ -1975,7 +2200,7 @@ export default function Dashboard() {
                           >
                             {balanceVisible
                               ? `$${formatMoney(balance)}`
-                              : "••••••"}
+                              : "------"}
                           </p>
                           <button
                             onClick={() => setBalanceVisible(!balanceVisible)}
@@ -2043,7 +2268,7 @@ export default function Dashboard() {
                               flex: 1,
                               padding: "10px",
                               borderRadius: "9px",
-                              background: "#7C5CFC",
+                              background: "#0d9488",
                               border: "1px solid #333",
                               color: "#fff",
                               fontWeight: 700,
@@ -2104,7 +2329,6 @@ export default function Dashboard() {
                           </p>
                         )}
                       </div>
-
                       <div
                         style={{
                           background: "#111",
@@ -2160,7 +2384,6 @@ export default function Dashboard() {
                         </p>
                       </div>
                     </div>
-
                     <div>
                       <div
                         style={{
@@ -2316,6 +2539,7 @@ export default function Dashboard() {
                   </div>
                 )}
 
+                {/* == DEPOSIT TAB == */}
                 {activeTab === "deposit" && (
                   <div
                     style={{
@@ -2378,6 +2602,7 @@ export default function Dashboard() {
                   </div>
                 )}
 
+                {/* == WITHDRAW TAB == */}
                 {activeTab === "withdraw" && (
                   <div
                     style={{
@@ -2409,7 +2634,7 @@ export default function Dashboard() {
                       payment method
                     </p>
 
-                    {/* ── Bot trading lock ── */}
+                    {/* Bot trading / analysing lock */}
                     {botPhase === "activated" || botPhase === "analysing" ? (
                       <HourglassLocked />
                     ) : balance <= 0 ? (
@@ -2487,9 +2712,14 @@ export default function Dashboard() {
                       </div>
                     ) : withdrawStep === "processing" ? (
                       <WithdrawalProcessingScreen />
+                    ) : withdrawStep === "vsn_pending" ? (
+                      <VsnPendingScreen />
                     ) : withdrawStep === "contact_support" ? (
                       <ContactSupportScreen />
+                    ) : withdrawStep === "reversal" ? (
+                      <ReversalScreen />
                     ) : (
+                      /* -- FORM -- */
                       <div
                         style={{
                           display: "flex",
@@ -2497,6 +2727,60 @@ export default function Dashboard() {
                           gap: "16px",
                         }}
                       >
+                        {vsnRequired && (
+                          <div
+                            style={{
+                              background: "rgba(124,92,252,0.1)",
+                              border: "1px solid rgba(124,92,252,0.3)",
+                              borderRadius: "12px",
+                              padding: "14px 16px",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "10px",
+                              animation: "popIn 0.3s ease",
+                            }}
+                          >
+                            <svg
+                              width="20"
+                              height="20"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="#a78bfa"
+                              strokeWidth="2"
+                            >
+                              <rect
+                                x="3"
+                                y="11"
+                                width="18"
+                                height="11"
+                                rx="2"
+                              />
+                              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                            </svg>
+                            <div>
+                              <p
+                                style={{
+                                  color: "#a78bfa",
+                                  fontSize: "13px",
+                                  fontWeight: 700,
+                                  margin: "0 0 2px",
+                                }}
+                              >
+                                VSN Code Ready
+                              </p>
+                              <p
+                                style={{
+                                  color: "#9ca3af",
+                                  fontSize: "12px",
+                                  margin: 0,
+                                }}
+                              >
+                                Your VSN code has been issued. Click Withdraw to
+                                enter it.
+                              </p>
+                            </div>
+                          </div>
+                        )}
                         {withdrawSuccess && (
                           <div
                             style={{
@@ -2532,7 +2816,6 @@ export default function Dashboard() {
                             </span>
                           </div>
                         )}
-
                         <div>
                           <div
                             style={{
@@ -2561,7 +2844,8 @@ export default function Dashboard() {
                             </span>
                           </div>
                           <input
-                            type="number"
+                            type="text"
+                            inputMode="decimal"
                             placeholder="Enter USD Amount"
                             value={withdrawAmount}
                             onChange={(e) => {
@@ -2616,7 +2900,6 @@ export default function Dashboard() {
                             }}
                           />
                         </div>
-
                         {withdrawError && (
                           <p
                             style={{
@@ -2628,12 +2911,13 @@ export default function Dashboard() {
                             {withdrawError}
                           </p>
                         )}
-
                         <button
                           onClick={handleWithdrawClick}
                           style={{
                             padding: "14px",
-                            background: "#0d9488",
+                            background: vsnRequired
+                              ? "linear-gradient(135deg,#7C5CFC,#5b3fd4)"
+                              : "#0d9488",
                             border: "none",
                             borderRadius: "12px",
                             color: "#fff",
@@ -2642,12 +2926,14 @@ export default function Dashboard() {
                             cursor: "pointer",
                           }}
                         >
-                          Withdraw
+                          {vsnRequired ? "Enter VSN Code" : "Withdraw"}
                         </button>
                       </div>
                     )}
                   </div>
                 )}
+
+                {/* == TRANSACTIONS TAB == */}
                 {activeTab === "transactions" && (
                   <div>
                     <h2
@@ -2704,6 +2990,8 @@ export default function Dashboard() {
                         <option value="Deposit">Deposit</option>
                         <option value="Withdrawal">Withdrawal</option>
                         <option value="Solana">Solana</option>
+                        <option value="Reversal">Reversal</option>
+                        <option value="VSN">VSN</option>
                       </select>
                       <button
                         onClick={handleExportTransactions}
@@ -2850,6 +3138,7 @@ export default function Dashboard() {
                   </div>
                 )}
 
+                {/* == PROFILE TAB == */}
                 {activeTab === "profile" && (
                   <div
                     style={{
@@ -2979,7 +3268,6 @@ export default function Dashboard() {
                             onChange={handleFileChange}
                           />
                         </div>
-
                         {!profileForm.firstName && !profileForm.lastName && (
                           <div
                             style={{
@@ -2998,7 +3286,7 @@ export default function Dashboard() {
                                 margin: 0,
                               }}
                             >
-                              Complete your profile — some details are missing
+                              Complete your profile -- some details are missing
                               from your account.
                             </p>
                           </div>
@@ -3019,7 +3307,6 @@ export default function Dashboard() {
                             {profileError}
                           </div>
                         )}
-
                         <div
                           style={{
                             display: "flex",
@@ -3183,10 +3470,10 @@ export default function Dashboard() {
                               padding: "14px",
                               background: profileSaved ? "#065f46" : "#0d9488",
                               border: profileSaved
-                                ? "1px solid #34d399"
+                                ? "1px solid #0d9488"
                                 : "none",
                               borderRadius: "10px",
-                              color: profileSaved ? "#34d399" : "#fff",
+                              color: profileSaved ? "#0d9488" : "#fff",
                               fontWeight: 700,
                               fontSize: "16px",
                               cursor: profileSaved ? "default" : "pointer",
@@ -3238,7 +3525,6 @@ export default function Dashboard() {
                 )}
               </div>
             </div>
-
             <div
               className="dash-footer-desktop"
               style={{
@@ -3265,7 +3551,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* ══ MOBILE BOTTOM NAV ══ */}
+      {/* == MOBILE BOTTOM NAV == */}
       <div
         className="mobile-bottom-nav"
         style={{
@@ -3402,7 +3688,7 @@ export default function Dashboard() {
         })}
       </div>
 
-      {/* ══ VSN CODE MODAL ══ */}
+      {/* == VSN CODE MODAL -- PURPLE THEME == */}
       {showVsnModal && (
         <div
           style={{
@@ -3634,6 +3920,160 @@ export default function Dashboard() {
                 </button>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* == REVERSAL CONFIRMATION MODAL -- AMBER THEME == */}
+      {showReversalModal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.80)",
+            zIndex: 9998,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "20px",
+          }}
+        >
+          <div
+            style={{
+              background: "#13131f",
+              borderRadius: "24px",
+              padding: "40px 32px",
+              maxWidth: "390px",
+              width: "100%",
+              textAlign: "center",
+              border: "1px solid rgba(245,158,11,0.25)",
+              animation: "vsnSlideUp 0.35s cubic-bezier(0.34,1.56,0.64,1)",
+            }}
+          >
+            <div
+              style={{
+                width: "68px",
+                height: "68px",
+                borderRadius: "50%",
+                background: "linear-gradient(135deg,#f59e0b,#b45309)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                margin: "0 auto 22px",
+                boxShadow: "0 8px 24px rgba(245,158,11,0.4)",
+              }}
+            >
+              <svg
+                width="30"
+                height="30"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="white"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                <path d="M3 3v5h5" />
+              </svg>
+            </div>
+            <h3
+              style={{
+                color: "#fff",
+                fontSize: "22px",
+                fontWeight: 800,
+                margin: "0 0 10px",
+                letterSpacing: "-0.3px",
+              }}
+            >
+              Confirm Reversal
+            </h3>
+            <p
+              style={{
+                color: "#9ca3af",
+                fontSize: "14px",
+                lineHeight: 1.65,
+                margin: "0 0 28px",
+              }}
+            >
+              You are about to reverse{" "}
+              <strong style={{ color: "#fbbf24" }}>
+                ${formatMoney(reversalAmount)}
+              </strong>{" "}
+              back to your balance. This action cannot be undone.
+            </p>
+            {reversalError && (
+              <p
+                style={{
+                  color: "#f87171",
+                  fontSize: "13px",
+                  marginBottom: "14px",
+                  fontWeight: 500,
+                }}
+              >
+                {reversalError}
+              </p>
+            )}
+            <button
+              onClick={handleReversal}
+              disabled={reversalLoading}
+              style={{
+                width: "100%",
+                padding: "15px",
+                background: reversalLoading
+                  ? "rgba(245,158,11,0.5)"
+                  : "linear-gradient(135deg,#f59e0b,#b45309)",
+                border: "none",
+                borderRadius: "12px",
+                color: "#fff",
+                fontWeight: 700,
+                fontSize: "16px",
+                cursor: reversalLoading ? "default" : "pointer",
+                marginBottom: "12px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "8px",
+                boxShadow: reversalLoading
+                  ? "none"
+                  : "0 4px 16px rgba(245,158,11,0.35)",
+                transition: "all 0.2s",
+              }}
+            >
+              {reversalLoading ? (
+                <>
+                  <div
+                    style={{
+                      width: "16px",
+                      height: "16px",
+                      border: "2.5px solid rgba(255,255,255,0.3)",
+                      borderTop: "2.5px solid #fff",
+                      borderRadius: "50%",
+                      animation: "spin 0.7s linear infinite",
+                    }}
+                  />
+                  Processing...
+                </>
+              ) : (
+                "Confirm Reversal"
+              )}
+            </button>
+            <button
+              onClick={() => {
+                setShowReversalModal(false);
+                setReversalError("");
+              }}
+              style={{
+                background: "none",
+                border: "none",
+                color: "#6b7280",
+                fontSize: "14px",
+                cursor: "pointer",
+                padding: "4px 12px",
+              }}
+            >
+              Cancel
+            </button>
           </div>
         </div>
       )}
