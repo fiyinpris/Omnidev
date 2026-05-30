@@ -4,7 +4,7 @@ import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: "AIzaSyA31VG6D94SA8hgOZw8sJR5uU0vCsY2ADs",
-  authDomain: "omnidev-a4d45.firebaseapp.com",
+  authDomain: "www.omnidevpro.com",
   projectId: "omnidev-a4d45",
   storageBucket: "omnidev-a4d45.firebasestorage.app",
   messagingSenderId: "783981327183",
