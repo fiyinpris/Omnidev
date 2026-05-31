@@ -468,6 +468,55 @@ export default function AdminDashboard() {
       setFundLoading(false);
     }
   };
+  const generateIncrementSchedule = (targetAmount, totalHours) => {
+    if (!targetAmount || targetAmount <= 0 || !totalHours || totalHours <= 0)
+      return [];
+    const totalMs = totalHours * 3600 * 1000;
+    const chunks = [];
+    let remaining = Math.round(targetAmount * 100) / 100;
+    let sevenHundredCount = 0;
+    while (remaining > 0.005) {
+      let maxAllowed = Math.min(remaining, 700);
+      if (sevenHundredCount >= 2) maxAllowed = Math.min(maxAllowed, 699);
+      let chunk;
+      const roll = Math.random();
+      if (roll < 0.35) chunk = 50 + Math.random() * 150;
+      else if (roll < 0.75) chunk = 300 + Math.random() * 200;
+      else chunk = 600 + Math.random() * 100;
+      chunk = Math.round(Math.min(chunk, maxAllowed));
+      if (remaining - chunk < 50 && remaining - chunk > 0) chunk = remaining;
+      if (chunk === 700) sevenHundredCount++;
+      chunks.push(chunk);
+      remaining = Math.round((remaining - chunk) * 100) / 100;
+    }
+    if (chunks.length === 0) return [];
+    const n = chunks.length;
+    const startBuffer = 2 * 60 * 1000;
+    const endBuffer = Math.min(
+      totalMs - 2 * 60 * 1000,
+      Math.max(startBuffer + 60000, totalMs - 2 * 60 * 1000),
+    );
+    const usableMs = endBuffer - startBuffer;
+    const slotSize = usableMs / n;
+    const increments = chunks.map((amount, i) => {
+      const slotStart = startBuffer + i * slotSize;
+      const jitter = (Math.random() - 0.5) * slotSize * 0.4;
+      const offsetMs = Math.round(
+        Math.max(startBuffer, Math.min(endBuffer, slotStart + jitter)),
+      );
+      return { amount, offsetMs };
+    });
+    increments.sort((a, b) => a.offsetMs - b.offsetMs);
+    for (let i = 1; i < increments.length; i++) {
+      const minNext = increments[i - 1].offsetMs + 60000;
+      if (increments[i].offsetMs < minNext) increments[i].offsetMs = minNext;
+    }
+    for (let i = increments.length - 1; i >= 0; i--) {
+      const cap = endBuffer - (increments.length - 1 - i) * 60000;
+      if (increments[i].offsetMs > cap) increments[i].offsetMs = cap;
+    }
+    return increments;
+  };
 
   const handleTarget = async () => {
     const target = Math.round(parseFloat(tgtAmt.trim()) * 100) / 100;
@@ -556,7 +605,10 @@ export default function AdminDashboard() {
           pendingTarget: false,
           scheduleActivateAt: null,
           lastTargetSetAt: now,
-          incrementSchedule: [],
+          incrementSchedule: generateIncrementSchedule(
+            target,
+            hours + mins / 60,
+          ),
           incrementScheduleStartMs: now.toMillis(),
           incrementsApplied: 0,
         });
