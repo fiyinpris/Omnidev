@@ -522,6 +522,7 @@ export default function AdminDashboard() {
     const target = Math.round(parseFloat(tgtAmt.trim()) * 100) / 100;
     const hours = Math.max(0, parseInt(botHrs) || 0);
     const mins = Math.max(0, parseInt(botMins) || 0);
+    const totalHours = hours + mins / 60;
     const totalMs = hours * 3600000 + mins * 60000;
 
     if (!tgtSel) {
@@ -565,7 +566,7 @@ export default function AdminDashboard() {
         // Schedule — will auto-activate after analysing finishes
         await updateDoc(userRef, {
           targetAmount: target,
-          botHours: hours + mins / 60,
+          botHours: totalHours,
           pendingTarget: true,
           pendingTargetSetAt: now,
           botStatus:
@@ -581,7 +582,7 @@ export default function AdminDashboard() {
             `${tgtSel.firstName} ${tgtSel.lastName}`.trim() || tgtSel.username,
           initialAmount: currentBalance,
           targetAmount: target,
-          botHours: hours + mins / 60,
+          botHours: totalHours,
           type: "bot_trading",
           timestamp: now,
           status: "scheduled",
@@ -592,43 +593,25 @@ export default function AdminDashboard() {
           `Scheduled! $${fmt(currentBalance)} → $${fmt(currentBalance + target)} over ${hours}h ${mins}m.`,
         );
       } else {
-        // Direct activation — works for first activation AND re-activation after expiry
-        const botExpiresAt = Timestamp.fromMillis(now.toMillis() + totalMs);
-        await updateDoc(userRef, {
+        // RE-ACTIVATION — Call Cloud Function directly
+        const { getFunctions, httpsCallable } =
+          await import("firebase/functions");
+        const functions = getFunctions();
+        const activateBot = httpsCallable(functions, "activateBotDirectly");
+
+        const result = await activateBot({
+          uid: tgtSel.uid,
           targetAmount: target,
-          initialBalance: currentBalance,
-          botActive: true,
-          botStatus: "activated",
-          botActivatedAt: now,
-          botExpiresAt,
-          botHours: hours + mins / 60,
-          pendingTarget: false,
-          scheduleActivateAt: null,
-          lastTargetSetAt: now,
-          incrementSchedule: generateIncrementSchedule(
-            target,
-            hours + mins / 60,
-          ),
-          incrementScheduleStartMs: now.toMillis(),
-          incrementsApplied: 0,
+          botHours: totalHours,
         });
-        await setDoc(doc(collection(db, "adminTransactions")), {
-          userId: tgtSel.uid,
-          userEmail: tgtSel.email,
-          userName:
-            `${tgtSel.firstName} ${tgtSel.lastName}`.trim() || tgtSel.username,
-          initialAmount: currentBalance,
-          targetAmount: target,
-          botHours: hours + mins / 60,
-          type: "bot_trading",
-          timestamp: now,
-          status: "trading",
-          botExpiresAt,
-          adminEmail: adminUser.email,
-        });
-        setTgtOk(
-          `Bot activated! $${fmt(currentBalance)} → $${fmt(currentBalance + target)} over ${hours}h ${mins}m.`,
-        );
+
+        if (result.data.success) {
+          setTgtOk(
+            `Bot re-activated! $${fmt(currentBalance)} → $${fmt(currentBalance + target)} over ${hours}h ${mins}m. (${result.data.scheduleLength} increments scheduled)`,
+          );
+        } else {
+          throw new Error("Cloud function returned unsuccessful");
+        }
       }
 
       setTgtAmt("");
@@ -638,7 +621,7 @@ export default function AdminDashboard() {
       setTimeout(() => setTgtOk(""), 7000);
     } catch (e) {
       console.error(e);
-      setTgtErr("Failed. Try again.");
+      setTgtErr("Failed. " + (e.message || "Try again."));
     } finally {
       setTgtLoading(false);
     }
