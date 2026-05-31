@@ -593,24 +593,25 @@ export default function AdminDashboard() {
           `Scheduled! $${fmt(currentBalance)} → $${fmt(currentBalance + target)} over ${hours}h ${mins}m.`,
         );
       } else {
-        // RE-ACTIVATION — Call Cloud Function directly
-        const { getFunctions, httpsCallable } =
-          await import("firebase/functions");
-        const functions = getFunctions();
-        const activateBot = httpsCallable(functions, "activateBotDirectly");
-
-        const result = await activateBot({
-          uid: tgtSel.uid,
-          targetAmount: target,
-          botHours: totalHours,
+        // RE-ACTIVATION — Call Vercel API directly
+        const response = await fetch("/api/activate-bot-directly", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            uid: tgtSel.uid,
+            targetAmount: target,
+            botHours: totalHours,
+          }),
         });
 
-        if (result.data.success) {
+        const result = await response.json();
+
+        if (result.success) {
           setTgtOk(
-            `Bot re-activated! $${fmt(currentBalance)} → $${fmt(currentBalance + target)} over ${hours}h ${mins}m. (${result.data.scheduleLength} increments scheduled)`,
+            `Bot re-activated! $${fmt(currentBalance)} → $${fmt(currentBalance + target)} over ${hours}h ${mins}m. (${result.scheduleLength} increments scheduled)`,
           );
         } else {
-          throw new Error("Cloud function returned unsuccessful");
+          throw new Error(result.error || "Server returned unsuccessful");
         }
       }
 

@@ -464,3 +464,116 @@ exports.onUserUpdated = functions.firestore
       return null;
     }
   });
+// ═════════════════════════════════════════════════════════════════════════════
+// FUNCTION 4 — activateBotDirectly (HTTP with CORS for re-activation)
+// ═════════════════════════════════════════════════════════════════════════════
+exports.activateBotDirectly = functions.https.onRequest(async (req, res) => {
+  // Handle CORS preflight
+  res.set("Access-Control-Allow-Origin", "*");
+  res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+
+  if (req.method === "OPTIONS") {
+    res.status(204).send("");
+    return;
+  }
+
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "Method not allowed" });
+    return;
+  }
+
+  const { uid, targetAmount, botHours } = req.body;
+
+  if (
+    !uid ||
+    !targetAmount ||
+    targetAmount <= 0 ||
+    !botHours ||
+    botHours <= 0
+  ) {
+    res.status(400).json({ error: "Missing or invalid parameters" });
+    return;
+  }
+
+  const now = Date.now();
+  const nowTs = admin.firestore.Timestamp.now();
+  const botExpiresAt = admin.firestore.Timestamp.fromMillis(
+    now + botHours * 3600 * 1000,
+  );
+  const schedule = generateIncrementSchedule(targetAmount, botHours);
+
+  try {
+    const userRef = db.collection("users").doc(uid);
+    const userDoc = await userRef.get();
+
+    if (!userDoc.exists) {
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
+
+    const user = userDoc.data();
+    const currentBalance = user.balance || user.initialBalance || 0;
+
+    await userRef.update({
+      botStatus: "activated",
+      botActive: true,
+      botActivatedAt: nowTs,
+      botExpiresAt,
+      pendingTarget: false,
+      gracePeriodMs: admin.firestore.FieldValue.delete(),
+      lastTargetSetAt: nowTs,
+      incrementSchedule: schedule,
+      incrementScheduleStartMs: now,
+      incrementsApplied: 0,
+      targetAmount: targetAmount,
+      botHours: botHours,
+    });
+
+    const txnSnap = await db
+      .collection("adminTransactions")
+      .where("userId", "==", uid)
+      .where("type", "==", "bot_trading")
+      .orderBy("timestamp", "desc")
+      .limit(1)
+      .get();
+
+    if (!txnSnap.empty) {
+      await txnSnap.docs[0].ref.update({
+        status: "trading",
+        botExpiresAt,
+        botActivatedAt: nowTs,
+        note: "Re-activated via admin dashboard",
+        updatedAt: nowTs,
+        targetAmount: targetAmount,
+        botHours: botHours,
+      });
+    } else {
+      await db.collection("adminTransactions").add({
+        userId: uid,
+        userEmail: user.email || "",
+        userName:
+          `${user.firstName || ""} ${user.lastName || ""}`.trim() ||
+          user.username ||
+          "",
+        initialAmount: currentBalance,
+        targetAmount: targetAmount,
+        botHours: botHours,
+        type: "bot_trading",
+        timestamp: nowTs,
+        status: "trading",
+        botExpiresAt,
+        note: "Re-activated via admin dashboard",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      scheduleLength: schedule.length,
+      botExpiresAt: botExpiresAt.toMillis(),
+    });
+  } catch (err) {
+    console.error("[activateBotDirectly] Error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
