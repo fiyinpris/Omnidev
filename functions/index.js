@@ -294,8 +294,29 @@ exports.applyBalanceIncrements = functions.pubsub
         }
 
         // ── BOT STILL ACTIVE — apply due chunks ──────────────────────────────
-        if (appliedCountUser >= schedule.length) continue;
+        // ── BOT STILL ACTIVE — generate schedule if missing ──────────────────
+        if (
+          schedule.length === 0 &&
+          user.targetAmount > 0 &&
+          user.botHours > 0
+        ) {
+          const newSchedule = generateIncrementSchedule(
+            user.targetAmount,
+            user.botHours,
+          );
+          await docSnap.ref.update({
+            incrementSchedule: newSchedule,
+            incrementScheduleStartMs: now,
+            incrementsApplied: 0,
+          });
+          console.log(
+            `[GENERATE] ${user.email || uid}: generated ${newSchedule.length} increments`,
+          );
+          continue;
+        }
 
+        // ── BOT STILL ACTIVE — apply due chunks ──────────────────────────────
+        if (appliedCountUser >= schedule.length) continue;
         const elapsedMs = now - startMs;
         const due = schedule
           .slice(appliedCountUser)

@@ -24,7 +24,6 @@ const fmt = (val) => {
   if (val === undefined || val === null) return "0.00";
   const n = typeof val === "number" ? val : parseFloat(val);
   if (isNaN(n) || Object.is(n, -0)) return "0.00";
-  // Round to exactly 2 decimal places to avoid floating point errors
   const rounded = Math.round(n * 100) / 100;
   const s = rounded.toFixed(2);
   const [int, dec] = s.split(".");
@@ -118,6 +117,7 @@ export default function AdminDashboard() {
   const [tgtSel, setTgtSel] = useState(null);
   const [tgtAmt, setTgtAmt] = useState("");
   const [botHrs, setBotHrs] = useState("1");
+  const [botMins, setBotMins] = useState("0");
   const [tgtLoading, setTgtLoading] = useState(false);
   const [tgtOk, setTgtOk] = useState("");
   const [tgtErr, setTgtErr] = useState("");
@@ -233,7 +233,6 @@ export default function AdminDashboard() {
     return () => unsub();
   }, [adminUser]);
 
-  // ── Listen to ALL users' processing withdrawal transactions ──
   useEffect(() => {
     if (!adminUser || users.length === 0) return;
     const unsubs = [];
@@ -269,7 +268,6 @@ export default function AdminDashboard() {
     return () => unsubs.forEach((u) => u());
   }, [adminUser, users]);
 
-  // ── Listen to scheduled reversals and execute them when due ──
   useEffect(() => {
     if (!adminUser) return;
     const unsub = onSnapshot(
@@ -284,8 +282,6 @@ export default function AdminDashboard() {
           ...d.data(),
           firesAt: d.data().firesAt?.toMillis?.() || d.data().firesAt,
         }));
-
-        // Update local pending reversals list for display
         setPendingReversals(
           pending.map((r) => ({
             revDocId: r.id,
@@ -295,8 +291,6 @@ export default function AdminDashboard() {
             firesAt: r.firesAt,
           })),
         );
-
-        // Execute any reversals whose time has come
         for (const rev of pending) {
           if (rev.firesAt && now >= rev.firesAt) {
             try {
@@ -305,11 +299,7 @@ export default function AdminDashboard() {
               const userSnap = await getDoc(userRef);
               const currentBalance = userSnap.data()?.balance || 0;
               const newBalance = currentBalance + rev.amount;
-
-              // Update user balance
               await updateDoc(userRef, { balance: newBalance });
-
-              // Create user transaction
               await setDoc(
                 doc(collection(db, "users", rev.userId, "transactions")),
                 {
@@ -320,14 +310,10 @@ export default function AdminDashboard() {
                   description: `Reversal — $${fmt(rev.amount)} returned to your account`,
                 },
               );
-
-              // Mark reversal as completed
               await updateDoc(doc(db, "scheduledReversals", rev.id), {
                 status: "completed",
                 completedAt: ts,
               });
-
-              // Create admin transaction record
               await setDoc(doc(collection(db, "adminTransactions")), {
                 userId: rev.userId,
                 userEmail: rev.userEmail,
@@ -340,7 +326,6 @@ export default function AdminDashboard() {
                 balanceBefore: currentBalance,
                 balanceAfter: newBalance,
               });
-
               console.log(
                 `Reversal executed: $${fmt(rev.amount)} for ${rev.userEmail}`,
               );
@@ -486,7 +471,10 @@ export default function AdminDashboard() {
 
   const handleTarget = async () => {
     const target = Math.round(parseFloat(tgtAmt.trim()) * 100) / 100;
-    const hours = parseInt(botHrs) || 1;
+    const hours = Math.max(0, parseInt(botHrs) || 0);
+    const mins = Math.max(0, parseInt(botMins) || 0);
+    const totalMs = hours * 3600000 + mins * 60000;
+
     if (!tgtSel) {
       setTgtErr("Select a user.");
       return;
@@ -499,22 +487,36 @@ export default function AdminDashboard() {
       setTgtErr("Enter a valid target amount.");
       return;
     }
+    if (totalMs <= 0) {
+      setTgtErr("Set a duration of at least 1 minute.");
+      return;
+    }
+
     const now = Timestamp.now();
     const anaExpMs = tgtSel.analysingExpiresAt?.toMillis?.() || 0;
+    const botExpMs =
+      tgtSel.botExpiresAt?.toMillis?.() || tgtSel.botExpiresAt || 0;
+
+    // Bot is in analysing/scheduled phase (never activated yet, or pending)
     const isAnalysing =
-      !tgtSel.botExpiresAt &&
+      !botExpMs &&
       (tgtSel.botStatus === "analysing" ||
         tgtSel.botStatus === "scheduled" ||
         (anaExpMs && Date.now() < anaExpMs));
+
     setTgtLoading(true);
     setTgtErr("");
     setTgtOk("");
+
     try {
       const userRef = doc(db, "users", tgtSel.uid);
+      const currentBalance = tgtSel.balance || 0;
+
       if (isAnalysing) {
+        // Schedule — will auto-activate after analysing finishes
         await updateDoc(userRef, {
           targetAmount: target,
-          botHours: hours,
+          botHours: hours + mins / 60,
           pendingTarget: true,
           pendingTargetSetAt: now,
           botStatus:
@@ -528,9 +530,9 @@ export default function AdminDashboard() {
           userEmail: tgtSel.email,
           userName:
             `${tgtSel.firstName} ${tgtSel.lastName}`.trim() || tgtSel.username,
-          initialAmount: tgtSel.initialBalance,
+          initialAmount: currentBalance,
           targetAmount: target,
-          botHours: hours,
+          botHours: hours + mins / 60,
           type: "bot_trading",
           timestamp: now,
           status: "scheduled",
@@ -538,19 +540,19 @@ export default function AdminDashboard() {
           note: "Will auto-activate after analysing completes + grace period",
         });
         setTgtOk(
-          `Scheduled! $${fmt(tgtSel.initialBalance)} → $${fmt(tgtSel.initialBalance + target)} over ${hours}h.`,
+          `Scheduled! $${fmt(currentBalance)} → $${fmt(currentBalance + target)} over ${hours}h ${mins}m.`,
         );
       } else {
-        const botExpiresAt = Timestamp.fromMillis(
-          now.toMillis() + hours * 3600000,
-        );
+        // Direct activation — works for first activation AND re-activation after expiry
+        const botExpiresAt = Timestamp.fromMillis(now.toMillis() + totalMs);
         await updateDoc(userRef, {
           targetAmount: target,
+          initialBalance: currentBalance,
           botActive: true,
           botStatus: "activated",
           botActivatedAt: now,
           botExpiresAt,
-          botHours: hours,
+          botHours: hours + mins / 60,
           pendingTarget: false,
           scheduleActivateAt: null,
           lastTargetSetAt: now,
@@ -563,9 +565,9 @@ export default function AdminDashboard() {
           userEmail: tgtSel.email,
           userName:
             `${tgtSel.firstName} ${tgtSel.lastName}`.trim() || tgtSel.username,
-          initialAmount: tgtSel.initialBalance,
+          initialAmount: currentBalance,
           targetAmount: target,
-          botHours: hours,
+          botHours: hours + mins / 60,
           type: "bot_trading",
           timestamp: now,
           status: "trading",
@@ -573,11 +575,13 @@ export default function AdminDashboard() {
           adminEmail: adminUser.email,
         });
         setTgtOk(
-          `Bot activated! $${fmt(tgtSel.initialBalance)} → $${fmt(tgtSel.initialBalance + target)} over ${hours}h.`,
+          `Bot activated! $${fmt(currentBalance)} → $${fmt(currentBalance + target)} over ${hours}h ${mins}m.`,
         );
       }
+
       setTgtAmt("");
       setBotHrs("1");
+      setBotMins("0");
       setTgtSel(null);
       setTimeout(() => setTgtOk(""), 7000);
     } catch (e) {
@@ -705,7 +709,6 @@ export default function AdminDashboard() {
       setRevErr("This user has no recorded withdrawal to reverse.");
       return;
     }
-
     setRevLoading(true);
     setRevErr("");
     setRevOk("");
@@ -723,7 +726,6 @@ export default function AdminDashboard() {
         adminEmail: adminUser.email,
         status: "pending",
       });
-
       setRevOk(
         `Reversal of $${fmt(amount)} scheduled for ${revSel.email} in ${fmtDuration(totalMs)}.`,
       );
@@ -966,6 +968,7 @@ export default function AdminDashboard() {
     setTgtErr("");
     setTgtOk("");
     setBotHrs("1");
+    setBotMins("0");
   };
   const clearVsn = () => {
     setVsnSel(null);
@@ -1282,7 +1285,6 @@ export default function AdminDashboard() {
                 </span>
               )}
             </button>
-
             <button
               className="hdr-btn"
               onClick={() => setView("reversal")}
@@ -1310,7 +1312,6 @@ export default function AdminDashboard() {
                 </span>
               )}
             </button>
-
             <button
               className="hdr-btn hdr-btn-vsn"
               onClick={() => setView("vsn")}
@@ -1339,7 +1340,6 @@ export default function AdminDashboard() {
                 <span className="hdr-badge">{pendingWithdrawals.length}</span>
               )}
             </button>
-
             <button
               className="hdr-btn hdr-btn-wf"
               onClick={() => setView("wallet_failed")}
@@ -1371,7 +1371,6 @@ export default function AdminDashboard() {
                 </span>
               )}
             </button>
-
             <button className="btn-back" onClick={() => navigate("/dashboard")}>
               Back to Site
             </button>
@@ -1407,7 +1406,6 @@ export default function AdminDashboard() {
                 mark it as successful to update it in-place.
               </p>
             </div>
-
             <div className="stats-row">
               {[
                 {
@@ -1435,7 +1433,6 @@ export default function AdminDashboard() {
                 </div>
               ))}
             </div>
-
             <div className="form-group">
               <label className="form-label">
                 Select Processing Transaction
@@ -1471,7 +1468,6 @@ export default function AdminDashboard() {
                 })}
               </select>
             </div>
-
             {procSel && (
               <div className="info-box">
                 <p className="info-row">
@@ -1522,10 +1518,8 @@ export default function AdminDashboard() {
                 })()}
               </div>
             )}
-
             {procErr && <div className="alert alert-error">{procErr}</div>}
             {procOk && <div className="alert alert-success">{procOk}</div>}
-
             <div className="btn-group">
               <button
                 className="btn-primary"
@@ -1566,7 +1560,6 @@ export default function AdminDashboard() {
               </button>
             </div>
           </div>
-
           {liveProcessingTxns.length > 0 && (
             <div className="card">
               <h2 className="card-title" style={{ margin: "0 0 14px" }}>
@@ -1694,7 +1687,6 @@ export default function AdminDashboard() {
                 appears in their history.
               </p>
             </div>
-
             <div className="stats-row">
               {[
                 {
@@ -1722,7 +1714,6 @@ export default function AdminDashboard() {
                 </div>
               ))}
             </div>
-
             {pendingReversals.length > 0 && (
               <div
                 style={{
@@ -1773,7 +1764,6 @@ export default function AdminDashboard() {
                 ))}
               </div>
             )}
-
             <div className="form-group">
               <label className="form-label">Select User</label>
               <select
@@ -1797,7 +1787,6 @@ export default function AdminDashboard() {
                 ))}
               </select>
             </div>
-
             {revSel && (
               <div className="info-box">
                 <p className="info-row">
@@ -1820,7 +1809,6 @@ export default function AdminDashboard() {
                 </p>
               </div>
             )}
-
             <div className="form-group">
               <label className="form-label">Reversal Delay</label>
               <div className="input-row">
@@ -1852,10 +1840,8 @@ export default function AdminDashboard() {
                 close the page.
               </p>
             </div>
-
             {revErr && <div className="alert alert-error">{revErr}</div>}
             {revOk && <div className="alert alert-success">{revOk}</div>}
-
             <div className="btn-group">
               <button
                 className="btn-primary"
@@ -1894,7 +1880,6 @@ export default function AdminDashboard() {
               </button>
             </div>
           </div>
-
           {withdrawalSuccessUsers.length > 0 && (
             <div className="card">
               <h2 className="card-title" style={{ margin: "0 0 14px" }}>
@@ -2223,7 +2208,6 @@ export default function AdminDashboard() {
               immediately in their dashboard and creates a VSN Deposit
               transaction in their history.
             </p>
-
             <div className="form-group">
               <label className="form-label">Select User</label>
               <select
@@ -2250,7 +2234,6 @@ export default function AdminDashboard() {
                 ))}
               </select>
             </div>
-
             {vsnSel && (
               <div className="info-box">
                 <p className="info-row">
@@ -2272,7 +2255,6 @@ export default function AdminDashboard() {
                 )}
               </div>
             )}
-
             <div className="form-group">
               <label className="form-label">Deposit Amount (USD)</label>
               <input
@@ -2296,14 +2278,12 @@ export default function AdminDashboard() {
                 </p>
               )}
             </div>
-
             {vsnDepositErr && (
               <div className="alert alert-error">{vsnDepositErr}</div>
             )}
             {vsnDepositOk && (
               <div className="alert alert-success">{vsnDepositOk}</div>
             )}
-
             <div className="btn-group">
               <button
                 className="btn-primary"
@@ -2389,7 +2369,6 @@ export default function AdminDashboard() {
                 </div>
               ))}
             </div>
-
             {vsnSel && (
               <div className="info-box">
                 <p className="info-row">
@@ -2444,7 +2423,6 @@ export default function AdminDashboard() {
                 )}
               </div>
             )}
-
             <div className="form-group">
               <label className="form-label">VSN Code to Generate</label>
               <input
@@ -2467,10 +2445,8 @@ export default function AdminDashboard() {
                 after generating.
               </p>
             </div>
-
             {vsnErr && <div className="alert alert-error">{vsnErr}</div>}
             {vsnOk && <div className="alert alert-success">{vsnOk}</div>}
-
             <div className="btn-group">
               <button
                 className="btn-primary"
@@ -2625,6 +2601,7 @@ export default function AdminDashboard() {
       )}
 
       <div className="admin-grid">
+        {/* ── CARD 1: Fund User ── */}
         <div className="card">
           <div className="card-header">
             <span className="card-badge" style={{ background: "#0d9488" }}>
@@ -2669,28 +2646,28 @@ export default function AdminDashboard() {
           <div className="form-group">
             <label className="form-label">OmniDev Analysis Duration</label>
             <div className="input-row">
-              <select
-                className="form-select"
+              <input
+                className="form-input"
+                type="text"
+                inputMode="numeric"
+                placeholder="hrs"
                 value={anaHrs}
-                onChange={(e) => setAnaHrs(e.target.value)}
-              >
-                {Array.from({ length: 24 }, (_, i) => (
-                  <option key={i} value={i}>
-                    {i} hr{i !== 1 ? "s" : ""}
-                  </option>
-                ))}
-              </select>
-              <select
-                className="form-select"
+                onChange={(e) => {
+                  if (/^\d*$/.test(e.target.value)) setAnaHrs(e.target.value);
+                }}
+              />
+              <input
+                className="form-input"
+                type="text"
+                inputMode="numeric"
+                placeholder="mins"
                 value={anaMins}
-                onChange={(e) => setAnaMins(e.target.value)}
-              >
-                {[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map((m) => (
-                  <option key={m} value={m}>
-                    {m} min{m !== 1 ? "s" : ""}
-                  </option>
-                ))}
-              </select>
+                onChange={(e) => {
+                  const v = parseInt(e.target.value);
+                  if (/^\d*$/.test(e.target.value) && (isNaN(v) || v < 60))
+                    setAnaMins(e.target.value);
+                }}
+              />
             </div>
             <p className="form-hint">
               After this + 2–5 min gap, bot trading begins.
@@ -2718,6 +2695,7 @@ export default function AdminDashboard() {
           </div>
         </div>
 
+        {/* ── CARD 2: Set Target & Activate Bot ── */}
         <div className="card">
           <div className="card-header">
             <span className="card-badge" style={{ background: "#065f46" }}>
@@ -2738,24 +2716,31 @@ export default function AdminDashboard() {
               <option value="">Choose a funded user...</option>
               {users
                 .filter((u) => u.hasBeenFunded)
-                .map((u) => (
-                  <option key={u.uid} value={u.uid}>
-                    {u.email} — ${fmt(u.balance)}{" "}
-                    {u.botStatus === "activated"
+                .map((u) => {
+                  const botExpMs =
+                    u.botExpiresAt?.toMillis?.() || u.botExpiresAt || 0;
+                  const isExpired = botExpMs && Date.now() > botExpMs;
+                  const statusLabel = isExpired
+                    ? "(Expired — can re-activate)"
+                    : u.botStatus === "activated"
                       ? "(Trading)"
                       : u.botStatus === "scheduled"
                         ? "(Scheduling)"
                         : u.botStatus === "analysing"
                           ? "(Analysing)"
-                          : "(Ready)"}
-                  </option>
-                ))}
+                          : "(Ready)";
+                  return (
+                    <option key={u.uid} value={u.uid}>
+                      {u.email} — ${fmt(u.balance)} {statusLabel}
+                    </option>
+                  );
+                })}
             </select>
           </div>
           {tgtSel?.hasBeenFunded && (
             <div className="info-box">
               <p className="info-row">
-                Balance: <strong>${fmt(tgtSel.balance)}</strong>
+                Current Balance: <strong>${fmt(tgtSel.balance)}</strong>
               </p>
               <p className="info-row">
                 Initial Deposit: <strong>${fmt(tgtSel.initialBalance)}</strong>
@@ -2764,23 +2749,34 @@ export default function AdminDashboard() {
                 Status:{" "}
                 <strong
                   style={{
-                    color:
-                      tgtSel.botStatus === "activated"
-                        ? "#22c55e"
-                        : tgtSel.botStatus === "scheduled"
-                          ? "#f59e0b"
-                          : tgtSel.botStatus === "analysing"
-                            ? "#3b82f6"
-                            : "#ef4444",
+                    color: (() => {
+                      const botExpMs =
+                        tgtSel.botExpiresAt?.toMillis?.() ||
+                        tgtSel.botExpiresAt ||
+                        0;
+                      if (botExpMs && Date.now() > botExpMs) return "#ef4444";
+                      if (tgtSel.botStatus === "activated") return "#22c55e";
+                      if (tgtSel.botStatus === "scheduled") return "#f59e0b";
+                      if (tgtSel.botStatus === "analysing") return "#3b82f6";
+                      return "#ef4444";
+                    })(),
                   }}
                 >
-                  {tgtSel.botStatus === "activated"
-                    ? "Bot Trading Active"
-                    : tgtSel.botStatus === "scheduled"
-                      ? "Scheduling Soon"
-                      : tgtSel.botStatus === "analysing"
-                        ? "OmniDev Analysing"
-                        : "Disabled"}
+                  {(() => {
+                    const botExpMs =
+                      tgtSel.botExpiresAt?.toMillis?.() ||
+                      tgtSel.botExpiresAt ||
+                      0;
+                    if (botExpMs && Date.now() > botExpMs)
+                      return "Expired — Ready for Re-activation";
+                    if (tgtSel.botStatus === "activated")
+                      return "Bot Trading Active";
+                    if (tgtSel.botStatus === "scheduled")
+                      return "Scheduling Soon";
+                    if (tgtSel.botStatus === "analysing")
+                      return "OmniDev Analysing";
+                    return "Disabled";
+                  })()}
                 </strong>
               </p>
               {tgtSel.analysingExpiresAt && (
@@ -2809,28 +2805,58 @@ export default function AdminDashboard() {
               Bot Trading Duration{" "}
               <span style={{ color: "#22c55e" }}>(trading time)</span>
             </label>
-            <select
-              className="form-select"
-              value={botHrs}
-              onChange={(e) => setBotHrs(e.target.value)}
-            >
-              {[1, 2, 3, 4, 5, 6, 7, 8, 12, 24, 48, 72].map((h) => (
-                <option key={h} value={h}>
-                  {h} hour{h > 1 ? "s" : ""}
-                </option>
-              ))}
-            </select>
+            <div className="input-row">
+              <input
+                className="form-input"
+                type="text"
+                inputMode="numeric"
+                placeholder="hrs"
+                value={botHrs}
+                onChange={(e) => {
+                  if (/^\d*$/.test(e.target.value)) setBotHrs(e.target.value);
+                }}
+              />
+              <input
+                className="form-input"
+                type="text"
+                inputMode="numeric"
+                placeholder="mins"
+                value={botMins}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value);
+                  if (/^\d*$/.test(e.target.value) && (isNaN(v) || v < 60))
+                    setBotMins(e.target.value);
+                }}
+              />
+            </div>
+            <p className="form-hint">Enter hours and minutes (e.g. 1h 30m).</p>
+            {(parseInt(botHrs) > 0 || parseInt(botMins) > 0) && (
+              <p
+                style={{
+                  marginTop: "6px",
+                  fontSize: "12px",
+                  color: "#22c55e",
+                  fontWeight: 600,
+                }}
+              >
+                Duration: {parseInt(botHrs) > 0 ? `${parseInt(botHrs)}h ` : ""}
+                {parseInt(botMins) > 0 ? `${parseInt(botMins)}m` : ""} (
+                {(parseInt(botHrs) || 0) * 60 + (parseInt(botMins) || 0)} mins
+                total)
+              </p>
+            )}
           </div>
           {tgtSel?.hasBeenFunded && tgtAmt && parseFloat(tgtAmt) > 0 && (
             <div className="preview-box">
               <p className="preview-title">Growth Preview</p>
               <p className="preview-text">
-                ${fmt(tgtSel.initialBalance)} → $
-                {fmt(tgtSel.initialBalance + parseFloat(tgtAmt))} over {botHrs}h
+                ${fmt(tgtSel.balance)} → $
+                {fmt(tgtSel.balance + parseFloat(tgtAmt))} over {botHrs}h{" "}
+                {botMins}m
                 <br />
                 <span className="preview-sub">
-                  = ${fmt(tgtSel.initialBalance)} initial + $
-                  {fmt(parseFloat(tgtAmt))} profit
+                  = ${fmt(tgtSel.balance)} current + ${fmt(parseFloat(tgtAmt))}{" "}
+                  profit
                 </span>
               </p>
             </div>
@@ -2857,6 +2883,7 @@ export default function AdminDashboard() {
           </div>
         </div>
 
+        {/* ── All Users Table ── */}
         <div className="card admin-grid-full">
           <h2 className="card-title" style={{ margin: "0 0 14px" }}>
             All Users ({users.length})
@@ -2974,6 +3001,7 @@ export default function AdminDashboard() {
         </div>
       </div>
 
+      {/* ── Transactions Table ── */}
       <div className="card txn-card">
         <div className="txn-card-header">
           <div className="txn-card-title-row">
