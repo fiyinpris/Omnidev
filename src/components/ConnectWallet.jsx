@@ -3,14 +3,14 @@ import "../index.css";
 import phantomImg from "/src/assets/phantom.jpg";
 import solflareImg from "/src/assets//Solfare.png";
 import trustwalletImg from "/src/assets//Trustwallet.jpg";
-import walletconnectImg from "/src/assets//WalletConnect.jpg";
+import metamaskImg from "/src/assets//MetaMask.png";
 
 /* WALLET IMAGES */
 const walletImages = {
   Phantom: phantomImg,
   Solflare: solflareImg,
   "Trust Wallet": trustwalletImg,
-  WalletConnect: walletconnectImg,
+  Metamask: metamaskImg,
 };
 
 const WalletIcon = ({ name, size = 52 }) => {
@@ -31,7 +31,7 @@ const WALLETS = [
   { name: "Phantom", sub: "Solana • Ethereum • Polygon" },
   { name: "Solflare", sub: "Solana wallet" },
   { name: "Trust Wallet", sub: "Multi-chain wallet" },
-  { name: "WalletConnect", sub: "Scan with any wallet" },
+  { name: "Metamask", sub: "Ethereum wallet" },
 ];
 
 /* ICON COMPONENTS */
