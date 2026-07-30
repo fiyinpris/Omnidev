@@ -15,6 +15,7 @@ import {
   Timestamp,
   getDoc,
   where,
+  increment,
 } from "firebase/firestore";
 
 const ADMIN_EMAIL = "fiyinolaleke@gmail.com";
@@ -134,7 +135,7 @@ export default function AdminDashboard() {
   const [procOk, setProcOk] = useState("");
   const [procErr, setProcErr] = useState("");
 
-  const [revSel, setRevSel] = useState(null);
+  const [revWithdrawal, setRevWithdrawal] = useState(null);
   const [revHrs, setRevHrs] = useState("0");
   const [revMins, setRevMins] = useState("30");
   const [revLoading, setRevLoading] = useState(false);
@@ -165,6 +166,43 @@ export default function AdminDashboard() {
   const [unverifyLoading, setUnverifyLoading] = useState(false);
   const [unverifyOk, setUnverifyOk] = useState("");
   const [unverifyErr, setUnverifyErr] = useState("");
+
+  const reversibleWithdrawals = useMemo(() => {
+    const list = [];
+    users.forEach((u) => {
+      const history = u.withdrawalHistory || {};
+      Object.entries(history).forEach(([txnId, h]) => {
+        if (!h.reversed) {
+          list.push({
+            txnId,
+            amount: h.amount,
+            timestamp: h.timestamp?.toDate?.() || h.timestamp,
+            uid: u.uid,
+            email: u.email,
+            userName:
+              `${u.firstName} ${u.lastName}`.trim() || u.username || u.email,
+          });
+        }
+      });
+      if (Object.keys(history).length === 0 && u.lastWithdrawnAmount > 0) {
+        list.push({
+          txnId: "legacy-" + u.uid,
+          amount: u.lastWithdrawnAmount,
+          timestamp: null,
+          uid: u.uid,
+          email: u.email,
+          userName:
+            `${u.firstName} ${u.lastName}`.trim() || u.username || u.email,
+          isLegacy: true,
+        });
+      }
+    });
+    return list.sort((a, b) => {
+      const aTime = a.timestamp ? a.timestamp.getTime() : 0;
+      const bTime = b.timestamp ? b.timestamp.getTime() : 0;
+      return bTime - aTime;
+    });
+  }, [users]);
 
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
@@ -227,6 +265,7 @@ export default function AdminDashboard() {
           walletConnectionFailed: data.walletConnectionFailed || false,
           withdrawalCompletedCount: data.withdrawalCompletedCount || 0,
           lastWithdrawnAmount: data.lastWithdrawnAmount || 0,
+          withdrawalHistory: data.withdrawalHistory || {},
         };
       });
       setUsers(list);
@@ -234,7 +273,9 @@ export default function AdminDashboard() {
       setTgtSel((p) => (p ? list.find((u) => u.uid === p.uid) || p : null));
       setVsnSel((p) => (p ? list.find((u) => u.uid === p.uid) || p : null));
       setWfSel((p) => (p ? list.find((u) => u.uid === p.uid) || p : null));
-      setRevSel((p) => (p ? list.find((u) => u.uid === p.uid) || p : null));
+      setRevWithdrawal((p) =>
+        p ? list.find((u) => u.uid === p.uid) || p : null,
+      );
       setUnverifySel((p) =>
         p ? list.find((u) => u.uid === p.uid) || p : null,
       );
@@ -704,18 +745,25 @@ export default function AdminDashboard() {
         procSel.txnId,
       );
       await updateDoc(txnRef, { status: "successful" });
+
       const userRef = doc(db, "users", procSel.uid);
       const snap = await getDoc(userRef);
       const currentBalance = snap.data()?.balance || 0;
       const newBalance = Math.max(0, currentBalance - (procSel.amount || 0));
+
       await updateDoc(userRef, {
         balance: newBalance,
         withdrawalStatus: "successful",
-        withdrawalCompletedCount:
-          (snap.data()?.withdrawalCompletedCount || 0) + 1,
+        withdrawalCompletedCount: increment(1),
         lastWithdrawnAmount: procSel.amount || 0,
+        [`withdrawalHistory.${procSel.txnId}`]: {
+          amount: procSel.amount || 0,
+          timestamp: now,
+          reversed: false,
+        },
         withdrawalCompletedAt: now,
       });
+
       await setDoc(doc(collection(db, "adminTransactions")), {
         userId: procSel.uid,
         userEmail: procSel.userEmail,
@@ -729,6 +777,7 @@ export default function AdminDashboard() {
         balanceAfter: newBalance,
         note: "Admin marked processing withdrawal as successful",
       });
+
       setProcOk(
         `Marked successful — $${fmt(procSel.amount)} for ${procSel.userEmail}. Balance: $${fmt(newBalance)}.`,
       );
@@ -743,8 +792,8 @@ export default function AdminDashboard() {
   };
 
   const handleScheduleReversal = async () => {
-    if (!revSel) {
-      setRevErr("Select a user.");
+    if (!revWithdrawal) {
+      setRevErr("Select a withdrawal to reverse.");
       return;
     }
     const totalMs =
@@ -753,32 +802,37 @@ export default function AdminDashboard() {
       setRevErr("Set a reversal delay (at least 1 minute).");
       return;
     }
-    const amount = revSel.lastWithdrawnAmount || 0;
+    const amount = revWithdrawal.amount || 0;
     if (amount <= 0) {
-      setRevErr("This user has no recorded withdrawal to reverse.");
+      setRevErr("Invalid withdrawal amount.");
       return;
     }
     setRevLoading(true);
     setRevErr("");
     setRevOk("");
     try {
+      if (!revWithdrawal.isLegacy) {
+        await updateDoc(doc(db, "users", revWithdrawal.uid), {
+          [`withdrawalHistory.${revWithdrawal.txnId}.reversed`]: true,
+        });
+      }
       const firesAt = Date.now() + totalMs;
       const revRef = doc(collection(db, "scheduledReversals"));
       await setDoc(revRef, {
-        userId: revSel.uid,
-        userEmail: revSel.email,
-        userName:
-          `${revSel.firstName} ${revSel.lastName}`.trim() || revSel.username,
+        userId: revWithdrawal.uid,
+        userEmail: revWithdrawal.email,
+        userName: revWithdrawal.userName,
         amount,
+        txnId: revWithdrawal.txnId,
         firesAt: Timestamp.fromMillis(firesAt),
         createdAt: Timestamp.now(),
         adminEmail: adminUser.email,
         status: "pending",
       });
       setRevOk(
-        `Reversal of $${fmt(amount)} scheduled for ${revSel.email} in ${fmtDuration(totalMs)}.`,
+        `Reversal of $${fmt(amount)} scheduled for ${revWithdrawal.email} in ${fmtDuration(totalMs)}.`,
       );
-      setRevSel(null);
+      setRevWithdrawal(null);
       setRevHrs("0");
       setRevMins("30");
       setTimeout(() => setRevOk(""), 8000);
@@ -1092,7 +1146,7 @@ export default function AdminDashboard() {
     setProcOk("");
   };
   const clearRev = () => {
-    setRevSel(null);
+    setRevWithdrawal(null);
     setRevHrs("0");
     setRevMins("30");
     setRevErr("");
@@ -1814,8 +1868,8 @@ export default function AdminDashboard() {
             <div className="stats-row">
               {[
                 {
-                  label: "Eligible Users",
-                  value: withdrawalSuccessUsers.length,
+                  label: "Reversible Withdrawals",
+                  value: reversibleWithdrawals.length,
                   color: "#f59e0b",
                   bg: "rgba(245,158,11,0.1)",
                 },
@@ -1889,48 +1943,49 @@ export default function AdminDashboard() {
               </div>
             )}
             <div className="form-group">
-              <label className="form-label">Select User</label>
+              <label className="form-label">Select Withdrawal to Reverse</label>
               <select
                 className="form-select"
-                value={revSel?.uid || ""}
+                value={revWithdrawal ? revWithdrawal.txnId : ""}
                 onChange={(e) => {
-                  setRevSel(
-                    users.find((u) => u.uid === e.target.value) || null,
+                  const selected = reversibleWithdrawals.find(
+                    (w) => w.txnId === e.target.value,
                   );
+                  setRevWithdrawal(selected || null);
                   setRevErr("");
                 }}
               >
-                <option value="">
-                  Choose a user with a completed withdrawal...
-                </option>
-                {withdrawalSuccessUsers.map((u) => (
-                  <option key={u.uid} value={u.uid}>
-                    {u.email} — Balance: ${fmt(u.balance)} — Last withdrawn: $
-                    {fmt(u.lastWithdrawnAmount)}
+                <option value="">Choose a successful withdrawal...</option>
+                {reversibleWithdrawals.map((w) => (
+                  <option key={w.txnId} value={w.txnId}>
+                    {w.userName} — ${fmt(w.amount)}
+                    {w.isLegacy ? " (Legacy)" : ""}
+                    {w.timestamp
+                      ? ` — ${w.timestamp.toLocaleDateString()}`
+                      : ""}
                   </option>
                 ))}
               </select>
             </div>
-            {revSel && (
+            {revWithdrawal && (
               <div className="info-box">
                 <p className="info-row">
-                  Email: <strong>{revSel.email}</strong>
-                </p>
-                <p className="info-row">
-                  Current Balance: <strong>${fmt(revSel.balance)}</strong>
+                  User: <strong>{revWithdrawal.email}</strong>
                 </p>
                 <p className="info-row">
                   Amount to reverse:{" "}
                   <strong style={{ color: "#22c55e" }}>
-                    +${fmt(revSel.lastWithdrawnAmount)}
+                    +${fmt(revWithdrawal.amount)}
                   </strong>
                 </p>
-                <p className="info-row">
-                  Balance after reversal:{" "}
-                  <strong style={{ color: "#0d9488" }}>
-                    ${fmt(revSel.balance + (revSel.lastWithdrawnAmount || 0))}
-                  </strong>
-                </p>
+                {revWithdrawal.isLegacy && (
+                  <p className="info-row">
+                    <span style={{ color: "#f59e0b", fontSize: "11px" }}>
+                      Legacy entry — only the most recent amount is available
+                      for this user.
+                    </span>
+                  </p>
+                )}
               </div>
             )}
             <div className="form-group">
@@ -1970,9 +2025,9 @@ export default function AdminDashboard() {
               <button
                 className="btn-primary"
                 onClick={handleScheduleReversal}
-                disabled={revLoading || !revSel}
+                disabled={revLoading || !revWithdrawal}
                 style={{
-                  background: revSel
+                  background: revWithdrawal
                     ? "linear-gradient(135deg,#f59e0b,#b45309)"
                     : undefined,
                   border: "none",
@@ -2004,30 +2059,29 @@ export default function AdminDashboard() {
               </button>
             </div>
           </div>
-          {withdrawalSuccessUsers.length > 0 && (
+          {reversibleWithdrawals.length > 0 && (
             <div className="card">
               <h2 className="card-title" style={{ margin: "0 0 14px" }}>
-                Users Eligible for Reversal ({withdrawalSuccessUsers.length})
+                Available for Reversal ({reversibleWithdrawals.length})
               </h2>
               <div className="table-wrap">
                 <table className="admin-table">
                   <thead>
                     <tr>
-                      {["User", "Balance", "Last Withdrawn", "Withdrawals"].map(
-                        (h) => (
-                          <th key={h}>{h}</th>
-                        ),
-                      )}
+                      {["User", "Amount", "Date", "Status"].map((h) => (
+                        <th key={h}>{h}</th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {withdrawalSuccessUsers.map((u) => (
+                    {reversibleWithdrawals.map((w) => (
                       <tr
-                        key={u.uid}
+                        key={w.txnId}
                         onClick={() => {
-                          setRevSel(u);
+                          setRevWithdrawal(w);
                           setRevErr("");
                         }}
+                        style={{ cursor: "pointer" }}
                       >
                         <td data-label="User">
                           <p
@@ -2038,7 +2092,7 @@ export default function AdminDashboard() {
                               margin: 0,
                             }}
                           >
-                            {u.email}
+                            {w.email}
                           </p>
                           <p
                             style={{
@@ -2047,21 +2101,28 @@ export default function AdminDashboard() {
                               margin: 0,
                             }}
                           >
-                            @{u.username || "—"}
+                            @{w.userName}
                           </p>
                         </td>
-                        <td data-label="Balance" className="amount">
-                          ${fmt(u.balance)}
-                        </td>
                         <td
-                          data-label="Last Withdrawn"
+                          data-label="Amount"
                           className="amount"
                           style={{ color: "#f59e0b" }}
                         >
-                          ${fmt(u.lastWithdrawnAmount)}
+                          ${fmt(w.amount)}
                         </td>
-                        <td data-label="Withdrawals">
-                          {u.withdrawalCompletedCount || 1}
+                        <td
+                          data-label="Date"
+                          style={{ color: "#9ca3af", fontSize: "11px" }}
+                        >
+                          {w.timestamp ? w.timestamp.toLocaleString() : "—"}
+                        </td>
+                        <td data-label="Status">
+                          {w.isLegacy ? (
+                            <span className="pill pill-yellow">Legacy</span>
+                          ) : (
+                            <span className="pill pill-green">Available</span>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -2106,6 +2167,12 @@ export default function AdminDashboard() {
                   value: walletFailedUsers.length,
                   color: "#ef4444",
                   bg: "rgba(239,68,68,0.1)",
+                },
+                {
+                  label: "Reversible Withdrawals",
+                  value: reversibleWithdrawals.length,
+                  color: "#f59e0b",
+                  bg: "rgba(245,158,11,0.1)",
                 },
               ].map((s) => (
                 <div
