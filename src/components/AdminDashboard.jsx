@@ -273,9 +273,7 @@ export default function AdminDashboard() {
       setTgtSel((p) => (p ? list.find((u) => u.uid === p.uid) || p : null));
       setVsnSel((p) => (p ? list.find((u) => u.uid === p.uid) || p : null));
       setWfSel((p) => (p ? list.find((u) => u.uid === p.uid) || p : null));
-      setRevWithdrawal((p) =>
-        p ? list.find((u) => u.uid === p.uid) || p : null,
-      );
+      setRevWithdrawal((p) => p || null);
       setUnverifySel((p) =>
         p ? list.find((u) => u.uid === p.uid) || p : null,
       );
@@ -1639,7 +1637,7 @@ export default function AdminDashboard() {
                     : "?";
                   return (
                     <option key={t.txnId} value={t.txnId}>
-                      {t.userEmail} — ${fmt(t.amount)} — {minsLeft}m left
+                      {t.userName} — ${fmt(t.amount)} — {minsLeft}m left
                     </option>
                   );
                 })}
@@ -1774,6 +1772,7 @@ export default function AdminDashboard() {
                             setProcSel(t);
                             setProcErr("");
                           }}
+                          style={{ cursor: "pointer" }}
                         >
                           <td data-label="User">
                             <p
@@ -2143,8 +2142,19 @@ export default function AdminDashboard() {
         <AdminHeader title="Mark Wallet Failed" showBack />
         <div className="sub-page-wrap">
           <div className="card">
-            <div className="info-banner info-banner-red">
-              <p className="info-banner-title">How this works</p>
+            <div
+              className="info-banner"
+              style={{
+                background: "rgba(239,68,68,0.08)",
+                border: "1px solid rgba(239,68,68,0.2)",
+                borderRadius: "10px",
+                padding: "12px 16px",
+                marginBottom: "18px",
+              }}
+            >
+              <p className="info-banner-title" style={{ color: "#ef4444" }}>
+                How this works
+              </p>
               <p className="info-banner-body">
                 Log a wallet connection failure for a user. It will appear in
                 both the admin transaction history and the{" "}
@@ -2167,12 +2177,6 @@ export default function AdminDashboard() {
                   value: walletFailedUsers.length,
                   color: "#ef4444",
                   bg: "rgba(239,68,68,0.1)",
-                },
-                {
-                  label: "Reversible Withdrawals",
-                  value: reversibleWithdrawals.length,
-                  color: "#f59e0b",
-                  bg: "rgba(245,158,11,0.1)",
                 },
               ].map((s) => (
                 <div
@@ -2200,8 +2204,11 @@ export default function AdminDashboard() {
                 <option value="">Choose a user...</option>
                 {users.map((u) => (
                   <option key={u.uid} value={u.uid}>
-                    {u.email} — ${fmt(u.balance)}
-                    {u.walletConnectionFailed ? " Prev. Failed" : ""}
+                    {`${u.firstName} ${u.lastName}`.trim() ||
+                      u.username ||
+                      u.email}{" "}
+                    — ${fmt(u.balance)}
+                    {u.walletConnectionFailed ? " • Prev. Failed" : ""}
                   </option>
                 ))}
               </select>
@@ -2327,23 +2334,31 @@ export default function AdminDashboard() {
                           setWfSel(u);
                           setWfErr("");
                         }}
+                        style={{ cursor: "pointer" }}
                       >
                         <td data-label="User">
-                          <div className="table-user">
-                            <div className="table-avatar">
-                              {u.picture ? (
-                                <img src={u.picture} alt="" />
-                              ) : (
-                                (u.firstName?.[0] || u.email[0]).toUpperCase()
-                              )}
-                            </div>
-                            <div className="table-user-info">
-                              <p className="table-user-email">{u.email}</p>
-                              <p className="table-user-handle">
-                                @{u.username || "—"}
-                              </p>
-                            </div>
-                          </div>
+                          <p
+                            style={{
+                              color: "#fff",
+                              fontSize: "12px",
+                              fontWeight: 600,
+                              margin: 0,
+                            }}
+                          >
+                            {u.email}
+                          </p>
+                          <p
+                            style={{
+                              color: "#6b7280",
+                              fontSize: "10px",
+                              margin: 0,
+                            }}
+                          >
+                            @
+                            {`${u.firstName} ${u.lastName}`.trim() ||
+                              u.username ||
+                              u.email}
+                          </p>
                         </td>
                         <td data-label="Balance" className="amount">
                           ${fmt(u.balance)}
@@ -2381,6 +2396,7 @@ export default function AdminDashboard() {
             issue a VSN code below.
           </div>
         )}
+
         <div className="sub-page-wrap">
           {/* ── CARD: Deposit to User (VSN) ── */}
           <div className="card">
@@ -2390,18 +2406,58 @@ export default function AdminDashboard() {
               </span>
               <h2 className="card-title">Deposit to User (VSN)</h2>
             </div>
-            <p
+            <div
+              className="info-banner"
               style={{
-                color: "#6b7280",
-                fontSize: "13px",
-                margin: "0 0 16px",
-                lineHeight: 1.6,
+                background: "rgba(34,197,94,0.08)",
+                border: "1px solid rgba(34,197,94,0.2)",
+                borderRadius: "10px",
+                padding: "12px 16px",
+                marginBottom: "18px",
               }}
             >
-              Add funds to the selected user's balance. This reflects
-              immediately in their dashboard and creates a VSN Deposit
-              transaction in their history.
-            </p>
+              <p className="info-banner-title" style={{ color: "#22c55e" }}>
+                How this works
+              </p>
+              <p className="info-banner-body">
+                Add funds to the selected user's balance. This reflects
+                immediately in their dashboard and creates a VSN Deposit
+                transaction in their history.
+              </p>
+            </div>
+            <div className="stats-row stats-row-3">
+              {[
+                {
+                  label: "Awaiting Support",
+                  value: pendingWithdrawals.length,
+                  color: "#a78bfa",
+                  bg: "rgba(124,92,252,0.1)",
+                },
+                {
+                  label: "VSN Sent",
+                  value: vsnPending.length,
+                  color: "#f59e0b",
+                  bg: "rgba(245,158,11,0.1)",
+                },
+                {
+                  label: "VSN Verified",
+                  value: vsnVerified.length,
+                  color: "#22c55e",
+                  bg: "rgba(34,197,94,0.1)",
+                },
+              ].map((s) => (
+                <div
+                  key={s.label}
+                  className="stat-box"
+                  style={{ background: s.bg }}
+                >
+                  <p className="stat-value" style={{ color: s.color }}>
+                    {s.value}
+                  </p>
+                  <p className="stat-label">{s.label}</p>
+                </div>
+              ))}
+            </div>
             <div className="form-group">
               <label className="form-label">Select User</label>
               <select
@@ -2418,9 +2474,12 @@ export default function AdminDashboard() {
                 <option value="">Choose a user...</option>
                 {users.map((u) => (
                   <option key={u.uid} value={u.uid}>
-                    {u.email} — ${fmt(u.balance)}
+                    {`${u.firstName} ${u.lastName}`.trim() ||
+                      u.username ||
+                      u.email}{" "}
+                    — ${fmt(u.balance)}
                     {u.withdrawalStatus === "pending_support"
-                      ? " Withdrawal Pending"
+                      ? " • Withdrawal Pending"
                       : ""}
                     {u.vsn_required && !u.vsn_verified ? " • VSN Sent" : ""}
                     {u.vsn_verified ? " • Verified" : ""}
@@ -2515,7 +2574,7 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          {/* ── NEW CARD: Unverify / Reset VSN ── */}
+          {/* ── CARD: Unverify / Reset VSN ── */}
           <div className="card">
             <div className="card-header">
               <span
@@ -2554,33 +2613,6 @@ export default function AdminDashboard() {
                 can instantly issue a new code
               </p>
             </div>
-            <div className="stats-row">
-              {[
-                {
-                  label: "VSN Verified Users",
-                  value: vsnVerifiedUsers.length,
-                  color: "#22c55e",
-                  bg: "rgba(34,197,94,0.1)",
-                },
-                {
-                  label: "VSN Pending",
-                  value: vsnPending.length,
-                  color: "#f59e0b",
-                  bg: "rgba(245,158,11,0.1)",
-                },
-              ].map((s) => (
-                <div
-                  key={s.label}
-                  className="stat-box"
-                  style={{ background: s.bg }}
-                >
-                  <p className="stat-value" style={{ color: s.color }}>
-                    {s.value}
-                  </p>
-                  <p className="stat-label">{s.label}</p>
-                </div>
-              ))}
-            </div>
             <div className="form-group">
               <label className="form-label">
                 Select Verified User to Reset
@@ -2598,7 +2630,10 @@ export default function AdminDashboard() {
                 <option value="">Choose a VSN-verified user...</option>
                 {vsnVerifiedUsers.map((u) => (
                   <option key={u.uid} value={u.uid}>
-                    {u.email} — Balance: ${fmt(u.balance)} — ✓ Verified
+                    {`${u.firstName} ${u.lastName}`.trim() ||
+                      u.username ||
+                      u.email}{" "}
+                    — Balance: ${fmt(u.balance)} — ✓ Verified
                   </option>
                 ))}
               </select>
@@ -2684,7 +2719,6 @@ export default function AdminDashboard() {
                 Clear
               </button>
             </div>
-            {/* Table of verified users for quick selection */}
             {vsnVerifiedUsers.length > 0 && (
               <div style={{ marginTop: "20px" }}>
                 <p
@@ -2736,7 +2770,10 @@ export default function AdminDashboard() {
                                 margin: 0,
                               }}
                             >
-                              @{u.username || "—"}
+                              @
+                              {`${u.firstName} ${u.lastName}`.trim() ||
+                                u.username ||
+                                u.email}
                             </p>
                           </td>
                           <td data-label="Balance" className="amount">
@@ -2773,7 +2810,16 @@ export default function AdminDashboard() {
               </span>
               <h2 className="card-title">Generate VSN Code</h2>
             </div>
-            <div className="info-banner info-banner-purple">
+            <div
+              className="info-banner"
+              style={{
+                background: "rgba(124,92,252,0.08)",
+                border: "1px solid rgba(124,92,252,0.2)",
+                borderRadius: "10px",
+                padding: "12px 16px",
+                marginBottom: "18px",
+              }}
+            >
               <p className="info-banner-title" style={{ color: "#a78bfa" }}>
                 How this works
               </p>
@@ -2781,39 +2827,6 @@ export default function AdminDashboard() {
                 Generate a VSN code for a user who has contacted support.
                 {unverifyOk && " The user selected above has been pre-filled."}
               </p>
-            </div>
-            <div className="stats-row stats-row-3">
-              {[
-                {
-                  label: "Awaiting Support",
-                  value: pendingWithdrawals.length,
-                  color: "#a78bfa",
-                  bg: "rgba(124,92,252,0.1)",
-                },
-                {
-                  label: "VSN Sent",
-                  value: vsnPending.length,
-                  color: "#f59e0b",
-                  bg: "rgba(245,158,11,0.1)",
-                },
-                {
-                  label: "VSN Verified",
-                  value: vsnVerified.length,
-                  color: "#22c55e",
-                  bg: "rgba(34,197,94,0.1)",
-                },
-              ].map((s) => (
-                <div
-                  key={s.label}
-                  className="stat-box"
-                  style={{ background: s.bg }}
-                >
-                  <p className="stat-value" style={{ color: s.color }}>
-                    {s.value}
-                  </p>
-                  <p className="stat-label">{s.label}</p>
-                </div>
-              ))}
             </div>
             <div className="form-group">
               <label className="form-label">Select User</label>
@@ -2831,9 +2844,12 @@ export default function AdminDashboard() {
                 <option value="">Choose a user...</option>
                 {users.map((u) => (
                   <option key={u.uid} value={u.uid}>
-                    {u.email} — ${fmt(u.balance)}
+                    {`${u.firstName} ${u.lastName}`.trim() ||
+                      u.username ||
+                      u.email}{" "}
+                    — ${fmt(u.balance)}
                     {u.withdrawalStatus === "pending_support"
-                      ? " Withdrawal Pending"
+                      ? " • Withdrawal Pending"
                       : ""}
                     {u.vsn_required && !u.vsn_verified ? " • VSN Required" : ""}
                     {u.vsn_verified ? " • Verified" : ""}
@@ -2970,6 +2986,7 @@ export default function AdminDashboard() {
                           setVsnErr("");
                           setVsnDepositErr("");
                         }}
+                        style={{ cursor: "pointer" }}
                       >
                         <td data-label="User">
                           <p
@@ -3022,7 +3039,6 @@ export default function AdminDashboard() {
       </div>
     );
   }
-
   // ─────────────────── MAIN VIEW ───────────────────
   return (
     <div className="admin-dashboard">
