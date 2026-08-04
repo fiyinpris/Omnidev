@@ -16,6 +16,7 @@ import {
   getDoc,
   where,
   increment,
+  runTransaction,
 } from "firebase/firestore";
 
 const ADMIN_EMAIL = "fiyinolaleke@gmail.com";
@@ -154,7 +155,7 @@ export default function AdminDashboard() {
   const [txnFilterMonth, setTxnFilterMonth] = useState("all");
   const [txnFilterYear, setTxnFilterYear] = useState("all");
   const txnScrollRef = useRef(null);
-
+  const processingReversals = useRef(new Set());
   const [vsnSel, setVsnSel] = useState(null);
   const [vsnCode, setVsnCode] = useState("");
   const [vsnLoading, setVsnLoading] = useState(false);
@@ -179,8 +180,11 @@ export default function AdminDashboard() {
             timestamp: h.timestamp?.toDate?.() || h.timestamp,
             uid: u.uid,
             email: u.email,
+            username: u.username || "",
+            firstName: u.firstName || "",
+            lastName: u.lastName || "",
             userName:
-              `${u.firstName} ${u.lastName}`.trim() || u.username || u.email,
+              u.username || `${u.firstName} ${u.lastName}`.trim() || u.email,
           });
         }
       });
@@ -191,6 +195,9 @@ export default function AdminDashboard() {
           timestamp: null,
           uid: u.uid,
           email: u.email,
+          username: u.username || "",
+          firstName: u.firstName || "",
+          lastName: u.lastName || "",
           userName:
             `${u.firstName} ${u.lastName}`.trim() || u.username || u.email,
           isLegacy: true,
@@ -303,7 +310,7 @@ export default function AdminDashboard() {
             txnId: d.id,
             userEmail: u.email,
             userName:
-              `${u.firstName} ${u.lastName}`.trim() || u.username || u.email,
+              u.username || `${u.firstName} ${u.lastName}`.trim() || u.email,
             userBalance: u.balance,
             ...d.data(),
             timestamp: d.data().timestamp?.toDate?.() || new Date(),
@@ -330,6 +337,7 @@ export default function AdminDashboard() {
           ...d.data(),
           firesAt: d.data().firesAt?.toMillis?.() || d.data().firesAt,
         }));
+
         setPendingReversals(
           pending.map((r) => ({
             revDocId: r.id,
@@ -339,40 +347,59 @@ export default function AdminDashboard() {
             firesAt: r.firesAt,
           })),
         );
+
         for (const rev of pending) {
           if (rev.firesAt && now >= rev.firesAt) {
+            // Guard: skip if this tab is already working on it
+            if (processingReversals.current.has(rev.id)) continue;
+            processingReversals.current.add(rev.id);
+
             try {
-              const ts = Timestamp.now();
-              const userRef = doc(db, "users", rev.userId);
-              const userSnap = await getDoc(userRef);
-              const currentBalance = userSnap.data()?.balance || 0;
-              const newBalance = currentBalance + rev.amount;
-              await updateDoc(userRef, { balance: newBalance });
-              await setDoc(
-                doc(collection(db, "users", rev.userId, "transactions")),
-                {
+              await runTransaction(db, async (transaction) => {
+                const revRef = doc(db, "scheduledReversals", rev.id);
+                const revSnap = await transaction.get(revRef);
+
+                // Another client already processed it — abort
+                if (!revSnap.exists() || revSnap.data().status !== "pending") {
+                  return;
+                }
+
+                const userRef = doc(db, "users", rev.userId);
+                const userSnap = await transaction.get(userRef);
+                const currentBalance = userSnap.data()?.balance || 0;
+                const newBalance = currentBalance + rev.amount;
+                const ts = Timestamp.now();
+
+                transaction.update(userRef, { balance: newBalance });
+                transaction.update(revRef, {
+                  status: "completed",
+                  completedAt: ts,
+                });
+
+                const txnRef = doc(
+                  collection(db, "users", rev.userId, "transactions"),
+                );
+                transaction.set(txnRef, {
                   type: "reversal",
                   amount: rev.amount,
                   status: "successful",
                   timestamp: ts,
                   description: `Reversal — $${fmt(rev.amount)} returned to your account`,
-                },
-              );
-              await updateDoc(doc(db, "scheduledReversals", rev.id), {
-                status: "completed",
-                completedAt: ts,
-              });
-              await setDoc(doc(collection(db, "adminTransactions")), {
-                userId: rev.userId,
-                userEmail: rev.userEmail,
-                userName: rev.userName,
-                type: "reversal",
-                amount: rev.amount,
-                timestamp: ts,
-                status: "completed",
-                adminEmail: adminUser.email,
-                balanceBefore: currentBalance,
-                balanceAfter: newBalance,
+                });
+
+                const adminTxnRef = doc(collection(db, "adminTransactions"));
+                transaction.set(adminTxnRef, {
+                  userId: rev.userId,
+                  userEmail: rev.userEmail,
+                  userName: rev.userName,
+                  type: "reversal",
+                  amount: rev.amount,
+                  timestamp: ts,
+                  status: "completed",
+                  adminEmail: adminUser.email,
+                  balanceBefore: currentBalance,
+                  balanceAfter: newBalance,
+                });
               });
             } catch (e) {
               console.error("Reversal execution error:", e);
@@ -384,26 +411,12 @@ export default function AdminDashboard() {
               } catch (err) {
                 console.error("Failed to mark reversal as failed:", err);
               }
+            } finally {
+              processingReversals.current.delete(rev.id);
             }
           }
         }
       },
-    );
-    return () => unsub();
-  }, [adminUser]);
-
-  useEffect(() => {
-    if (!adminUser) return;
-    const unsub = onSnapshot(
-      query(collection(db, "adminTransactions"), orderBy("timestamp", "desc")),
-      (snap) =>
-        setTxns(
-          snap.docs.map((d) => ({
-            id: d.id,
-            ...d.data(),
-            timestamp: d.data().timestamp?.toDate?.() || new Date(),
-          })),
-        ),
     );
     return () => unsub();
   }, [adminUser]);
@@ -1957,7 +1970,7 @@ export default function AdminDashboard() {
                 <option value="">Choose a successful withdrawal...</option>
                 {reversibleWithdrawals.map((w) => (
                   <option key={w.txnId} value={w.txnId}>
-                    {w.userName} — ${fmt(w.amount)}
+                    @{w.username || "no username"} — ${fmt(w.amount)}
                     {w.isLegacy ? " (Legacy)" : ""}
                     {w.timestamp
                       ? ` — ${w.timestamp.toLocaleDateString()}`
@@ -1969,7 +1982,14 @@ export default function AdminDashboard() {
             {revWithdrawal && (
               <div className="info-box">
                 <p className="info-row">
-                  User: <strong>{revWithdrawal.email}</strong>
+                  Name:{" "}
+                  <strong>
+                    {`${revWithdrawal.firstName} ${revWithdrawal.lastName}`.trim() ||
+                      revWithdrawal.userName}
+                  </strong>
+                </p>
+                <p className="info-row">
+                  Email: <strong>{revWithdrawal.email}</strong>
                 </p>
                 <p className="info-row">
                   Amount to reverse:{" "}
@@ -2204,10 +2224,7 @@ export default function AdminDashboard() {
                 <option value="">Choose a user...</option>
                 {users.map((u) => (
                   <option key={u.uid} value={u.uid}>
-                    {`${u.firstName} ${u.lastName}`.trim() ||
-                      u.username ||
-                      u.email}{" "}
-                    — ${fmt(u.balance)}
+                    @{u.username || "no username"} — ${fmt(u.balance)}
                     {u.walletConnectionFailed ? " • Prev. Failed" : ""}
                   </option>
                 ))}
@@ -2474,10 +2491,7 @@ export default function AdminDashboard() {
                 <option value="">Choose a user...</option>
                 {users.map((u) => (
                   <option key={u.uid} value={u.uid}>
-                    {`${u.firstName} ${u.lastName}`.trim() ||
-                      u.username ||
-                      u.email}{" "}
-                    — ${fmt(u.balance)}
+                    @{u.username || "no username"} — ${fmt(u.balance)}
                     {u.withdrawalStatus === "pending_support"
                       ? " • Withdrawal Pending"
                       : ""}
@@ -2630,10 +2644,8 @@ export default function AdminDashboard() {
                 <option value="">Choose a VSN-verified user...</option>
                 {vsnVerifiedUsers.map((u) => (
                   <option key={u.uid} value={u.uid}>
-                    {`${u.firstName} ${u.lastName}`.trim() ||
-                      u.username ||
-                      u.email}{" "}
-                    — Balance: ${fmt(u.balance)} — ✓ Verified
+                    @{u.username || "no username"} — Balance: ${fmt(u.balance)}{" "}
+                    — ✓ Verified
                   </option>
                 ))}
               </select>
@@ -2844,10 +2856,7 @@ export default function AdminDashboard() {
                 <option value="">Choose a user...</option>
                 {users.map((u) => (
                   <option key={u.uid} value={u.uid}>
-                    {`${u.firstName} ${u.lastName}`.trim() ||
-                      u.username ||
-                      u.email}{" "}
-                    — ${fmt(u.balance)}
+                    @{u.username || "no username"} — ${fmt(u.balance)}
                     {u.withdrawalStatus === "pending_support"
                       ? " • Withdrawal Pending"
                       : ""}
@@ -3111,7 +3120,7 @@ export default function AdminDashboard() {
               <option value="">Choose a user...</option>
               {users.map((u) => (
                 <option key={u.uid} value={u.uid}>
-                  {u.email} — ${fmt(u.balance)}{" "}
+                  @{u.username || "no username"} — ${fmt(u.balance)}{" "}
                   {u.hasBeenFunded ? "(Funded)" : "(New)"}
                 </option>
               ))}
@@ -3220,7 +3229,8 @@ export default function AdminDashboard() {
                           : "(Ready)";
                   return (
                     <option key={u.uid} value={u.uid}>
-                      {u.email} — ${fmt(u.balance)} {statusLabel}
+                      @{u.username || "no username"} — ${fmt(u.balance)}{" "}
+                      {statusLabel}
                     </option>
                   );
                 })}
