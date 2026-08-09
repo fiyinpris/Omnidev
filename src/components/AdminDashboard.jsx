@@ -289,6 +289,24 @@ export default function AdminDashboard() {
   }, [adminUser]);
 
   useEffect(() => {
+    if (!adminUser) return;
+    const q = query(
+      collection(db, "adminTransactions"),
+      orderBy("timestamp", "desc"),
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      const docs = snap.docs.map((d) => ({
+        id: d.id,
+        ...d.data(),
+        timestamp: d.data().timestamp?.toDate?.() || new Date(),
+      }));
+      setTxns(docs);
+      setTxnPage(1);
+    });
+    return () => unsub();
+  }, [adminUser]);
+
+  useEffect(() => {
     if (!adminUser || users.length === 0) return;
     const unsubs = [];
     const update = (uid, docs) => {
