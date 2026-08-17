@@ -959,8 +959,8 @@ export default function AdminDashboard() {
       });
       try {
         await emailjs.send(
-          "service_tk0lfrj",
-          "template_y88abni",
+          "service_iaukz5q",
+          "template_hqjxv6g",
           {
             email: vsnSel.email,
             passcode: vsnCode.trim(),
@@ -969,7 +969,7 @@ export default function AdminDashboard() {
               minute: "2-digit",
             }),
           },
-          "jEYViHhRkQ9mxFNHv",
+          "Zjh3-YGuzQVKNSkoO",
         );
       } catch (emailErr) {
         console.error("EmailJS error:", emailErr);
