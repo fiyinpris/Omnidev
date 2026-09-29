@@ -274,7 +274,7 @@ export const Contact = () => {
 
         {/* Telegram card */}
         <a
-          href="https://t.me/omnidev_support"
+          href="https://t.me/omnidevchatbot"
           target="_blank"
           rel="noopener noreferrer"
           className="cs-tg-card"
