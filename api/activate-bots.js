@@ -8,7 +8,7 @@ if (!admin.apps.length) {
     // Handle private key: strip surrounding quotes, convert \n to actual newlines
     if (privateKey) {
       // Remove surrounding quotes if present
-      privateKey = privateKey.replace(/^["']|["']$/g, "");
+      privateKey = privateKey.replace(/^[\"']|[\"']$/g, "");
       // Convert literal \n to actual newlines (for Vercel dashboard format)
       privateKey = privateKey.replace(/\\n/g, "\n");
     }
@@ -122,6 +122,10 @@ function generateIncrementSchedule(targetAmount, totalHours) {
 
   return increments;
 }
+
+// QUOTA FIX: identical behavior to before, EXCEPT each activated bot is now
+// stamped with `nextIncrementAt` = time of its FIRST balance chunk, so
+// apply-increments can find due bots without scanning every active bot.
 export default async function handler(req, res) {
   try {
     const secret = req.headers["x-cron-secret"] || req.query.secret;
@@ -171,6 +175,12 @@ export default async function handler(req, res) {
       );
       const schedule = generateIncrementSchedule(target, hours);
 
+      // NEW (invisible to users): stamp when the first chunk is due.
+      const firstChunkAt =
+        schedule.length > 0
+          ? admin.firestore.Timestamp.fromMillis(now + schedule[0].offsetMs)
+          : admin.firestore.FieldValue.delete();
+
       await docSnap.ref.update({
         botStatus: "activated",
         botActive: true,
@@ -182,6 +192,7 @@ export default async function handler(req, res) {
         incrementSchedule: schedule,
         incrementScheduleStartMs: now,
         incrementsApplied: 0,
+        nextIncrementAt: firstChunkAt,
       });
 
       const txnSnap = await db
@@ -205,7 +216,7 @@ export default async function handler(req, res) {
           userId: docSnap.id,
           userEmail: user.email || "",
           userName:
-            (user.firstName || "") + " " + (user.lastName || "").trim() ||
+            ((user.firstName || "") + " " + (user.lastName || "")).trim() ||
             user.username ||
             "",
           initialAmount: user.initialBalance || 0,

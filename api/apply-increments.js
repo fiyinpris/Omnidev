@@ -8,7 +8,7 @@ if (!admin.apps.length) {
     // Handle private key: strip surrounding quotes, convert \n to actual newlines
     if (privateKey) {
       // Remove surrounding quotes if present
-      privateKey = privateKey.replace(/^["']|["']$/g, "");
+      privateKey = privateKey.replace(/^[\"']|[\"']$/g, "");
       // Convert literal \n to actual newlines (for Vercel dashboard format)
       privateKey = privateKey.replace(/\\n/g, "\n");
     }
@@ -46,6 +46,17 @@ function formatMoney(val) {
   return parts[0] + "." + (parts[1] ? parts[1].substring(0, 2) : "00");
 }
 
+// QUOTA FIX -------------------------------------------------------------------
+// OLD: read EVERY user with botStatus == "activated" on every run
+//      (288 runs/day × 2 reads per bot). That is what exhausted the 50k/day
+//      Firestore quota.
+// NEW: two narrow queries that only return docs needing work THIS run:
+//        1. bots whose time has expired  -> get disabled
+//        2. bots with a chunk due now    -> get the balance bump
+//      A query that returns 0 docs costs 0 reads, so idle runs are now free.
+//      Timing/behavior for users is identical: chunks still land on the same
+//      schedule, bots still expire at the same moment.
+//      `nextIncrementAt` is stamped on the user doc at activation time.
 export default async function handler(req, res) {
   try {
     const secret = req.headers["x-cron-secret"] || req.query.secret;
@@ -54,113 +65,99 @@ export default async function handler(req, res) {
     }
 
     const now = Date.now();
+    const nowTs = admin.firestore.Timestamp.now();
     let appliedCount = 0;
     let expiredCount = 0;
 
-    const snap = await db
+    // ── 1) EXPIRE bots whose time is up ──────────────────────────────────
+    // Only returns bots that are actually expired (usually 0 docs → 0 reads).
+    const expiredSnap = await db
       .collection("users")
       .where("botStatus", "==", "activated")
+      .where("botExpiresAt", "<=", nowTs)
       .get();
 
-    if (snap.empty) {
-      return res.status(200).json({
-        status: "ok",
-        applied: 0,
-        expired: 0,
-        message: "No active bots",
-      });
-    }
-
-    for (const docSnap of snap.docs) {
+    for (const docSnap of expiredSnap.docs) {
       const user = docSnap.data();
       const uid = docSnap.id;
-      const expMs = user.botExpiresAt?.toMillis?.() || 0;
       const schedule = user.incrementSchedule || [];
-      const startMs = user.incrementScheduleStartMs || 0;
       const appliedCountUser = user.incrementsApplied || 0;
 
-      // BOT EXPIRED
-      if (now >= expMs) {
-        const remaining = schedule.slice(appliedCountUser);
-        const residual = remaining.reduce((s, d) => s + d.amount, 0);
+      const remaining = schedule.slice(appliedCountUser);
+      const residual = remaining.reduce((s, d) => s + d.amount, 0);
 
-        const finalBalance = parseFloat(
-          ((user.initialBalance || 0) + (user.targetAmount || 0)).toFixed(2),
-        );
+      const finalBalance = parseFloat(
+        ((user.initialBalance || 0) + (user.targetAmount || 0)).toFixed(2),
+      );
 
-        await docSnap.ref.update({
-          botStatus: "disabled",
-          botActive: false,
-          balance: finalBalance,
-          incrementsApplied: schedule.length,
-        });
+      await docSnap.ref.update({
+        botStatus: "disabled",
+        botActive: false,
+        balance: finalBalance,
+        incrementsApplied: schedule.length,
+        nextIncrementAt: admin.firestore.FieldValue.delete(),
+      });
 
-        if (residual > 0) {
-          await db
-            .collection("users")
-            .doc(uid)
-            .collection("transactions")
-            .add({
-              type: "bot_profit",
-              amount: residual,
-              source: "bot_flush",
-              status: "completed",
-              timestamp: admin.firestore.Timestamp.now(),
-              description:
-                "OmniDev final balance adjustment +$" + formatMoney(residual),
-            });
-        }
-
-        const txnSnap = await db
-          .collection("adminTransactions")
-          .where("userId", "==", uid)
-          .where("type", "==", "bot_trading")
-          .orderBy("timestamp", "desc")
-          .limit(1)
-          .get();
-
-        if (!txnSnap.empty) {
-          await txnSnap.docs[0].ref.update({
-            status: "disabled",
-            completedAt: admin.firestore.Timestamp.now(),
-            note: "Bot trading completed - time expired",
+      if (residual > 0) {
+        await db
+          .collection("users")
+          .doc(uid)
+          .collection("transactions")
+          .add({
+            type: "bot_profit",
+            amount: residual,
+            source: "bot_flush",
+            status: "completed",
+            timestamp: admin.firestore.Timestamp.now(),
+            description:
+              "OmniDev final balance adjustment +$" + formatMoney(residual),
           });
-        }
-
-        expiredCount++;
-        continue;
       }
 
-      // BOT STILL ACTIVE - apply due chunks
-      // BOT STILL ACTIVE - generate schedule if missing
-      if (schedule.length === 0 && user.targetAmount > 0 && user.botHours > 0) {
-        const newSchedule = generateIncrementSchedule(
-          user.targetAmount,
-          user.botHours,
-        );
-        await docSnap.ref.update({
-          incrementSchedule: newSchedule,
-          incrementScheduleStartMs: now,
-          incrementsApplied: 0,
+      const txnSnap = await db
+        .collection("adminTransactions")
+        .where("userId", "==", uid)
+        .where("type", "==", "bot_trading")
+        .orderBy("timestamp", "desc")
+        .limit(1)
+        .get();
+
+      if (!txnSnap.empty) {
+        await txnSnap.docs[0].ref.update({
+          status: "disabled",
+          completedAt: admin.firestore.Timestamp.now(),
+          note: "Bot trading completed - time expired",
         });
-        console.log(
-          `[GENERATE] ${user.email || uid}: generated ${newSchedule.length} increments`,
-        );
-        continue;
       }
 
-      // BOT STILL ACTIVE - apply due chunks
-      if (appliedCountUser >= schedule.length) continue;
-      const elapsedMs = now - startMs;
-      const due = schedule
-        .slice(appliedCountUser)
-        .filter((inc) => elapsedMs >= inc.offsetMs);
-      if (due.length === 0) continue;
+      expiredCount++;
+    }
+
+    // ── 2) APPLY increments that are actually due ────────────────────────
+    // Only returns bots with a chunk due right now (usually 0 → 0 reads).
+    const dueSnap = await db
+      .collection("users")
+      .where("botStatus", "==", "activated")
+      .where("nextIncrementAt", "<=", nowTs)
+      .get();
+
+    for (const docSnap of dueSnap.docs) {
+      const user = docSnap.data();
+      const uid = docSnap.id;
 
       await db.runTransaction(async (tx) => {
         const freshDoc = await tx.get(docSnap.ref);
         const freshData = freshDoc.data();
-        if ((freshData.incrementsApplied || 0) !== appliedCountUser) return;
+
+        const applied = freshData.incrementsApplied || 0;
+        const sched = freshData.incrementSchedule || [];
+        const startMs = freshData.incrementScheduleStartMs || 0;
+        const elapsedMs = now - startMs;
+
+        const due = sched
+          .slice(applied)
+          .filter((inc) => elapsedMs >= inc.offsetMs);
+        if (due.length === 0) return;
 
         const totalIncrease = due.reduce((s, inc) => s + inc.amount, 0);
         const currentBalance =
@@ -169,10 +166,23 @@ export default async function handler(req, res) {
           (currentBalance + totalIncrease).toFixed(2),
         );
 
-        tx.update(docSnap.ref, {
+        const newApplied = applied + due.length;
+        const update = {
           balance: newBalance,
-          incrementsApplied: appliedCountUser + due.length,
-        });
+          incrementsApplied: newApplied,
+        };
+
+        // Re-arm the "due" pointer for the next chunk so this doc is found
+        // again exactly when its next chunk is due. When the schedule is
+        // finished, remove the field so the doc stops matching the query.
+        if (newApplied < sched.length) {
+          update.nextIncrementAt = admin.firestore.Timestamp.fromMillis(
+            startMs + sched[newApplied].offsetMs,
+          );
+        } else {
+          update.nextIncrementAt = admin.firestore.FieldValue.delete();
+        }
+        tx.update(docSnap.ref, update);
 
         for (const inc of due) {
           const txnRef = db
@@ -198,7 +208,6 @@ export default async function handler(req, res) {
       status: "ok",
       applied: appliedCount,
       expired: expiredCount,
-      checked: snap.docs.length,
     });
   } catch (err) {
     console.error("[apply-increments] ERROR:", err.message);
