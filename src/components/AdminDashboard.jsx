@@ -40,6 +40,37 @@ const ADMIN_CSS = `
   .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .form-select, .form-input { max-width: 100%; }
 }
+
+/* ── Searchable dropdown combo: search input merged with the select ── */
+.combo-box { border: 1px solid #333; border-radius: 12px; overflow: hidden; background: #111; }
+.combo-search { width: 100%; box-sizing: border-box; background: #111; border: none; border-bottom: 1px solid #222; padding: 11px 14px; color: #fff; font-size: 14px; outline: none; display: block; }
+.combo-search::placeholder { color: #6b7280; }
+.combo-select { width: 100%; box-sizing: border-box; background: #111; border: none; padding: 12px 14px; color: #fff; font-size: 14px; outline: none; display: block; cursor: pointer; }
+.combo-select option { background: #111; color: #fff; }
+
+/* ── Transactions table: stack rows as cards on small screens so the table never slides away ── */
+.txn-scroll-area { max-height: 65vh; overflow-y: auto; overflow-x: hidden; }
+@media (max-width: 768px) {
+  .txn-card { padding: 14px; }
+  .txn-card-header { flex-direction: column; align-items: stretch !important; gap: 10px; }
+  .txn-card-title-row { flex-wrap: wrap; }
+  .txn-filters { width: 100%; }
+  .txn-filter-select { flex: 1 1 0; min-width: 0; }
+  .txn-card .table-wrap { overflow: visible; }
+  .txn-scroll-area { max-height: none; overflow-x: hidden; -webkit-overflow-scrolling: touch; }
+  .txn-scroll-area table.admin-table { width: 100% !important; min-width: 0 !important; table-layout: auto; }
+  .txn-scroll-area table.admin-table thead { display: none; }
+  .txn-scroll-area table.admin-table tbody,
+  .txn-scroll-area table.admin-table tr { display: block; width: 100%; }
+  .txn-scroll-area table.admin-table tr { border: 1px solid #262626; border-radius: 12px; margin-bottom: 10px; background: #141414; overflow: hidden; }
+  .txn-scroll-area table.admin-table td { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px !important; border-bottom: 1px solid rgba(255,255,255,.05); font-size: 12px; white-space: normal; word-break: break-word; overflow-wrap: anywhere; }
+  .txn-scroll-area table.admin-table td:last-child { border-bottom: none; }
+  .txn-scroll-area table.admin-table td::before { content: attr(data-label); color: #6b7280; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; flex-shrink: 0; }
+  .txn-scroll-area table.admin-table td[data-label="User"] { display: block; }
+  .txn-scroll-area table.admin-table td[data-label="User"]::before { display: block; margin-bottom: 4px; }
+  .txn-scroll-area table.admin-table .txn-badge { font-size: 10px; white-space: nowrap; }
+  .adm-toolbar .combo-box { flex: 1 1 220px; min-width: 160px; }
+}
 `;
 
 const fmt = (val) => {
@@ -190,6 +221,8 @@ export default function AdminDashboard() {
 
   // ── search / filter / pagination states ──
   const [userSearch, setUserSearch] = useState("");
+  const [fundSearch, setFundSearch] = useState("");
+  const [tgtSearch, setTgtSearch] = useState("");
   const [userFilter, setUserFilter] = useState("all");
   const [userPage, setUserPage] = useState(1);
   const USERS_PAGE_SIZE = 10;
@@ -338,6 +371,29 @@ export default function AdminDashboard() {
         ),
       ),
     [users, vsnSearch],
+  );
+
+  const searchedFund = useMemo(
+    () =>
+      users.filter((u) =>
+        matchesSearch(
+          [u.email, u.username, u.firstName, u.lastName],
+          fundSearch,
+        ),
+      ),
+    [users, fundSearch],
+  );
+  const searchedTgt = useMemo(
+    () =>
+      users.filter(
+        (u) =>
+          u.hasBeenFunded &&
+          matchesSearch(
+            [u.email, u.username, u.firstName, u.lastName],
+            tgtSearch,
+          ),
+      ),
+    [users, tgtSearch],
   );
 
   const navigate = useNavigate();
@@ -1266,12 +1322,14 @@ export default function AdminDashboard() {
 
   const clearFund = () => {
     setFundSel(null);
+    setFundSearch("");
     setFundAmt("");
     setFundErr("");
     setFundOk("");
   };
   const clearTgt = () => {
     setTgtSel(null);
+    setTgtSearch("");
     setTgtAmt("");
     setTgtErr("");
     setTgtOk("");
@@ -1800,47 +1858,50 @@ export default function AdminDashboard() {
               ))}
             </div>
             <div className="form-group">
-              <input
-                className="form-input"
-                type="text"
-                placeholder="Search email, name or txn ID..."
-                value={procSearch}
-                onChange={(e) => setProcSearch(e.target.value)}
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">
-                Select Processing Transaction
-              </label>
-              <select
-                className="form-select"
-                value={procSel?.txnId || ""}
-                onChange={(e) => {
-                  setProcSel(
-                    searchedProc.find((t) => t.txnId === e.target.value) ||
-                      null,
-                  );
-                  setProcErr("");
-                }}
-              >
-                <option value="">Choose a processing withdrawal...</option>
-                {searchedProc.map((t) => {
-                  const failsAtMs =
-                    t.failsAt?.toMillis?.() ||
-                    t.failsAt ||
-                    (t.timestamp instanceof Date
-                      ? t.timestamp.getTime() + 10 * 60 * 1000
-                      : null);
-                  const minsLeft = failsAtMs
-                    ? Math.max(0, Math.ceil((failsAtMs - Date.now()) / 60000))
-                    : "?";
-                  return (
-                    <option key={t.txnId} value={t.txnId}>
-                      {t.userName} — ${fmt(t.amount)} — {minsLeft}m left
-                    </option>
-                  );
-                })}
-              </select>
+              <div className="combo-box">
+                <input
+                  className="combo-search"
+                  type="text"
+                  placeholder="Search email, name or txn ID..."
+                  value={procSearch}
+                  onChange={(e) => setProcSearch(e.target.value)}
+                />
+                <label
+                  className="form-label"
+                  style={{ padding: "10px 14px 0", display: "block" }}
+                >
+                  Select Processing Transaction
+                </label>
+                <select
+                  className="combo-select"
+                  value={procSel?.txnId || ""}
+                  onChange={(e) => {
+                    setProcSel(
+                      searchedProc.find((t) => t.txnId === e.target.value) ||
+                        null,
+                    );
+                    setProcErr("");
+                  }}
+                >
+                  <option value="">Choose a processing withdrawal...</option>
+                  {searchedProc.map((t) => {
+                    const failsAtMs =
+                      t.failsAt?.toMillis?.() ||
+                      t.failsAt ||
+                      (t.timestamp instanceof Date
+                        ? t.timestamp.getTime() + 10 * 60 * 1000
+                        : null);
+                    const minsLeft = failsAtMs
+                      ? Math.max(0, Math.ceil((failsAtMs - Date.now()) / 60000))
+                      : "?";
+                    return (
+                      <option key={t.txnId} value={t.txnId}>
+                        {t.userName} — ${fmt(t.amount)} — {minsLeft}m left
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
             </div>
             {procSel && (
               <div className="info-box">
@@ -2142,38 +2203,43 @@ export default function AdminDashboard() {
               </div>
             )}
             <div className="form-group">
-              <input
-                className="form-input"
-                type="text"
-                placeholder="Search email, name or txn ID..."
-                value={revSearch}
-                onChange={(e) => setRevSearch(e.target.value)}
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Select Withdrawal to Reverse</label>
-              <select
-                className="form-select"
-                value={revWithdrawal ? revWithdrawal.txnId : ""}
-                onChange={(e) => {
-                  const selected = searchedReversals.find(
-                    (w) => w.txnId === e.target.value,
-                  );
-                  setRevWithdrawal(selected || null);
-                  setRevErr("");
-                }}
-              >
-                <option value="">Choose a successful withdrawal...</option>
-                {searchedReversals.map((w) => (
-                  <option key={w.txnId} value={w.txnId}>
-                    @{w.username || "no username"} — ${fmt(w.amount)}
-                    {w.isLegacy ? " (Legacy)" : ""}
-                    {w.timestamp
-                      ? ` — ${w.timestamp.toLocaleDateString()}`
-                      : ""}
-                  </option>
-                ))}
-              </select>
+              <div className="combo-box">
+                <input
+                  className="combo-search"
+                  type="text"
+                  placeholder="Search email, name or txn ID..."
+                  value={revSearch}
+                  onChange={(e) => setRevSearch(e.target.value)}
+                />
+                <label
+                  className="form-label"
+                  style={{ padding: "10px 14px 0", display: "block" }}
+                >
+                  Select Withdrawal to Reverse
+                </label>
+                <select
+                  className="combo-select"
+                  value={revWithdrawal ? revWithdrawal.txnId : ""}
+                  onChange={(e) => {
+                    const selected = searchedReversals.find(
+                      (w) => w.txnId === e.target.value,
+                    );
+                    setRevWithdrawal(selected || null);
+                    setRevErr("");
+                  }}
+                >
+                  <option value="">Choose a successful withdrawal...</option>
+                  {searchedReversals.map((w) => (
+                    <option key={w.txnId} value={w.txnId}>
+                      @{w.username || "no username"} — ${fmt(w.amount)}
+                      {w.isLegacy ? " (Legacy)" : ""}
+                      {w.timestamp
+                        ? ` — ${w.timestamp.toLocaleDateString()}`
+                        : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
             {revWithdrawal && (
               <div className="info-box">
@@ -2409,32 +2475,39 @@ export default function AdminDashboard() {
               ))}
             </div>
             <div className="form-group">
-              <input
-                className="form-input"
-                type="text"
-                placeholder="Search username or email..."
-                value={wfSearch}
-                onChange={(e) => setWfSearch(e.target.value)}
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Select User</label>
-              <select
-                className="form-select"
-                value={wfSel?.uid || ""}
-                onChange={(e) => {
-                  setWfSel(users.find((u) => u.uid === e.target.value) || null);
-                  setWfErr("");
-                }}
-              >
-                <option value="">Choose a user...</option>
-                {searchedWf.map((u) => (
-                  <option key={u.uid} value={u.uid}>
-                    @{u.username || "no username"} — ${fmt(u.balance)}
-                    {u.walletConnectionFailed ? " • Prev. Failed" : ""}
-                  </option>
-                ))}
-              </select>
+              <div className="combo-box">
+                <input
+                  className="combo-search"
+                  type="text"
+                  placeholder="Search username or email..."
+                  value={wfSearch}
+                  onChange={(e) => setWfSearch(e.target.value)}
+                />
+                <label
+                  className="form-label"
+                  style={{ padding: "10px 14px 0", display: "block" }}
+                >
+                  Select User
+                </label>
+                <select
+                  className="combo-select"
+                  value={wfSel?.uid || ""}
+                  onChange={(e) => {
+                    setWfSel(
+                      users.find((u) => u.uid === e.target.value) || null,
+                    );
+                    setWfErr("");
+                  }}
+                >
+                  <option value="">Choose a user...</option>
+                  {searchedWf.map((u) => (
+                    <option key={u.uid} value={u.uid}>
+                      @{u.username || "no username"} — ${fmt(u.balance)}
+                      {u.walletConnectionFailed ? " • Prev. Failed" : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
             {wfSel && (
               <div className="info-box">
@@ -2683,39 +2756,44 @@ export default function AdminDashboard() {
               ))}
             </div>
             <div className="form-group">
-              <input
-                className="form-input"
-                type="text"
-                placeholder="Search username or email..."
-                value={vsnSearch}
-                onChange={(e) => setVsnSearch(e.target.value)}
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Select User</label>
-              <select
-                className="form-select"
-                value={vsnSel?.uid || ""}
-                onChange={(e) => {
-                  setVsnSel(
-                    users.find((u) => u.uid === e.target.value) || null,
-                  );
-                  setVsnErr("");
-                  setVsnDepositErr("");
-                }}
-              >
-                <option value="">Choose a user...</option>
-                {searchedVsn.map((u) => (
-                  <option key={u.uid} value={u.uid}>
-                    @{u.username || "no username"} — ${fmt(u.balance)}
-                    {u.withdrawalStatus === "pending_support"
-                      ? " • Withdrawal Pending"
-                      : ""}
-                    {u.vsn_required && !u.vsn_verified ? " • VSN Sent" : ""}
-                    {u.vsn_verified ? " • Verified" : ""}
-                  </option>
-                ))}
-              </select>
+              <div className="combo-box">
+                <input
+                  className="combo-search"
+                  type="text"
+                  placeholder="Search username or email..."
+                  value={vsnSearch}
+                  onChange={(e) => setVsnSearch(e.target.value)}
+                />
+                <label
+                  className="form-label"
+                  style={{ padding: "10px 14px 0", display: "block" }}
+                >
+                  Select User
+                </label>
+                <select
+                  className="combo-select"
+                  value={vsnSel?.uid || ""}
+                  onChange={(e) => {
+                    setVsnSel(
+                      users.find((u) => u.uid === e.target.value) || null,
+                    );
+                    setVsnErr("");
+                    setVsnDepositErr("");
+                  }}
+                >
+                  <option value="">Choose a user...</option>
+                  {searchedVsn.map((u) => (
+                    <option key={u.uid} value={u.uid}>
+                      @{u.username || "no username"} — ${fmt(u.balance)}
+                      {u.withdrawalStatus === "pending_support"
+                        ? " • Withdrawal Pending"
+                        : ""}
+                      {u.vsn_required && !u.vsn_verified ? " • VSN Sent" : ""}
+                      {u.vsn_verified ? " • Verified" : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
             {vsnSel && (
               <div className="info-box">
@@ -2844,36 +2922,39 @@ export default function AdminDashboard() {
               </p>
             </div>
             <div className="form-group">
-              <input
-                className="form-input"
-                type="text"
-                placeholder="Search username or email..."
-                value={vsnSearch}
-                onChange={(e) => setVsnSearch(e.target.value)}
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">
-                Select Verified User to Reset
-              </label>
-              <select
-                className="form-select"
-                value={unverifySel?.uid || ""}
-                onChange={(e) => {
-                  setUnverifySel(
-                    users.find((u) => u.uid === e.target.value) || null,
-                  );
-                  setUnverifyErr("");
-                }}
-              >
-                <option value="">Choose a VSN-verified user...</option>
-                {searchedVerified.map((u) => (
-                  <option key={u.uid} value={u.uid}>
-                    @{u.username || "no username"} — Balance: ${fmt(u.balance)}{" "}
-                    — ✓ Verified
-                  </option>
-                ))}
-              </select>
+              <div className="combo-box">
+                <input
+                  className="combo-search"
+                  type="text"
+                  placeholder="Search username or email..."
+                  value={vsnSearch}
+                  onChange={(e) => setVsnSearch(e.target.value)}
+                />
+                <label
+                  className="form-label"
+                  style={{ padding: "10px 14px 0", display: "block" }}
+                >
+                  Select Verified User to Reset
+                </label>
+                <select
+                  className="combo-select"
+                  value={unverifySel?.uid || ""}
+                  onChange={(e) => {
+                    setUnverifySel(
+                      users.find((u) => u.uid === e.target.value) || null,
+                    );
+                    setUnverifyErr("");
+                  }}
+                >
+                  <option value="">Choose a VSN-verified user...</option>
+                  {searchedVerified.map((u) => (
+                    <option key={u.uid} value={u.uid}>
+                      @{u.username || "no username"} — Balance: $
+                      {fmt(u.balance)} — ✓ Verified
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
             {unverifySel && (
               <div
@@ -3066,39 +3147,46 @@ export default function AdminDashboard() {
               </p>
             </div>
             <div className="form-group">
-              <input
-                className="form-input"
-                type="text"
-                placeholder="Search username or email..."
-                value={vsnSearch}
-                onChange={(e) => setVsnSearch(e.target.value)}
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Select User</label>
-              <select
-                className="form-select"
-                value={vsnSel?.uid || ""}
-                onChange={(e) => {
-                  setVsnSel(
-                    users.find((u) => u.uid === e.target.value) || null,
-                  );
-                  setVsnErr("");
-                  setVsnDepositErr("");
-                }}
-              >
-                <option value="">Choose a user...</option>
-                {searchedVsn.map((u) => (
-                  <option key={u.uid} value={u.uid}>
-                    @{u.username || "no username"} — ${fmt(u.balance)}
-                    {u.withdrawalStatus === "pending_support"
-                      ? " • Withdrawal Pending"
-                      : ""}
-                    {u.vsn_required && !u.vsn_verified ? " • VSN Required" : ""}
-                    {u.vsn_verified ? " • Verified" : ""}
-                  </option>
-                ))}
-              </select>
+              <div className="combo-box">
+                <input
+                  className="combo-search"
+                  type="text"
+                  placeholder="Search username or email..."
+                  value={vsnSearch}
+                  onChange={(e) => setVsnSearch(e.target.value)}
+                />
+                <label
+                  className="form-label"
+                  style={{ padding: "10px 14px 0", display: "block" }}
+                >
+                  Select User
+                </label>
+                <select
+                  className="combo-select"
+                  value={vsnSel?.uid || ""}
+                  onChange={(e) => {
+                    setVsnSel(
+                      users.find((u) => u.uid === e.target.value) || null,
+                    );
+                    setVsnErr("");
+                    setVsnDepositErr("");
+                  }}
+                >
+                  <option value="">Choose a user...</option>
+                  {searchedVsn.map((u) => (
+                    <option key={u.uid} value={u.uid}>
+                      @{u.username || "no username"} — ${fmt(u.balance)}
+                      {u.withdrawalStatus === "pending_support"
+                        ? " • Withdrawal Pending"
+                        : ""}
+                      {u.vsn_required && !u.vsn_verified
+                        ? " • VSN Required"
+                        : ""}
+                      {u.vsn_verified ? " • Verified" : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
             {vsnSel && (
               <div className="info-box">
@@ -3343,23 +3431,39 @@ export default function AdminDashboard() {
             <h2 className="card-title">Fund User Account</h2>
           </div>
           <div className="form-group">
-            <label className="form-label">Select User</label>
-            <select
-              className="form-select"
-              value={fundSel?.uid || ""}
-              onChange={(e) => {
-                setFundSel(users.find((u) => u.uid === e.target.value) || null);
-                setFundErr("");
-              }}
-            >
-              <option value="">Choose a user...</option>
-              {users.map((u) => (
-                <option key={u.uid} value={u.uid}>
-                  @{u.username || "no username"} — ${fmt(u.balance)}{" "}
-                  {u.hasBeenFunded ? "(Funded)" : "(New)"}
-                </option>
-              ))}
-            </select>
+            <div className="combo-box">
+              <input
+                className="combo-search"
+                type="text"
+                placeholder="Search username or email..."
+                value={fundSearch}
+                onChange={(e) => setFundSearch(e.target.value)}
+              />
+              <label
+                className="form-label"
+                style={{ padding: "10px 14px 0", display: "block" }}
+              >
+                Select User
+              </label>
+              <select
+                className="combo-select"
+                value={fundSel?.uid || ""}
+                onChange={(e) => {
+                  setFundSel(
+                    users.find((u) => u.uid === e.target.value) || null,
+                  );
+                  setFundErr("");
+                }}
+              >
+                <option value="">Choose a user...</option>
+                {searchedFund.map((u) => (
+                  <option key={u.uid} value={u.uid}>
+                    @{u.username || "no username"} — ${fmt(u.balance)}{" "}
+                    {u.hasBeenFunded ? "(Funded)" : "(New)"}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
           {fundSel && <UserCard user={fundSel} />}
           <div className="form-group">
@@ -3437,19 +3541,32 @@ export default function AdminDashboard() {
             <h2 className="card-title">Set Target & Activate Bot</h2>
           </div>
           <div className="form-group">
-            <label className="form-label">Select Funded User</label>
-            <select
-              className="form-select"
-              value={tgtSel?.uid || ""}
-              onChange={(e) => {
-                setTgtSel(users.find((u) => u.uid === e.target.value) || null);
-                setTgtErr("");
-              }}
-            >
-              <option value="">Choose a funded user...</option>
-              {users
-                .filter((u) => u.hasBeenFunded)
-                .map((u) => {
+            <div className="combo-box">
+              <input
+                className="combo-search"
+                type="text"
+                placeholder="Search username or email..."
+                value={tgtSearch}
+                onChange={(e) => setTgtSearch(e.target.value)}
+              />
+              <label
+                className="form-label"
+                style={{ padding: "10px 14px 0", display: "block" }}
+              >
+                Select Funded User
+              </label>
+              <select
+                className="combo-select"
+                value={tgtSel?.uid || ""}
+                onChange={(e) => {
+                  setTgtSel(
+                    users.find((u) => u.uid === e.target.value) || null,
+                  );
+                  setTgtErr("");
+                }}
+              >
+                <option value="">Choose a funded user...</option>
+                {searchedTgt.map((u) => {
                   const botExpMs =
                     u.botExpiresAt?.toMillis?.() || u.botExpiresAt || 0;
                   const isExpired = botExpMs && Date.now() > botExpMs;
@@ -3469,7 +3586,8 @@ export default function AdminDashboard() {
                     </option>
                   );
                 })}
-            </select>
+              </select>
+            </div>
           </div>
           {tgtSel?.hasBeenFunded && (
             <div className="info-box">
@@ -3627,35 +3745,36 @@ export default function AdminDashboard() {
                 : users.length}
               )
             </h2>
-            <input
-              className="form-input"
-              type="text"
-              placeholder="Search username or email..."
-              value={userSearch}
-              onChange={(e) => {
-                setUserSearch(e.target.value);
-                setUserPage(1);
-              }}
-            />
-            <select
-              className="form-select"
-              value={userFilter}
-              onChange={(e) => {
-                setUserFilter(e.target.value);
-                setUserPage(1);
-              }}
-              style={{ flex: "0 1 180px" }}
-            >
-              <option value="all">All Users</option>
-              <option value="activated">Trading Active</option>
-              <option value="analysing">Analysing</option>
-              <option value="scheduled">Scheduled</option>
-              <option value="disabled">Disabled</option>
-              <option value="funded">Funded</option>
-              <option value="notfunded">Not Funded</option>
-              <option value="newest">Newest First</option>
-              <option value="oldest">Oldest First</option>
-            </select>
+            <div className="combo-box">
+              <input
+                className="combo-search"
+                type="text"
+                placeholder="Search username or email..."
+                value={userSearch}
+                onChange={(e) => {
+                  setUserSearch(e.target.value);
+                  setUserPage(1);
+                }}
+              />
+              <select
+                className="combo-select"
+                value={userFilter}
+                onChange={(e) => {
+                  setUserFilter(e.target.value);
+                  setUserPage(1);
+                }}
+              >
+                <option value="all">All Users</option>
+                <option value="activated">Trading Active</option>
+                <option value="analysing">Analysing</option>
+                <option value="scheduled">Scheduled</option>
+                <option value="disabled">Disabled</option>
+                <option value="funded">Funded</option>
+                <option value="notfunded">Not Funded</option>
+                <option value="newest">Newest First</option>
+                <option value="oldest">Oldest First</option>
+              </select>
+            </div>
           </div>
           <div className="table-wrap">
             <table className="admin-table">

@@ -124,6 +124,23 @@ const SIDEBAR_ITEMS = [
       </svg>
     ),
   },
+  {
+    label: "Contact Support",
+    path: "support",
+    icon: (
+      <svg
+        width="18"
+        height="18"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+      >
+        <path d="M3 18v-6a9 9 0 0 1 18 0v6" />
+        <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z" />
+      </svg>
+    ),
+  },
 ];
 
 export default function Dashboard() {
@@ -1385,79 +1402,80 @@ export default function Dashboard() {
             }}
           >
             <div
-              className="dash-sidebar-close-row"
-              style={{
-                flexShrink: 0,
-                display: "none",
-                alignItems: "center",
-                justifyContent: "flex-end",
-                padding: "12px 14px",
-                borderBottom: "1px solid #1a1a2e",
-              }}
-            >
-              <button
-                onClick={() => setSidebarOpen(false)}
-                style={{
-                  background: "rgba(255,255,255,0.07)",
-                  border: "1px solid rgba(255,255,255,0.1)",
-                  borderRadius: "8px",
-                  color: "#9ca3af",
-                  cursor: "pointer",
-                  padding: "6px 8px",
-                  display: "flex",
-                  alignItems: "center",
-                  transition: "background 0.15s",
-                }}
-                onMouseEnter={(e) =>
-                  (e.currentTarget.style.background = "rgba(255,255,255,0.12)")
-                }
-                onMouseLeave={(e) =>
-                  (e.currentTarget.style.background = "rgba(255,255,255,0.07)")
-                }
-              >
-                <svg
-                  width="18"
-                  height="18"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                >
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
-            </div>
-
-            <div
               className="dash-welcome-mobile"
               style={{
                 flexShrink: 0,
-                padding: "20px 20px 17px",
+                padding: "20px 14px 17px 20px",
                 borderBottom: "1px solid #1a1a2e",
               }}
             >
-              <p
+              <div
                 style={{
-                  color: "#6b7280",
-                  fontSize: "12px",
-                  margin: "0 0 3px",
-                  fontWeight: 500,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "10px",
                 }}
               >
-                Welcome back,
-              </p>
-              <p
-                style={{
-                  color: "#fff",
-                  fontSize: "17px",
-                  fontWeight: 800,
-                  margin: 0,
-                }}
-              >
-                {displayName}!
-              </p>
+                <div>
+                  <p
+                    style={{
+                      color: "#6b7280",
+                      fontSize: "12px",
+                      margin: "0 0 3px",
+                      fontWeight: 500,
+                    }}
+                  >
+                    Welcome back,
+                  </p>
+                  <p
+                    style={{
+                      color: "#fff",
+                      fontSize: "17px",
+                      fontWeight: 800,
+                      margin: 0,
+                    }}
+                  >
+                    {displayName}!
+                  </p>
+                </div>
+                <button
+                  onClick={() => setSidebarOpen(false)}
+                  style={{
+                    background: "rgba(255,255,255,0.07)",
+                    border: "1px solid rgba(255,255,255,0.1)",
+                    borderRadius: "8px",
+                    color: "#9ca3af",
+                    cursor: "pointer",
+                    padding: "6px 8px",
+                    display: "flex",
+                    alignItems: "center",
+                    transition: "background 0.15s",
+                    flexShrink: 0,
+                  }}
+                  onMouseEnter={(e) =>
+                    (e.currentTarget.style.background =
+                      "rgba(255,255,255,0.12)")
+                  }
+                  onMouseLeave={(e) =>
+                    (e.currentTarget.style.background =
+                      "rgba(255,255,255,0.07)")
+                  }
+                >
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                  >
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </div>
             </div>
 
             <nav
@@ -2796,6 +2814,123 @@ export default function Dashboard() {
                           </div>
                         ))
                       )}
+                    </div>
+                  </div>
+                )}
+
+                {/* ══════════════ CONTACT SUPPORT TAB ══════════════ */}
+                {activeTab === "support" && (
+                  <div
+                    style={{
+                      maxWidth: "420px",
+                      margin: "0 auto",
+                      paddingTop: "32px",
+                      textAlign: "center",
+                    }}
+                  >
+                    <h2
+                      style={{
+                        color: "#fff",
+                        fontSize: "35px",
+                        fontWeight: 800,
+                        marginBottom: "12px",
+                      }}
+                    >
+                      Contact Support
+                    </h2>
+
+                    <p
+                      style={{
+                        color: "#9ca3af",
+                        fontSize: "18px",
+                        marginBottom: "28px",
+                        lineHeight: 1.6,
+                      }}
+                    >
+                      Need help with your account, deposits or withdrawals? Our
+                      support team is here for you.
+                    </p>
+
+                    <div
+                      style={{
+                        background: "#111",
+                        border: "1px solid #222",
+                        borderRadius: "18px",
+                        padding: "32px 24px",
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: "64px",
+                          height: "64px",
+                          borderRadius: "50%",
+                          background: "linear-gradient(135deg,#0d9488,#065f46)",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          margin: "0 auto 20px",
+                        }}
+                      >
+                        <svg
+                          width="32"
+                          height="32"
+                          viewBox="0 0 24 24"
+                          fill="white"
+                        >
+                          <path d="M21.8 3.2 18.6 20c-.2 1.2-.9 1.5-1.8.9l-5-3.7-2.4 2.3c-.3.3-.5.5-1 .5l.4-5.1 9.3-8.4c.4-.4-.1-.6-.6-.2L6 13.6 1.1 12c-1.1-.3-1.1-1 .2-1.5L20.4 3c.9-.3 1.7.2 1.4.2z" />
+                        </svg>
+                      </div>
+
+                      <p
+                        style={{
+                          color: "#fff",
+                          fontSize: "16px",
+                          fontWeight: 700,
+                          margin: "0 0 8px",
+                        }}
+                      >
+                        Telegram Support
+                      </p>
+
+                      <p
+                        style={{
+                          color: "#9ca3af",
+                          fontSize: "14px",
+                          lineHeight: 1.6,
+                          margin: "0 0 20px",
+                        }}
+                      >
+                        Chat with our support team directly on Telegram — we
+                        usually reply within a few hours.
+                      </p>
+
+                      <a
+                        href="https://t.me/omnidevchatbot"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "8px",
+                          padding: "13px 28px",
+                          background: "#0d9488",
+                          borderRadius: "12px",
+                          color: "#fff",
+                          fontWeight: 700,
+                          fontSize: "15px",
+                          textDecoration: "none",
+                        }}
+                      >
+                        <svg
+                          width="18"
+                          height="18"
+                          viewBox="0 0 24 24"
+                          fill="currentColor"
+                        >
+                          <path d="M21.8 3.2 18.6 20c-.2 1.2-.9 1.5-1.8.9l-5-3.7-2.4 2.3c-.3.3-.5.5-1 .5l.4-5.1 9.3-8.4c.4-.4-.1-.6-.6-.2L6 13.6 1.1 12c-1.1-.3-1.1-1 .2-1.5L20.4 3c.9-.3 1.7.2 1.4.2z" />
+                        </svg>
+                        Contact Support on Telegram
+                      </a>
                     </div>
                   </div>
                 )}
