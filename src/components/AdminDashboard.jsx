@@ -20,7 +20,27 @@ import {
 } from "firebase/firestore";
 
 const ADMIN_EMAIL = "fiyinolaleke@gmail.com";
+
+// ── generic search matcher (username / email / name) ──
+const matchesSearch = (fields, rawQ) => {
+  const q = rawQ.trim().toLowerCase();
+  if (!q) return true;
+  return fields
+    .filter(Boolean)
+    .some((f) => String(f).toLowerCase().includes(q));
+};
 const TXN_PAGE_SIZE = 25;
+
+// ── responsive helpers for admin toolbars & tables ──
+const ADMIN_CSS = `
+.adm-toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.adm-toolbar .form-input, .adm-toolbar .form-select { flex: 1 1 170px; min-width: 140px; max-width: 100%; }
+@media (max-width: 768px) {
+  .adm-toolbar > .card-title { flex-basis: 100%; width: 100%; }
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .form-select, .form-input { max-width: 100%; }
+}
+`;
 
 const fmt = (val) => {
   if (val === undefined || val === null) return "0.00";
@@ -162,11 +182,21 @@ export default function AdminDashboard() {
   const [vsnOk, setVsnOk] = useState("");
   const [vsnErr, setVsnErr] = useState("");
 
-  // ── NEW: Unverify VSN states ──
+  // ── Unverify VSN states ──
   const [unverifySel, setUnverifySel] = useState(null);
   const [unverifyLoading, setUnverifyLoading] = useState(false);
   const [unverifyOk, setUnverifyOk] = useState("");
   const [unverifyErr, setUnverifyErr] = useState("");
+
+  // ── search / filter / pagination states ──
+  const [userSearch, setUserSearch] = useState("");
+  const [userFilter, setUserFilter] = useState("all");
+  const [userPage, setUserPage] = useState(1);
+  const USERS_PAGE_SIZE = 10;
+  const [procSearch, setProcSearch] = useState("");
+  const [revSearch, setRevSearch] = useState("");
+  const [wfSearch, setWfSearch] = useState("");
+  const [vsnSearch, setVsnSearch] = useState("");
 
   const reversibleWithdrawals = useMemo(() => {
     const list = [];
@@ -216,6 +246,99 @@ export default function AdminDashboard() {
     const id = setInterval(() => setNowMs(Date.now()), 60_000);
     return () => clearInterval(id);
   }, []);
+
+  // ── status category (mirrors getBotStatus rules) ──
+  const getUserCategory = (u, now) => {
+    if (!u.hasBeenFunded) return "notfunded";
+    const exp = u.botExpiresAt?.toMillis?.() || u.botExpiresAt;
+    const ana = u.analysingExpiresAt?.toMillis?.() || u.analysingExpiresAt;
+    const sch = u.scheduleActivateAt?.toMillis?.() || u.scheduleActivateAt;
+    if (exp && now > exp) return "disabled";
+    if (exp && now <= exp) return "activated";
+    if (u.botStatus === "scheduled" || (sch && now <= sch)) return "scheduled";
+    if (u.pendingTarget || (ana && now <= ana)) return "analysing";
+    return "disabled";
+  };
+
+  const createdMs = (u) =>
+    u.createdAt?.toMillis?.() ||
+    (u.createdAt instanceof Date ? u.createdAt.getTime() : 0);
+
+  // ── filter + sort + search for the All Users table ──
+  const filteredUsers = useMemo(() => {
+    let list = users;
+    switch (userFilter) {
+      case "activated":
+      case "analysing":
+      case "scheduled":
+      case "disabled":
+        list = list.filter((u) => getUserCategory(u, nowMs) === userFilter);
+        break;
+      case "funded":
+        list = list.filter((u) => u.hasBeenFunded);
+        break;
+      case "notfunded":
+        list = list.filter((u) => !u.hasBeenFunded);
+        break;
+      case "newest":
+        list = [...list].sort((a, b) => createdMs(b) - createdMs(a));
+        break;
+      case "oldest":
+        list = [...list].sort((a, b) => createdMs(a) - createdMs(b));
+        break;
+      default:
+        break;
+    }
+    const q = userSearch.trim().toLowerCase();
+    if (q) {
+      list = list.filter((u) =>
+        [u.email, u.username, u.firstName, u.lastName]
+          .filter(Boolean)
+          .some((f) => f.toLowerCase().includes(q)),
+      );
+    }
+    return list;
+  }, [users, userFilter, userSearch, nowMs]);
+
+  const userPageCount = Math.max(
+    1,
+    Math.ceil(filteredUsers.length / USERS_PAGE_SIZE),
+  );
+  const safeUserPage = Math.min(userPage, userPageCount);
+  const visibleUsers = useMemo(
+    () =>
+      filteredUsers.slice(
+        (safeUserPage - 1) * USERS_PAGE_SIZE,
+        safeUserPage * USERS_PAGE_SIZE,
+      ),
+    [filteredUsers, safeUserPage],
+  );
+
+  // ── sub-view searched lists (reversals, wallet-failed users) ──
+  const searchedReversals = useMemo(
+    () =>
+      reversibleWithdrawals.filter((w) =>
+        matchesSearch([w.email, w.username, w.userName, w.txnId], revSearch),
+      ),
+    [reversibleWithdrawals, revSearch],
+  );
+  const searchedWf = useMemo(
+    () =>
+      users.filter((u) =>
+        matchesSearch([u.email, u.username, u.firstName, u.lastName], wfSearch),
+      ),
+    [users, wfSearch],
+  );
+  const searchedVsn = useMemo(
+    () =>
+      users.filter((u) =>
+        matchesSearch(
+          [u.email, u.username, u.firstName, u.lastName],
+          vsnSearch,
+        ),
+      ),
+    [users, vsnSearch],
+  );
 
   const navigate = useNavigate();
 
@@ -272,6 +395,7 @@ export default function AdminDashboard() {
           walletConnectionFailed: data.walletConnectionFailed || false,
           withdrawalCompletedCount: data.withdrawalCompletedCount || 0,
           lastWithdrawnAmount: data.lastWithdrawnAmount || 0,
+          createdAt: data.createdAt || null,
           withdrawalHistory: data.withdrawalHistory || {},
         };
       });
@@ -986,7 +1110,7 @@ export default function AdminDashboard() {
     }
   };
 
-  // ── NEW: Unverify VSN handler ──
+  // ── Unverify VSN handler ──
   // Resets a verified user's VSN status so they must enter a new code.
   // The admin can then generate a fresh VSN for that user via the Generate VSN section.
   const handleUnverifyVSN = async () => {
@@ -1347,6 +1471,62 @@ export default function AdminDashboard() {
     });
   }, [visibleTxns, getTxnStatus]);
 
+  // ── derived lists + searched lists (ALL hooks must run before any early return) ──
+  const pendingWithdrawals = users.filter(
+    (u) => u.withdrawalStatus === "pending_support",
+  );
+  const vsnPending = users.filter((u) => u.vsn_required && !u.vsn_verified);
+  const vsnVerified = users.filter((u) => u.vsn_verified);
+  const vsnVerifiedUsers = users.filter((u) => u.vsn_verified);
+  const walletFailedUsers = users.filter((u) => u.walletConnectionFailed);
+  const withdrawalSuccessUsers = users.filter(
+    (u) => u.lastWithdrawnAmount > 0 || u.withdrawalCompletedCount > 0,
+  );
+  const liveProcessingTxns = processingTxns.filter((t) => {
+    const failsAtMs =
+      t.failsAt?.toMillis?.() ||
+      t.failsAt ||
+      (t.timestamp instanceof Date
+        ? t.timestamp.getTime() + 10 * 60 * 1000
+        : null);
+    return !failsAtMs || Date.now() < failsAtMs;
+  });
+
+  const searchedProc = useMemo(
+    () =>
+      liveProcessingTxns.filter((t) =>
+        matchesSearch([t.userEmail, t.userName, t.txnId], procSearch),
+      ),
+    [liveProcessingTxns, procSearch],
+  );
+  const searchedWalletFailed = useMemo(
+    () =>
+      walletFailedUsers.filter((u) =>
+        matchesSearch([u.email, u.username, u.firstName, u.lastName], wfSearch),
+      ),
+    [walletFailedUsers, wfSearch],
+  );
+  const searchedPending = useMemo(
+    () =>
+      pendingWithdrawals.filter((u) =>
+        matchesSearch(
+          [u.email, u.username, u.firstName, u.lastName],
+          vsnSearch,
+        ),
+      ),
+    [pendingWithdrawals, vsnSearch],
+  );
+  const searchedVerified = useMemo(
+    () =>
+      vsnVerifiedUsers.filter((u) =>
+        matchesSearch(
+          [u.email, u.username, u.firstName, u.lastName],
+          vsnSearch,
+        ),
+      ),
+    [vsnVerifiedUsers, vsnSearch],
+  );
+
   if (loading)
     return (
       <div
@@ -1374,27 +1554,6 @@ export default function AdminDashboard() {
         <p style={{ color: "#9ca3af" }}>Loading admin panel...</p>
       </div>
     );
-
-  const pendingWithdrawals = users.filter(
-    (u) => u.withdrawalStatus === "pending_support",
-  );
-  const vsnPending = users.filter((u) => u.vsn_required && !u.vsn_verified);
-  const vsnVerified = users.filter((u) => u.vsn_verified);
-  // ── NEW: users eligible to be unverified ──
-  const vsnVerifiedUsers = users.filter((u) => u.vsn_verified);
-  const walletFailedUsers = users.filter((u) => u.walletConnectionFailed);
-  const withdrawalSuccessUsers = users.filter(
-    (u) => u.lastWithdrawnAmount > 0 || u.withdrawalCompletedCount > 0,
-  );
-  const liveProcessingTxns = processingTxns.filter((t) => {
-    const failsAtMs =
-      t.failsAt?.toMillis?.() ||
-      t.failsAt ||
-      (t.timestamp instanceof Date
-        ? t.timestamp.getTime() + 10 * 60 * 1000
-        : null);
-    return !failsAtMs || Date.now() < failsAtMs;
-  });
 
   const UserCard = ({ user }) => {
     const s = getBotStatus(user);
@@ -1589,6 +1748,7 @@ export default function AdminDashboard() {
   if (view === "processing") {
     return (
       <div className="admin-dashboard">
+        <style>{ADMIN_CSS}</style>
         <AdminHeader title="Processing Withdrawals" showBack />
         <div className="sub-page-wrap">
           <div className="card">
@@ -1640,6 +1800,15 @@ export default function AdminDashboard() {
               ))}
             </div>
             <div className="form-group">
+              <input
+                className="form-input"
+                type="text"
+                placeholder="Search email, name or txn ID..."
+                value={procSearch}
+                onChange={(e) => setProcSearch(e.target.value)}
+              />
+            </div>
+            <div className="form-group">
               <label className="form-label">
                 Select Processing Transaction
               </label>
@@ -1648,15 +1817,14 @@ export default function AdminDashboard() {
                 value={procSel?.txnId || ""}
                 onChange={(e) => {
                   setProcSel(
-                    liveProcessingTxns.find(
-                      (t) => t.txnId === e.target.value,
-                    ) || null,
+                    searchedProc.find((t) => t.txnId === e.target.value) ||
+                      null,
                   );
                   setProcErr("");
                 }}
               >
                 <option value="">Choose a processing withdrawal...</option>
-                {liveProcessingTxns.map((t) => {
+                {searchedProc.map((t) => {
                   const failsAtMs =
                     t.failsAt?.toMillis?.() ||
                     t.failsAt ||
@@ -1769,7 +1937,7 @@ export default function AdminDashboard() {
           {liveProcessingTxns.length > 0 && (
             <div className="card">
               <h2 className="card-title" style={{ margin: "0 0 14px" }}>
-                All Processing Withdrawals ({liveProcessingTxns.length})
+                All Processing Withdrawals ({searchedProc.length})
               </h2>
               <div className="table-wrap">
                 <table className="admin-table">
@@ -1783,7 +1951,7 @@ export default function AdminDashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {liveProcessingTxns.map((t) => {
+                    {searchedProc.map((t) => {
                       const failsAtMs =
                         t.failsAt?.toMillis?.() ||
                         t.failsAt ||
@@ -1871,6 +2039,7 @@ export default function AdminDashboard() {
   if (view === "reversal") {
     return (
       <div className="admin-dashboard">
+        <style>{ADMIN_CSS}</style>
         <AdminHeader title="Schedule Reversal" showBack />
         <div className="sub-page-wrap">
           <div className="card">
@@ -1973,12 +2142,21 @@ export default function AdminDashboard() {
               </div>
             )}
             <div className="form-group">
+              <input
+                className="form-input"
+                type="text"
+                placeholder="Search email, name or txn ID..."
+                value={revSearch}
+                onChange={(e) => setRevSearch(e.target.value)}
+              />
+            </div>
+            <div className="form-group">
               <label className="form-label">Select Withdrawal to Reverse</label>
               <select
                 className="form-select"
                 value={revWithdrawal ? revWithdrawal.txnId : ""}
                 onChange={(e) => {
-                  const selected = reversibleWithdrawals.find(
+                  const selected = searchedReversals.find(
                     (w) => w.txnId === e.target.value,
                   );
                   setRevWithdrawal(selected || null);
@@ -1986,7 +2164,7 @@ export default function AdminDashboard() {
                 }}
               >
                 <option value="">Choose a successful withdrawal...</option>
-                {reversibleWithdrawals.map((w) => (
+                {searchedReversals.map((w) => (
                   <option key={w.txnId} value={w.txnId}>
                     @{w.username || "no username"} — ${fmt(w.amount)}
                     {w.isLegacy ? " (Legacy)" : ""}
@@ -2099,7 +2277,7 @@ export default function AdminDashboard() {
           {reversibleWithdrawals.length > 0 && (
             <div className="card">
               <h2 className="card-title" style={{ margin: "0 0 14px" }}>
-                Available for Reversal ({reversibleWithdrawals.length})
+                Available for Reversal ({searchedReversals.length})
               </h2>
               <div className="table-wrap">
                 <table className="admin-table">
@@ -2111,7 +2289,7 @@ export default function AdminDashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {reversibleWithdrawals.map((w) => (
+                    {searchedReversals.map((w) => (
                       <tr
                         key={w.txnId}
                         onClick={() => {
@@ -2177,6 +2355,7 @@ export default function AdminDashboard() {
   if (view === "wallet_failed") {
     return (
       <div className="admin-dashboard">
+        <style>{ADMIN_CSS}</style>
         <AdminHeader title="Mark Wallet Failed" showBack />
         <div className="sub-page-wrap">
           <div className="card">
@@ -2230,6 +2409,15 @@ export default function AdminDashboard() {
               ))}
             </div>
             <div className="form-group">
+              <input
+                className="form-input"
+                type="text"
+                placeholder="Search username or email..."
+                value={wfSearch}
+                onChange={(e) => setWfSearch(e.target.value)}
+              />
+            </div>
+            <div className="form-group">
               <label className="form-label">Select User</label>
               <select
                 className="form-select"
@@ -2240,7 +2428,7 @@ export default function AdminDashboard() {
                 }}
               >
                 <option value="">Choose a user...</option>
-                {users.map((u) => (
+                {searchedWf.map((u) => (
                   <option key={u.uid} value={u.uid}>
                     @{u.username || "no username"} — ${fmt(u.balance)}
                     {u.walletConnectionFailed ? " • Prev. Failed" : ""}
@@ -2350,7 +2538,7 @@ export default function AdminDashboard() {
           {walletFailedUsers.length > 0 && (
             <div className="card">
               <h2 className="card-title" style={{ margin: "0 0 14px" }}>
-                Users with Wallet Failures ({walletFailedUsers.length})
+                Users with Wallet Failures ({searchedWalletFailed.length})
               </h2>
               <div className="table-wrap">
                 <table className="admin-table">
@@ -2362,7 +2550,7 @@ export default function AdminDashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {walletFailedUsers.map((u) => (
+                    {searchedWalletFailed.map((u) => (
                       <tr
                         key={u.uid}
                         onClick={() => {
@@ -2417,6 +2605,7 @@ export default function AdminDashboard() {
   if (view === "vsn") {
     return (
       <div className="admin-dashboard">
+        <style>{ADMIN_CSS}</style>
         <AdminHeader title="Send VSN Code" showBack />
         {pendingWithdrawals.length > 0 && (
           <div
@@ -2494,6 +2683,15 @@ export default function AdminDashboard() {
               ))}
             </div>
             <div className="form-group">
+              <input
+                className="form-input"
+                type="text"
+                placeholder="Search username or email..."
+                value={vsnSearch}
+                onChange={(e) => setVsnSearch(e.target.value)}
+              />
+            </div>
+            <div className="form-group">
               <label className="form-label">Select User</label>
               <select
                 className="form-select"
@@ -2507,7 +2705,7 @@ export default function AdminDashboard() {
                 }}
               >
                 <option value="">Choose a user...</option>
-                {users.map((u) => (
+                {searchedVsn.map((u) => (
                   <option key={u.uid} value={u.uid}>
                     @{u.username || "no username"} — ${fmt(u.balance)}
                     {u.withdrawalStatus === "pending_support"
@@ -2646,6 +2844,15 @@ export default function AdminDashboard() {
               </p>
             </div>
             <div className="form-group">
+              <input
+                className="form-input"
+                type="text"
+                placeholder="Search username or email..."
+                value={vsnSearch}
+                onChange={(e) => setVsnSearch(e.target.value)}
+              />
+            </div>
+            <div className="form-group">
               <label className="form-label">
                 Select Verified User to Reset
               </label>
@@ -2660,7 +2867,7 @@ export default function AdminDashboard() {
                 }}
               >
                 <option value="">Choose a VSN-verified user...</option>
-                {vsnVerifiedUsers.map((u) => (
+                {searchedVerified.map((u) => (
                   <option key={u.uid} value={u.uid}>
                     @{u.username || "no username"} — Balance: ${fmt(u.balance)}{" "}
                     — ✓ Verified
@@ -2773,7 +2980,7 @@ export default function AdminDashboard() {
                       </tr>
                     </thead>
                     <tbody>
-                      {vsnVerifiedUsers.map((u) => (
+                      {searchedVerified.map((u) => (
                         <tr
                           key={u.uid}
                           onClick={() => {
@@ -2859,6 +3066,15 @@ export default function AdminDashboard() {
               </p>
             </div>
             <div className="form-group">
+              <input
+                className="form-input"
+                type="text"
+                placeholder="Search username or email..."
+                value={vsnSearch}
+                onChange={(e) => setVsnSearch(e.target.value)}
+              />
+            </div>
+            <div className="form-group">
               <label className="form-label">Select User</label>
               <select
                 className="form-select"
@@ -2872,7 +3088,7 @@ export default function AdminDashboard() {
                 }}
               >
                 <option value="">Choose a user...</option>
-                {users.map((u) => (
+                {searchedVsn.map((u) => (
                   <option key={u.uid} value={u.uid}>
                     @{u.username || "no username"} — ${fmt(u.balance)}
                     {u.withdrawalStatus === "pending_support"
@@ -3005,7 +3221,7 @@ export default function AdminDashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {pendingWithdrawals.map((u) => (
+                    {searchedPending.map((u) => (
                       <tr
                         key={u.uid}
                         onClick={() => {
@@ -3069,6 +3285,7 @@ export default function AdminDashboard() {
   // ─────────────────── MAIN VIEW ───────────────────
   return (
     <div className="admin-dashboard">
+      <style>{ADMIN_CSS}</style>
       <AdminHeader title="Admin Dashboard" />
 
       {users.some((u) => u.pendingTarget) && (
@@ -3402,9 +3619,44 @@ export default function AdminDashboard() {
 
         {/* ── All Users Table ── */}
         <div className="card admin-grid-full">
-          <h2 className="card-title" style={{ margin: "0 0 14px" }}>
-            All Users ({users.length})
-          </h2>
+          <div className="adm-toolbar" style={{ marginBottom: "14px" }}>
+            <h2 className="card-title" style={{ margin: 0, flex: "1 1 200px" }}>
+              All Users (
+              {userFilter !== "all" || userSearch.trim()
+                ? `${filteredUsers.length} of ${users.length}`
+                : users.length}
+              )
+            </h2>
+            <input
+              className="form-input"
+              type="text"
+              placeholder="Search username or email..."
+              value={userSearch}
+              onChange={(e) => {
+                setUserSearch(e.target.value);
+                setUserPage(1);
+              }}
+            />
+            <select
+              className="form-select"
+              value={userFilter}
+              onChange={(e) => {
+                setUserFilter(e.target.value);
+                setUserPage(1);
+              }}
+              style={{ flex: "0 1 180px" }}
+            >
+              <option value="all">All Users</option>
+              <option value="activated">Trading Active</option>
+              <option value="analysing">Analysing</option>
+              <option value="scheduled">Scheduled</option>
+              <option value="disabled">Disabled</option>
+              <option value="funded">Funded</option>
+              <option value="notfunded">Not Funded</option>
+              <option value="newest">Newest First</option>
+              <option value="oldest">Oldest First</option>
+            </select>
+          </div>
           <div className="table-wrap">
             <table className="admin-table">
               <thead>
@@ -3422,14 +3674,16 @@ export default function AdminDashboard() {
                 </tr>
               </thead>
               <tbody>
-                {users.length === 0 ? (
+                {visibleUsers.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="table-empty">
-                      No users found.
+                      {userSearch.trim() || userFilter !== "all"
+                        ? "No users match your search/filter."
+                        : "No users found."}
                     </td>
                   </tr>
                 ) : (
-                  users.map((u) => {
+                  visibleUsers.map((u) => {
                     const s = getBotStatus(u);
                     return (
                       <tr
@@ -3515,6 +3769,40 @@ export default function AdminDashboard() {
               </tbody>
             </table>
           </div>
+          {userPageCount > 1 && (
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: "10px",
+                marginTop: "14px",
+                flexWrap: "wrap",
+              }}
+            >
+              <button
+                className="btn-secondary"
+                disabled={safeUserPage === 1}
+                onClick={() => setUserPage((p) => Math.max(1, p - 1))}
+              >
+                ← Previous
+              </button>
+              <span style={{ color: "#9ca3af", fontSize: "12px" }}>
+                Page {safeUserPage} of {userPageCount} · {filteredUsers.length}{" "}
+                user{filteredUsers.length !== 1 ? "s" : ""}
+                {userFilter !== "all" || userSearch.trim() ? " (filtered)" : ""}
+              </span>
+              <button
+                className="btn-secondary"
+                disabled={safeUserPage === userPageCount}
+                onClick={() =>
+                  setUserPage((p) => Math.min(userPageCount, p + 1))
+                }
+              >
+                Next →
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
