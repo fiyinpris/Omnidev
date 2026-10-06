@@ -48,27 +48,26 @@ const ADMIN_CSS = `
 .combo-select { width: 100%; box-sizing: border-box; background: #111; border: none; padding: 12px 14px; color: #fff; font-size: 14px; outline: none; display: block; cursor: pointer; }
 .combo-select option { background: #111; color: #fff; }
 
-/* ── Transactions table: stack rows as cards on small screens so the table never slides away ── */
+/* ── Transactions table: slides inside the card on small screens, columns keep their natural size ── */
 .txn-scroll-area { max-height: 65vh; overflow-y: auto; overflow-x: hidden; }
+/* clip anything that tries to escape the card */
+.txn-card { overflow: hidden; }
 @media (max-width: 768px) {
   .txn-card { padding: 14px; }
-  .txn-card-header { flex-direction: column; align-items: stretch !important; gap: 10px; }
-  .txn-card-title-row { flex-wrap: wrap; }
-  .txn-filters { width: 100%; }
-  .txn-filter-select { flex: 1 1 0; min-width: 0; }
-  .txn-card .table-wrap { overflow: visible; }
-  .txn-scroll-area { max-height: none; overflow-x: hidden; -webkit-overflow-scrolling: touch; }
-  .txn-scroll-area table.admin-table { width: 100% !important; min-width: 0 !important; table-layout: auto; }
-  .txn-scroll-area table.admin-table thead { display: none; }
-  .txn-scroll-area table.admin-table tbody,
-  .txn-scroll-area table.admin-table tr { display: block; width: 100%; }
-  .txn-scroll-area table.admin-table tr { border: 1px solid #262626; border-radius: 12px; margin-bottom: 10px; background: #141414; overflow: hidden; }
-  .txn-scroll-area table.admin-table td { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px !important; border-bottom: 1px solid rgba(255,255,255,.05); font-size: 12px; white-space: normal; word-break: break-word; overflow-wrap: anywhere; }
-  .txn-scroll-area table.admin-table td:last-child { border-bottom: none; }
-  .txn-scroll-area table.admin-table td::before { content: attr(data-label); color: #6b7280; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; flex-shrink: 0; }
-  .txn-scroll-area table.admin-table td[data-label="User"] { display: block; }
-  .txn-scroll-area table.admin-table td[data-label="User"]::before { display: block; margin-bottom: 4px; }
-  .txn-scroll-area table.admin-table .txn-badge { font-size: 10px; white-space: nowrap; }
+  /* the outer wrapper must NOT scroll — the inner area is the only scroll zone */
+  .txn-card .table-wrap { overflow: hidden; }
+  .txn-scroll-area { max-height: 60vh; overflow: auto; -webkit-overflow-scrolling: touch; }
+  /* give the table its natural width so columns never squish — it slides inside the card instead */
+  .txn-scroll-area table.admin-table { width: auto; min-width: 640px !important; table-layout: auto; }
+  .txn-scroll-area table.admin-table th,
+  .txn-scroll-area table.admin-table td { white-space: nowrap; padding: 10px 10px !important; font-size: 11px; }
+  /* let only the user/email cell wrap inside its own column */
+  .txn-scroll-area table.admin-table td[data-label="User"] { max-width: 140px; }
+  .txn-scroll-area table.admin-table td[data-label="User"] p { white-space: normal; word-break: break-word; overflow-wrap: anywhere; }
+  .txn-scroll-area table.admin-table th:nth-child(4),
+  .txn-scroll-area table.admin-table td:nth-child(4),
+  .txn-scroll-area table.admin-table th:nth-child(5),
+  .txn-scroll-area table.admin-table td:nth-child(5) { display: none; }
   .adm-toolbar .combo-box { flex: 1 1 220px; min-width: 160px; }
 }
 `;
