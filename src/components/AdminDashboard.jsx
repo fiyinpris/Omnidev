@@ -841,6 +841,13 @@ export default function AdminDashboard() {
         );
       } else {
         const botExpiresAt = Timestamp.fromMillis(now.toMillis() + totalMs);
+        const schedule = generateIncrementSchedule(target, hours + mins / 60);
+        // NEW: stamp when the first chunk is due so the cron can find this bot
+        const firstChunkAt =
+          schedule.length > 0
+            ? Timestamp.fromMillis(now.toMillis() + schedule[0].offsetMs)
+            : null;
+
         await updateDoc(userRef, {
           targetAmount: target,
           initialBalance: currentBalance,
@@ -852,12 +859,10 @@ export default function AdminDashboard() {
           pendingTarget: false,
           scheduleActivateAt: null,
           lastTargetSetAt: now,
-          incrementSchedule: generateIncrementSchedule(
-            target,
-            hours + mins / 60,
-          ),
+          incrementSchedule: schedule,
           incrementScheduleStartMs: now.toMillis(),
           incrementsApplied: 0,
+          ...(firstChunkAt ? { nextIncrementAt: firstChunkAt } : {}),
         });
         await setDoc(doc(collection(db, "adminTransactions")), {
           userId: tgtSel.uid,
