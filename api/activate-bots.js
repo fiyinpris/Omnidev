@@ -4,15 +4,10 @@ import admin from "firebase-admin";
 if (!admin.apps.length) {
   try {
     let privateKey = process.env.FIREBASE_PRIVATE_KEY;
-
-    // Handle private key: strip surrounding quotes, convert \n to actual newlines
     if (privateKey) {
-      // Remove surrounding quotes if present
-      privateKey = privateKey.replace(/^[\"']|[\"']$/g, "");
-      // Convert literal \n to actual newlines (for Vercel dashboard format)
+      privateKey = privateKey.replace(/^["']|["']$/g, "");
       privateKey = privateKey.replace(/\\n/g, "\n");
     }
-
     if (
       !privateKey ||
       !process.env.FIREBASE_PROJECT_ID ||
@@ -20,7 +15,6 @@ if (!admin.apps.length) {
     ) {
       console.error("Missing Firebase environment variables");
     }
-
     admin.initializeApp({
       credential: admin.credential.cert({
         projectId: process.env.FIREBASE_PROJECT_ID,
@@ -60,10 +54,8 @@ function generateIncrementSchedule(targetAmount, totalHours) {
     if (sevenHundredCount >= 2) {
       maxAllowed = Math.min(maxAllowed, 699);
     }
-
     let chunk;
     const roll = Math.random();
-
     if (roll < 0.35) {
       chunk = 50 + Math.random() * 150;
     } else if (roll < 0.75) {
@@ -71,24 +63,19 @@ function generateIncrementSchedule(targetAmount, totalHours) {
     } else {
       chunk = 600 + Math.random() * 100;
     }
-
     chunk = Math.round(Math.min(chunk, maxAllowed));
-
     if (remaining - chunk < 50 && remaining - chunk > 0) {
       chunk = remaining;
     }
-
     if (chunk === 700) {
       sevenHundredCount++;
     }
-
     chunks.push(chunk);
     remaining = Math.round((remaining - chunk) * 100) / 100;
   }
 
   if (chunks.length === 0) return [];
   const n = chunks.length;
-
   const startBuffer = 2 * 60 * 1000;
   const endBuffer = Math.min(
     totalMs - 2 * 60 * 1000,
@@ -123,9 +110,9 @@ function generateIncrementSchedule(targetAmount, totalHours) {
   return increments;
 }
 
-// QUOTA FIX: identical behavior to before, EXCEPT each activated bot is now
-// stamped with `nextIncrementAt` = time of its FIRST balance chunk, so
-// apply-increments can find due bots without scanning every active bot.
+// This is the ACTIVATE-BOTS cron.
+// It flips pending bots (analysing/scheduled) to "activated" AND stamps
+// `nextIncrementAt` so the apply-increments cron can find them.
 export default async function handler(req, res) {
   try {
     const secret = req.headers["x-cron-secret"] || req.query.secret;
@@ -175,7 +162,8 @@ export default async function handler(req, res) {
       );
       const schedule = generateIncrementSchedule(target, hours);
 
-      // NEW (invisible to users): stamp when the first chunk is due.
+      // Stamp when the first chunk is due so apply-increments can find
+      // this bot without scanning all activated bots.
       const firstChunkAt =
         schedule.length > 0
           ? admin.firestore.Timestamp.fromMillis(now + schedule[0].offsetMs)
