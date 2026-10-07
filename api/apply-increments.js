@@ -64,6 +64,7 @@ export default async function handler(req, res) {
       .collection("users")
       .where("botStatus", "==", "activated")
       .where("botExpiresAt", "<=", nowTs)
+      .limit(500)
       .get();
 
     for (const docSnap of expiredSnap.docs) {
@@ -136,6 +137,7 @@ export default async function handler(req, res) {
       .collection("users")
       .where("botStatus", "==", "activated")
       .where("nextIncrementAt", "==", null)
+      .limit(100)
       .get();
 
     const dueDocs = [...dueSnap.docs];
@@ -146,80 +148,97 @@ export default async function handler(req, res) {
     for (const docSnap of dueDocs) {
       const uid = docSnap.id;
 
-      await db.runTransaction(async (tx) => {
-        const freshDoc = await tx.get(docSnap.ref);
-        const freshData = freshDoc.data();
-        if (!freshData || freshData.botStatus !== "activated") return;
+      try {
+        await db.runTransaction(async (tx) => {
+          const freshDoc = await tx.get(docSnap.ref);
+          const freshData = freshDoc.data();
+          if (!freshData || freshData.botStatus !== "activated") return;
 
-        const applied = freshData.incrementsApplied || 0;
-        const sched = freshData.incrementSchedule || [];
-        const startMs = freshData.incrementScheduleStartMs || 0;
+          const applied = freshData.incrementsApplied || 0;
+          const sched = freshData.incrementSchedule || [];
+          const startMs = freshData.incrementScheduleStartMs || 0;
 
-        // Safety: bot with no schedule or corrupt start — stamp and skip
-        if (sched.length === 0 || !startMs) {
-          tx.update(docSnap.ref, {
-            nextIncrementAt: admin.firestore.FieldValue.delete(),
-          });
-          return;
-        }
-
-        const elapsedMs = now - startMs;
-        const due = sched
-          .slice(applied)
-          .filter((inc) => elapsedMs >= inc.offsetMs);
-        if (due.length === 0) {
-          // Not due yet — stamp the pointer so we find it again at the right time
-          if (applied < sched.length) {
+          // Safety: bot with no schedule, corrupt start, or an already-finished
+          // schedule. Point nextIncrementAt at botExpiresAt so this doc LEAVES
+          // the legacy `== null` query permanently and only resurfaces when the
+          // expire query disables it. (Deleting the field instead would make it
+          // match `== null` again every single minute — the read leak that was
+          // exhausting your quota. Also guards sched[applied] being undefined,
+          // which crashed this handler with a 500 every minute.)
+          if (sched.length === 0 || !startMs || applied >= sched.length) {
             tx.update(docSnap.ref, {
-              nextIncrementAt: admin.firestore.Timestamp.fromMillis(
-                startMs + sched[applied].offsetMs,
-              ),
+              nextIncrementAt: freshData.botExpiresAt
+                ? freshData.botExpiresAt
+                : admin.firestore.FieldValue.delete(),
+            });
+            return;
+          }
+
+          const elapsedMs = now - startMs;
+          const due = sched
+            .slice(applied)
+            .filter((inc) => elapsedMs >= inc.offsetMs);
+          if (due.length === 0) {
+            // Not due yet — stamp the pointer so we find it again at the right time
+            if (applied < sched.length) {
+              tx.update(docSnap.ref, {
+                nextIncrementAt: admin.firestore.Timestamp.fromMillis(
+                  startMs + sched[applied].offsetMs,
+                ),
+              });
+            }
+            return;
+          }
+
+          const totalIncrease = due.reduce((s, inc) => s + inc.amount, 0);
+          const currentBalance =
+            freshData.balance || freshData.initialBalance || 0;
+          const newBalance = parseFloat(
+            (currentBalance + totalIncrease).toFixed(2),
+          );
+
+          const newApplied = applied + due.length;
+          const update = {
+            balance: newBalance,
+            incrementsApplied: newApplied,
+          };
+
+          if (newApplied < sched.length) {
+            update.nextIncrementAt = admin.firestore.Timestamp.fromMillis(
+              startMs + sched[newApplied].offsetMs,
+            );
+          } else {
+            // Schedule finished — point at expiry instead of deleting the
+            // field. A deleted field matches `nextIncrementAt == null` every
+            // minute until the bot expires (read leak).
+            update.nextIncrementAt = freshData.botExpiresAt
+              ? freshData.botExpiresAt
+              : admin.firestore.FieldValue.delete();
+          }
+          tx.update(docSnap.ref, update);
+
+          for (const inc of due) {
+            const txnRef = db
+              .collection("users")
+              .doc(uid)
+              .collection("transactions")
+              .doc();
+            tx.set(txnRef, {
+              type: "bot_profit",
+              amount: inc.amount,
+              source: "bot",
+              status: "completed",
+              timestamp: admin.firestore.Timestamp.now(),
+              description:
+                "OmniDev trading profit +$" + formatMoney(inc.amount),
             });
           }
-          return;
-        }
-
-        const totalIncrease = due.reduce((s, inc) => s + inc.amount, 0);
-        const currentBalance =
-          freshData.balance || freshData.initialBalance || 0;
-        const newBalance = parseFloat(
-          (currentBalance + totalIncrease).toFixed(2),
-        );
-
-        const newApplied = applied + due.length;
-        const update = {
-          balance: newBalance,
-          incrementsApplied: newApplied,
-        };
-
-        if (newApplied < sched.length) {
-          update.nextIncrementAt = admin.firestore.Timestamp.fromMillis(
-            startMs + sched[newApplied].offsetMs,
-          );
-        } else {
-          update.nextIncrementAt = admin.firestore.FieldValue.delete();
-        }
-        tx.update(docSnap.ref, update);
-
-        for (const inc of due) {
-          const txnRef = db
-            .collection("users")
-            .doc(uid)
-            .collection("transactions")
-            .doc();
-          tx.set(txnRef, {
-            type: "bot_profit",
-            amount: inc.amount,
-            source: "bot",
-            status: "completed",
-            timestamp: admin.firestore.Timestamp.now(),
-            description: "OmniDev trading profit +$" + formatMoney(inc.amount),
-          });
-        }
-      });
+        });
+      } catch (docErr) {
+        console.error(`[apply-increments] Doc ${uid} failed:`, docErr.message);
+      }
 
       appliedCount++;
-      backfilledCount++;
     }
 
     res.status(200).json({

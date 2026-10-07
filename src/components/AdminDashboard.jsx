@@ -485,8 +485,28 @@ export default function AdminDashboard() {
     return () => unsub();
   }, [adminUser]);
 
+  // ── QUOTA FIX ────────────────────────────────────────────────────────────
+  // OLD (quota killer): this effect depended on `users`, and `users` changes
+  // every time ANY balance updates (the cron applies increments every
+  // minute). So every minute the panel tore down and re-attached one
+  // listener PER USER and re-read EVERY transaction document of EVERY user —
+  // tens of thousands of reads per hour while this page was open.
+  // NEW: listeners attach only when the user-id LIST changes (joining/
+  // leaving users), not on balance updates. And the subcollection query is
+  // filtered server-side so Firestore only returns "processing withdrawals"
+  // instead of each user's entire history. Same data, a fraction of reads.
+  const usersRef = useRef(users);
+  usersRef.current = users;
+  const userUidsKey = useMemo(
+    () =>
+      users
+        .map((u) => u.uid)
+        .sort()
+        .join(","),
+    [users],
+  );
   useEffect(() => {
-    if (!adminUser || users.length === 0) return;
+    if (!adminUser || !userUidsKey) return;
     const unsubs = [];
     const update = (uid, docs) => {
       setProcessingTxns((prev) => {
@@ -494,31 +514,34 @@ export default function AdminDashboard() {
         return [...filtered, ...docs];
       });
     };
-    users.forEach((u) => {
-      const txnRef = collection(db, "users", u.uid, "transactions");
-      const unsub = onSnapshot(txnRef, (snap) => {
-        const docs = snap.docs
-          .filter((d) => {
-            const data = d.data();
-            return data.type === "withdrawal" && data.status === "processing";
-          })
-          .map((d) => ({
-            uid: u.uid,
-            txnId: d.id,
-            userEmail: u.email,
-            userName:
-              u.username || `${u.firstName} ${u.lastName}`.trim() || u.email,
-            userBalance: u.balance,
-            ...d.data(),
-            timestamp: d.data().timestamp?.toDate?.() || new Date(),
-            failsAt: d.data().failsAt,
-          }));
-        update(u.uid, docs);
+    userUidsKey.split(",").forEach((uid) => {
+      const txnQuery = query(
+        collection(db, "users", uid, "transactions"),
+        where("type", "==", "withdrawal"),
+        where("status", "==", "processing"),
+      );
+      const unsub = onSnapshot(txnQuery, (snap) => {
+        const u = usersRef.current.find((x) => x.uid === uid) || {};
+        const docs = snap.docs.map((d) => ({
+          uid,
+          txnId: d.id,
+          userEmail: u.email || "",
+          userName:
+            u.username ||
+            `${u.firstName || ""} ${u.lastName || ""}`.trim() ||
+            u.email ||
+            "",
+          userBalance: u.balance || 0,
+          ...d.data(),
+          timestamp: d.data().timestamp?.toDate?.() || new Date(),
+          failsAt: d.data().failsAt,
+        }));
+        update(uid, docs);
       });
       unsubs.push(unsub);
     });
-    return () => unsubs.forEach((u) => u());
-  }, [adminUser, users]);
+    return () => unsubs.forEach((fn) => fn());
+  }, [adminUser, userUidsKey]);
 
   useEffect(() => {
     if (!adminUser) return;

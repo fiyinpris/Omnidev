@@ -163,11 +163,14 @@ export default async function handler(req, res) {
       const schedule = generateIncrementSchedule(target, hours);
 
       // Stamp when the first chunk is due so apply-increments can find
-      // this bot without scanning all activated bots.
+      // this bot without scanning all activated bots. If there is no
+      // schedule, point at botExpiresAt instead of DELETING the field —
+      // a missing nextIncrementAt matches the legacy `== null` query in
+      // apply-increments every single minute (read leak).
       const firstChunkAt =
         schedule.length > 0
           ? admin.firestore.Timestamp.fromMillis(now + schedule[0].offsetMs)
-          : admin.firestore.FieldValue.delete();
+          : botExpiresAt;
 
       await docSnap.ref.update({
         botStatus: "activated",

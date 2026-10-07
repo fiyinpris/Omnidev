@@ -1,12 +1,18 @@
 const functions = require("firebase-functions/v1");
 const admin = require("firebase-admin");
+
 admin.initializeApp();
+
 const db = admin.firestore();
 
-// ── CONFIG: Set this in Firebase Console → Functions config ──
+// ── CONFIG ───────────────────────────────────────────────────────────────────
 // Run: firebase functions:config:set cron.secret="your-secret-here"
 const CRON_SECRET =
   functions.config().cron?.secret || "omnidev-cron-default-CHANGE-ME";
+
+// ═════════════════════════════════════════════════════════════════════════════
+// HELPERS
+// ═════════════════════════════════════════════════════════════════════════════
 
 function formatMoney(val) {
   if (!val && val !== 0) return "0.00";
@@ -17,10 +23,14 @@ function formatMoney(val) {
   return `${intPart}.${decPart ? decPart.substring(0, 2) : "00"}`;
 }
 
-// ── Generate increment schedule ──────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+// GENERATE INCREMENT SCHEDULE
+// ═════════════════════════════════════════════════════════════════════════════
+
 function generateIncrementSchedule(targetAmount, totalHours) {
-  if (!targetAmount || targetAmount <= 0 || !totalHours || totalHours <= 0)
+  if (!targetAmount || targetAmount <= 0 || !totalHours || totalHours <= 0) {
     return [];
+  }
 
   const totalMs = totalHours * 3600 * 1000;
   const chunks = [];
@@ -35,7 +45,6 @@ function generateIncrementSchedule(targetAmount, totalHours) {
 
     let chunk;
     const roll = Math.random();
-
     if (roll < 0.35) {
       chunk = 50 + Math.random() * 150;
     } else if (roll < 0.75) {
@@ -45,11 +54,9 @@ function generateIncrementSchedule(targetAmount, totalHours) {
     }
 
     chunk = Math.round(Math.min(chunk, maxAllowed));
-
     if (remaining - chunk < 50 && remaining - chunk > 0) {
       chunk = remaining;
     }
-
     if (chunk === 700) {
       sevenHundredCount++;
     }
@@ -59,8 +66,8 @@ function generateIncrementSchedule(targetAmount, totalHours) {
   }
 
   if (chunks.length === 0) return [];
-  const n = chunks.length;
 
+  const n = chunks.length;
   const startBuffer = 2 * 60 * 1000;
   const endBuffer = Math.min(
     totalMs - 2 * 60 * 1000,
@@ -96,9 +103,31 @@ function generateIncrementSchedule(targetAmount, totalHours) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// FUNCTION 1 — autoActivatePendingBots (v1 scheduled, Spark-compatible)
-// Runs every 1 minute automatically via Firebase, no cron-job.org needed
+// HELPER — GET NEXT INCREMENT TIMESTAMP
 // ═════════════════════════════════════════════════════════════════════════════
+
+function getNextIncrementTimestamp(schedule, appliedCount, startMs) {
+  if (
+    !schedule ||
+    schedule.length === 0 ||
+    appliedCount >= schedule.length ||
+    !startMs
+  ) {
+    return admin.firestore.FieldValue.delete();
+  }
+
+  return admin.firestore.Timestamp.fromMillis(
+    startMs + schedule[appliedCount].offsetMs,
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// FUNCTION 1 — autoActivatePendingBots
+// Runs every 1 minute. Only scans PENDING users (not all users).
+// QUOTA FIX: now stamps `nextIncrementAt` so the increment cron never has to
+// scan all activated users.
+// ═════════════════════════════════════════════════════════════════════════════
+
 exports.autoActivatePendingBots = functions.pubsub
   .schedule("every 1 minutes")
   .onRun(async (context) => {
@@ -126,7 +155,9 @@ exports.autoActivatePendingBots = functions.pubsub
           gracePeriodMs = (2 + Math.random() * 3) * 60 * 1000;
           await docSnap.ref.update({ gracePeriodMs });
           console.log(
-            `[autoActivatePendingBots] Set grace period for ${user.email}`,
+            `[autoActivatePendingBots] Set grace period for ${
+              user.email || docSnap.id
+            }`,
           );
           continue;
         }
@@ -140,6 +171,12 @@ exports.autoActivatePendingBots = functions.pubsub
         );
         const schedule = generateIncrementSchedule(target, hours);
 
+        // ── QUOTA FIX: stamp when the first chunk is due ──────────────────
+        const nextIncrementAt =
+          schedule.length > 0
+            ? admin.firestore.Timestamp.fromMillis(now + schedule[0].offsetMs)
+            : admin.firestore.FieldValue.delete();
+
         await docSnap.ref.update({
           botStatus: "activated",
           botActive: true,
@@ -151,9 +188,9 @@ exports.autoActivatePendingBots = functions.pubsub
           incrementSchedule: schedule,
           incrementScheduleStartMs: now,
           incrementsApplied: 0,
+          nextIncrementAt,
         });
 
-        // Update existing bot_trading transaction or create new
         const txnSnap = await db
           .collection("adminTransactions")
           .where("userId", "==", docSnap.id)
@@ -191,7 +228,9 @@ exports.autoActivatePendingBots = functions.pubsub
 
         activatedCount++;
         console.log(
-          `[autoActivatePendingBots] Activated bot for ${user.email || docSnap.id}`,
+          `[autoActivatePendingBots] Activated bot for ${
+            user.email || docSnap.id
+          }`,
         );
       }
 
@@ -206,139 +245,189 @@ exports.autoActivatePendingBots = functions.pubsub
   });
 
 // ═════════════════════════════════════════════════════════════════════════════
-// FUNCTION 2 — applyBalanceIncrements (v1 scheduled, Spark-compatible)
-// Runs every 1 minute automatically via Firebase, no cron-job.org needed
+// FUNCTION 2 — applyBalanceIncrements
+//
+// ★★★ THIS IS THE MAIN QUOTA FIX ★★★
+//
+// OLD (quota killer):
+//   .where("botStatus", "==", "activated").get()
+//   → read EVERY activated user every minute (1,440x/day)
+//
+// NEW:
+//   Only reads bots that are actually EXPIRED or actually DUE right now,
+//   plus a small capped backfill of legacy bots missing nextIncrementAt.
 // ═════════════════════════════════════════════════════════════════════════════
+
 exports.applyBalanceIncrements = functions.pubsub
   .schedule("every 1 minutes")
   .onRun(async (context) => {
     const now = Date.now();
+    const nowTs = admin.firestore.Timestamp.now();
     let appliedCount = 0;
     let expiredCount = 0;
+    let backfilledCount = 0;
 
     try {
-      const snap = await db
+      // ═══════════════════════════════════════════════════════════════════════
+      // 1. FIND ONLY EXPIRED BOTS
+      // ═══════════════════════════════════════════════════════════════════════
+
+      const expiredSnap = await db
         .collection("users")
         .where("botStatus", "==", "activated")
+        .where("botExpiresAt", "<=", nowTs)
+        .limit(500)
         .get();
 
-      if (snap.empty) {
-        console.log("[applyBalanceIncrements] No active bots");
-        return null;
-      }
+      // ═══════════════════════════════════════════════════════════════════════
+      // 2. EXPIRE THEM
+      // ═══════════════════════════════════════════════════════════════════════
 
-      for (const docSnap of snap.docs) {
+      for (const docSnap of expiredSnap.docs) {
         const user = docSnap.data();
         const uid = docSnap.id;
-        const expMs = user.botExpiresAt?.toMillis?.() || 0;
         const schedule = user.incrementSchedule || [];
-        const startMs = user.incrementScheduleStartMs || 0;
         const appliedCountUser = user.incrementsApplied || 0;
 
-        // ── BOT EXPIRED ───────────────────────────────────────────────────────
-        if (now >= expMs) {
-          const remaining = schedule.slice(appliedCountUser);
-          const residual = remaining.reduce((s, d) => s + d.amount, 0);
+        const remaining = schedule.slice(appliedCountUser);
+        const residual = remaining.reduce((sum, item) => sum + item.amount, 0);
 
-          const finalBalance = parseFloat(
-            ((user.initialBalance || 0) + (user.targetAmount || 0)).toFixed(2),
-          );
+        const finalBalance = parseFloat(
+          ((user.initialBalance || 0) + (user.targetAmount || 0)).toFixed(2),
+        );
 
-          await docSnap.ref.update({
-            botStatus: "disabled",
-            botActive: false,
-            balance: finalBalance,
-            incrementsApplied: schedule.length,
-          });
+        await docSnap.ref.update({
+          botStatus: "disabled",
+          botActive: false,
+          balance: finalBalance,
+          incrementsApplied: schedule.length,
+          nextIncrementAt: admin.firestore.FieldValue.delete(),
+        });
 
-          if (residual > 0) {
-            await db
-              .collection("users")
-              .doc(uid)
-              .collection("transactions")
-              .add({
-                type: "bot_profit",
-                amount: residual,
-                source: "bot_flush",
-                status: "completed",
-                timestamp: admin.firestore.Timestamp.now(),
-                description: `OmniDev final balance adjustment +$${formatMoney(residual)}`,
-              });
-          }
-
-          // Update adminTransactions
-          const txnSnap = await db
-            .collection("adminTransactions")
-            .where("userId", "==", uid)
-            .where("type", "==", "bot_trading")
-            .orderBy("timestamp", "desc")
-            .limit(1)
-            .get();
-
-          if (!txnSnap.empty) {
-            await txnSnap.docs[0].ref.update({
-              status: "disabled",
-              completedAt: admin.firestore.Timestamp.now(),
-              note: "Bot trading completed - time expired",
+        if (residual > 0) {
+          await db
+            .collection("users")
+            .doc(uid)
+            .collection("transactions")
+            .add({
+              type: "bot_profit",
+              amount: residual,
+              source: "bot_flush",
+              status: "completed",
+              timestamp: admin.firestore.Timestamp.now(),
+              description: `OmniDev final balance adjustment +$${formatMoney(
+                residual,
+              )}`,
             });
-          }
-
-          expiredCount++;
-          console.log(
-            `[EXPIRE] ${user.email || uid}: final balance $${formatMoney(finalBalance)}` +
-              (residual > 0
-                ? `, residual $${formatMoney(residual)}`
-                : ", no residual"),
-          );
-          continue;
         }
 
-        // ── BOT STILL ACTIVE — apply due chunks ──────────────────────────────
-        // ── BOT STILL ACTIVE — generate schedule if missing ──────────────────
-        if (
-          schedule.length === 0 &&
-          user.targetAmount > 0 &&
-          user.botHours > 0
-        ) {
-          const newSchedule = generateIncrementSchedule(
-            user.targetAmount,
-            user.botHours,
-          );
-          await docSnap.ref.update({
-            incrementSchedule: newSchedule,
-            incrementScheduleStartMs: now,
-            incrementsApplied: 0,
+        const txnSnap = await db
+          .collection("adminTransactions")
+          .where("userId", "==", uid)
+          .where("type", "==", "bot_trading")
+          .orderBy("timestamp", "desc")
+          .limit(1)
+          .get();
+
+        if (!txnSnap.empty) {
+          await txnSnap.docs[0].ref.update({
+            status: "disabled",
+            completedAt: admin.firestore.Timestamp.now(),
+            note: "Bot trading completed - time expired",
           });
-          console.log(
-            `[GENERATE] ${user.email || uid}: generated ${newSchedule.length} increments`,
-          );
-          continue;
         }
 
-        // ── BOT STILL ACTIVE — apply due chunks ──────────────────────────────
-        if (appliedCountUser >= schedule.length) continue;
-        const elapsedMs = now - startMs;
-        const due = schedule
-          .slice(appliedCountUser)
-          .filter((inc) => elapsedMs >= inc.offsetMs);
-        if (due.length === 0) continue;
+        expiredCount++;
+        console.log(
+          `[EXPIRE] ${user.email || uid}: final balance $${formatMoney(
+            finalBalance,
+          )}${
+            residual > 0
+              ? `, residual $${formatMoney(residual)}`
+              : ", no residual"
+          }`,
+        );
+      }
+
+      // ═══════════════════════════════════════════════════════════════════════
+      // 3. FIND ONLY BOTS WHOSE NEXT INCREMENT IS DUE
+      //    (was previously: read ALL activated users)
+      // ═══════════════════════════════════════════════════════════════════════
+
+      const dueSnap = await db
+        .collection("users")
+        .where("botStatus", "==", "activated")
+        .where("nextIncrementAt", "<=", nowTs)
+        .limit(500)
+        .get();
+
+      // ═══════════════════════════════════════════════════════════════════════
+      // 4. PROCESS DUE BOTS
+      // ═══════════════════════════════════════════════════════════════════════
+
+      for (const docSnap of dueSnap.docs) {
+        const uid = docSnap.id;
 
         await db.runTransaction(async (tx) => {
           const freshDoc = await tx.get(docSnap.ref);
           const freshData = freshDoc.data();
-          if ((freshData.incrementsApplied || 0) !== appliedCountUser) return;
 
-          const totalIncrease = due.reduce((s, inc) => s + inc.amount, 0);
+          if (!freshData) return;
+          if (freshData.botStatus !== "activated") return;
+
+          const schedule = freshData.incrementSchedule || [];
+          const startMs = freshData.incrementScheduleStartMs || 0;
+          const applied = freshData.incrementsApplied || 0;
+
+          // Nothing left to process
+          if (schedule.length === 0 || applied >= schedule.length) {
+            tx.update(docSnap.ref, {
+              nextIncrementAt: admin.firestore.FieldValue.delete(),
+            });
+            return;
+          }
+
+          const elapsedMs = now - startMs;
+          const due = schedule
+            .slice(applied)
+            .filter((inc) => elapsedMs >= inc.offsetMs);
+
+          if (due.length === 0) {
+            // Safety: point at the next scheduled increment
+            tx.update(docSnap.ref, {
+              nextIncrementAt: getNextIncrementTimestamp(
+                schedule,
+                applied,
+                startMs,
+              ),
+            });
+            return;
+          }
+
+          const totalIncrease = due.reduce((sum, inc) => sum + inc.amount, 0);
           const currentBalance =
             freshData.balance || freshData.initialBalance || 0;
           const newBalance = parseFloat(
             (currentBalance + totalIncrease).toFixed(2),
           );
+          const newApplied = applied + due.length;
 
-          tx.update(docSnap.ref, {
+          // ── QUOTA FIX: schedule the NEXT due time so this user is NOT
+          //    read again until another increment is actually due ──────────
+          const update = {
             balance: newBalance,
-            incrementsApplied: appliedCountUser + due.length,
-          });
+            incrementsApplied: newApplied,
+          };
+
+          if (newApplied < schedule.length) {
+            update.nextIncrementAt = admin.firestore.Timestamp.fromMillis(
+              startMs + schedule[newApplied].offsetMs,
+            );
+          } else {
+            update.nextIncrementAt = admin.firestore.FieldValue.delete();
+          }
+
+          tx.update(docSnap.ref, update);
 
           for (const inc of due) {
             const txnRef = db
@@ -346,6 +435,7 @@ exports.applyBalanceIncrements = functions.pubsub
               .doc(uid)
               .collection("transactions")
               .doc();
+
             tx.set(txnRef, {
               type: "bot_profit",
               amount: inc.amount,
@@ -357,15 +447,62 @@ exports.applyBalanceIncrements = functions.pubsub
           }
 
           console.log(
-            `[APPLY] ${user.email || uid}: ${due.length} drop(s), +$${formatMoney(totalIncrease)}, balance → $${formatMoney(newBalance)}`,
+            `[APPLY] ${freshData.email || uid}: ${
+              due.length
+            } drop(s), +$${formatMoney(totalIncrease)}, balance → $${formatMoney(
+              newBalance,
+            )}`,
           );
         });
 
         appliedCount++;
       }
 
+      // ═══════════════════════════════════════════════════════════════════════
+      // 5. BACKFILL LEGACY BOTS (old bots missing nextIncrementAt)
+      //    Capped at 100/minute so the first minutes after deploy don't
+      //    create another huge read spike. Once stamped, they leave this
+      //    query permanently.
+      // ═══════════════════════════════════════════════════════════════════════
+
+      const legacySnap = await db
+        .collection("users")
+        .where("botStatus", "==", "activated")
+        .where("nextIncrementAt", "==", null)
+        .limit(100)
+        .get();
+
+      for (const docSnap of legacySnap.docs) {
+        const user = docSnap.data();
+        const schedule = user.incrementSchedule || [];
+        const startMs = user.incrementScheduleStartMs || 0;
+        const applied = user.incrementsApplied || 0;
+
+        const nothingToDo =
+          schedule.length === 0 || !startMs || applied >= schedule.length;
+
+        if (nothingToDo) {
+          await docSnap.ref.update({
+            nextIncrementAt: admin.firestore.FieldValue.delete(),
+          });
+          backfilledCount++;
+          continue;
+        }
+
+        const nextTimestamp = admin.firestore.Timestamp.fromMillis(
+          startMs + schedule[applied].offsetMs,
+        );
+
+        await docSnap.ref.update({ nextIncrementAt: nextTimestamp });
+        backfilledCount++;
+
+        console.log(
+          `[BACKFILL] ${user.email || docSnap.id}: next increment ${nextTimestamp.toDate()}`,
+        );
+      }
+
       console.log(
-        `[applyBalanceIncrements] Applied: ${appliedCount}, Expired: ${expiredCount}`,
+        `[applyBalanceIncrements] Applied: ${appliedCount}, Expired: ${expiredCount}, Backfilled: ${backfilledCount}`,
       );
       return null;
     } catch (err) {
@@ -375,8 +512,9 @@ exports.applyBalanceIncrements = functions.pubsub
   });
 
 // ═════════════════════════════════════════════════════════════════════════════
-// FUNCTION 3 — onUserUpdated (Firestore trigger, v1)
+// FUNCTION 3 — onUserUpdated (Firestore trigger, safety net)
 // ═════════════════════════════════════════════════════════════════════════════
+
 exports.onUserUpdated = functions.firestore
   .document("users/{uid}")
   .onWrite(async (change, context) => {
@@ -389,8 +527,9 @@ exports.onUserUpdated = functions.firestore
       !after ||
       !after.pendingTarget ||
       after.botStatus === "activated"
-    )
+    ) {
       return null;
+    }
 
     const now = Date.now();
     const analysingExpMs = after.analysingExpiresAt?.toMillis?.() || 0;
@@ -408,6 +547,12 @@ exports.onUserUpdated = functions.firestore
     );
     const schedule = generateIncrementSchedule(target, hours);
 
+    // ── QUOTA FIX: stamp first increment time here too ────────────────────
+    const nextIncrementAt =
+      schedule.length > 0
+        ? admin.firestore.Timestamp.fromMillis(now + schedule[0].offsetMs)
+        : admin.firestore.FieldValue.delete();
+
     try {
       await db.collection("users").doc(uid).update({
         botStatus: "activated",
@@ -420,6 +565,7 @@ exports.onUserUpdated = functions.firestore
         incrementSchedule: schedule,
         incrementScheduleStartMs: now,
         incrementsApplied: 0,
+        nextIncrementAt,
       });
 
       const txnSnap = await db
@@ -464,11 +610,12 @@ exports.onUserUpdated = functions.firestore
       return null;
     }
   });
+
 // ═════════════════════════════════════════════════════════════════════════════
 // FUNCTION 4 — activateBotDirectly (HTTP with CORS for re-activation)
 // ═════════════════════════════════════════════════════════════════════════════
+
 exports.activateBotDirectly = functions.https.onRequest(async (req, res) => {
-  // Handle CORS preflight
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
@@ -503,6 +650,12 @@ exports.activateBotDirectly = functions.https.onRequest(async (req, res) => {
   );
   const schedule = generateIncrementSchedule(targetAmount, botHours);
 
+  // ── QUOTA FIX: stamp first increment time ──────────────────────────────
+  const nextIncrementAt =
+    schedule.length > 0
+      ? admin.firestore.Timestamp.fromMillis(now + schedule[0].offsetMs)
+      : admin.firestore.FieldValue.delete();
+
   try {
     const userRef = db.collection("users").doc(uid);
     const userDoc = await userRef.get();
@@ -526,6 +679,7 @@ exports.activateBotDirectly = functions.https.onRequest(async (req, res) => {
       incrementSchedule: schedule,
       incrementScheduleStartMs: now,
       incrementsApplied: 0,
+      nextIncrementAt,
       targetAmount: targetAmount,
       botHours: botHours,
     });
